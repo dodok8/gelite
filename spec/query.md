@@ -32,6 +32,9 @@ Only one statement is executed per request in the first version.
 - Boolean literals are `true` and `false`.
 - `null` is supported only where the schema allows an optional value.
 - Parameters are deferred. The first milestone may inline literals only.
+- Queries operate on the semantic schema catalog, not raw SDL text.
+- Relation fields are the fields declared with `link` in schema.
+- Scalar fields are the non-`link` fields declared in schema.
 
 ## Select
 
@@ -74,8 +77,11 @@ path             := IDENT ("." IDENT)*
 - The shape must list fields explicitly.
 - Selecting a relation field requires a nested shape.
 - Selecting a scalar field does not allow a nested shape.
+- Multi relation fields may be selected only with a nested shape.
 - Omitted fields are not returned.
 - `id` may be selected explicitly even though it is implicit in schema source.
+- Backlink traversal and inferred inverse relations are not supported in the
+  MVP.
 
 ### Filters
 
@@ -110,11 +116,13 @@ The leading `.` in filter paths refers to the current row root.
 The MVP supports:
 
 - field paths from the root object
+- traversal through declared single relation fields
 - scalar comparisons against literals
 - boolean composition
 
 The MVP does not support:
 
+- traversal through backlinks or inferred inverse relations
 - arbitrary subqueries
 - aggregation
 - `exists`
@@ -146,10 +154,14 @@ assign_item     := IDENT ":=" value_expr ","?
 ### Insert Semantics
 
 - The target must be an object type.
+- Assignments may target declared scalar fields and declared single relation
+  fields only.
 - Required scalar fields must be supplied unless a built-in default exists.
 - Optional scalar fields may be omitted.
+- Assigning `id` is not allowed.
 - Single relation fields may be assigned by target object id only in the MVP.
 - Multi relation inserts are deferred from the first execution milestone.
+- Relation assignments must target declared `link` fields.
 
 Allowed single relation insert example:
 
@@ -160,7 +172,8 @@ insert Post {
 }
 ```
 
-This assignment should resolve to the related object's identity.
+This assignment should resolve to the related object's identity. The assigned
+field must be a declared single `link`.
 
 ## Update
 
@@ -191,6 +204,8 @@ set_clause      := "set" object_literal
 - `filter` is optional, but omitting it updates every row. The CLI and server
   should consider adding safety confirmation later.
 - Only scalar fields and single relations may be updated in the MVP.
+- Multi relations may not be updated in the MVP.
+- Relation assignments must target declared `link` fields.
 - Updating `id` is not allowed.
 
 ## Delete
@@ -241,11 +256,15 @@ The analyzer should report:
 
 - unknown type names
 - unknown field names
+- writes to undeclared fields
 - scalar field used with nested shape
 - relation field selected without nested shape
+- relation assignment to a non-`link` field
+- `id` assignment in insert or update
 - type mismatches in assignment
 - type mismatches in filter comparisons
 - invalid cardinality usage
+- use of backlink or inferred inverse traversal
 
 ## Canonical MVP Examples
 

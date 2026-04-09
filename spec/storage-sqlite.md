@@ -18,6 +18,8 @@ This spec fixes enough of the physical design for:
 - Single relations stored as foreign key columns
 - Multi relations stored in join tables
 - Engine metadata stored in dedicated internal tables
+- Only schema `link` fields create relation storage structures
+- Scalar fields never use join tables in the MVP
 
 ## SQLite Pragmas
 
@@ -36,7 +38,7 @@ For a schema type:
 type Post {
   required title: str
   body: str
-  required author: User
+  required link author: User
 }
 ```
 
@@ -58,7 +60,8 @@ The storage layer should use deterministic physical names:
 
 - type `User` -> table `user`
 - scalar field `name` -> column `name`
-- single relation `author` -> column `author_id`
+- single `link author` -> column `author_id`
+- multi `link posts` on `User` -> join table `user__posts`
 
 The exact naming transformation should be centralized in one module so SQL
 generation and migrations cannot drift.
@@ -89,7 +92,7 @@ Example:
 
 ```text
 type Post {
-  author: User
+  link author: User
 }
 ```
 
@@ -99,7 +102,7 @@ Maps to:
 author_id TEXT NULL REFERENCES user(id)
 ```
 
-`required author: User` becomes `NOT NULL`.
+`required link author: User` becomes `NOT NULL`.
 
 ## Multi Relation Mapping
 
@@ -111,7 +114,7 @@ Example:
 
 ```text
 type User {
-  posts: multi Post
+  multi link posts: Post
 }
 ```
 
@@ -133,6 +136,8 @@ Notes:
 - `position` is reserved for future stable ordering but may remain unused in the
   first runtime implementation.
 - The MVP treats multi links as unordered at the language level.
+- Only `multi link` fields produce join tables. Multi-valued scalar storage is
+  out of scope for the MVP.
 
 ## Implicit Identity
 
@@ -141,8 +146,8 @@ Every object row has:
 - `id TEXT PRIMARY KEY`
 
 The runtime is responsible for generating UUID values during insert when the
-query does not explicitly provide one. The schema language does not expose user
-control over identity definition in the MVP.
+query inserts a new object. The schema language and query language do not
+expose user control over identity definition in the MVP.
 
 ## Internal Metadata Tables
 
@@ -185,6 +190,7 @@ CREATE TABLE _engine_catalog_fields (
   cardinality TEXT NOT NULL,
   scalar_type TEXT NULL,
   target_object_id TEXT NULL,
+  is_implicit INTEGER NOT NULL,
   FOREIGN KEY (object_id) REFERENCES _engine_catalog_objects(object_id)
 );
 ```
@@ -220,6 +226,9 @@ This storage model is designed around these compiler assumptions:
 - scalar fields come from direct columns
 - single relations use joins on `<field>_id`
 - multi relations may use secondary queries or grouped joins
+- relation traversal is limited to declared `link` fields
+- backlinks or inferred inverse traversals do not exist in the MVP storage
+  contract
 
 The runtime is allowed to fetch nested multi relations with follow-up queries if
 that keeps the first implementation simpler and more predictable.
@@ -237,6 +246,7 @@ Suggested rule:
 - joined scalar and single-relation selections may be handled in one SQL query
 - multi-relation nested shapes may use batched follow-up queries keyed by parent
   ids
+- filter paths may traverse declared single-link chains such as `.author.id`
 
 This keeps the initial lowering model tractable.
 
@@ -271,7 +281,7 @@ type User {
 
 type Post {
   required title: str
-  required author: User
+  required link author: User
 }
 ```
 
