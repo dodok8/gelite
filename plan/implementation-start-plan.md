@@ -146,6 +146,128 @@ Suggested minimum behavior:
 - enumerate declared fields
 - inject implicit `id`
 
+## Recommended Test Plan For `schema`
+
+Because this project is also a learning project, implementation should start by
+writing tests that lock down the schema model contracts before expanding the
+API surface.
+
+The `schema` crate should be implemented in three test layers.
+
+### Layer 1: model representation tests
+
+These tests verify that the Rust data model can represent the schema semantics
+described in [schema.md](/home/dodok8/Development/gelite/spec/schema.md).
+
+Recommended tests:
+
+- `object_type_exposes_declared_scalar_fields`
+- `object_type_exposes_declared_link_fields`
+- `object_type_enumerates_declared_fields_in_definition_order`
+- `implicit_id_field_exists_on_every_object_type`
+- `implicit_id_field_is_required_uuid`
+- `declared_fields_do_not_include_implicit_id`
+
+What these tests should prove:
+
+- scalar fields preserve scalar type and cardinality
+- link fields preserve target type and cardinality
+- declared field order is deterministic
+- every object type exposes an implicit `id`
+- implicit `id` is available in lookup but not mixed into declared fields
+
+### Layer 2: catalog lookup tests
+
+These tests verify that `SchemaCatalog` is usable as a stable input to the
+future resolver layer.
+
+Recommended tests:
+
+- `catalog_can_lookup_type_by_name`
+- `catalog_returns_none_for_unknown_type`
+- `catalog_can_lookup_field_by_type_and_name`
+- `catalog_field_lookup_can_find_implicit_id`
+- `catalog_returns_none_for_unknown_field`
+- `catalog_preserves_type_iteration_order`
+- `catalog_preserves_field_iteration_order_within_type`
+
+What these tests should prove:
+
+- type lookup works by name
+- field lookup works by `(object_type, field_name)`
+- implicit fields are visible through lookup APIs
+- iteration order is deterministic for both types and fields
+
+### Layer 3: structural validation tests
+
+These tests verify the minimum semantic validation rules that belong in the
+schema catalog layer even before a parser exists.
+
+Recommended tests:
+
+- `rejects_duplicate_type_names`
+- `rejects_duplicate_field_names_within_type`
+- `rejects_explicit_id_field_declaration`
+- `rejects_unknown_link_target`
+- `rejects_reserved_scalar_type_name_as_object_type_name`
+
+These should be added after the basic model and lookup tests are passing.
+
+### Tests To Defer
+
+The following validation cases are real requirements from the schema spec, but
+they may be better enforced later by parser/AST design or by more explicit type
+construction APIs:
+
+- `rejects_multi_on_scalar_field`
+- `rejects_link_with_scalar_target`
+- `rejects_object_type_target_without_link`
+- `rejects_reserved_keyword_identifiers`
+
+If the Rust constructors make these invalid states unrepresentable, they do not
+need to be tested as runtime validation in the first pass.
+
+### Suggested Test Writing Order
+
+To keep failures easy to interpret, write tests in this order:
+
+1. `object_type_exposes_declared_scalar_fields`
+2. `object_type_exposes_declared_link_fields`
+3. `implicit_id_field_exists_on_every_object_type`
+4. `implicit_id_field_is_required_uuid`
+5. `declared_fields_do_not_include_implicit_id`
+6. `catalog_can_lookup_type_by_name`
+7. `catalog_can_lookup_field_by_type_and_name`
+8. `catalog_field_lookup_can_find_implicit_id`
+9. `catalog_preserves_type_iteration_order`
+10. `rejects_duplicate_type_names`
+11. `rejects_duplicate_field_names_within_type`
+12. `rejects_explicit_id_field_declaration`
+13. `rejects_unknown_link_target`
+
+This order is recommended because it separates:
+
+- data model design failures
+- lookup API failures
+- validation rule failures
+
+### Suggested Test Module Shape
+
+For the first pass, keep tests in `schema/src/lib.rs` or a nearby unit-test
+module grouped by concern:
+
+```rust
+#[cfg(test)]
+mod tests {
+    mod object_type_model {}
+    mod catalog_lookup {}
+    mod validation {}
+}
+```
+
+The main goal is that the test names themselves describe the schema contract
+clearly enough that work can be resumed later without rediscovering intent.
+
 ### In `query-ast`
 
 - `SelectQuery`
