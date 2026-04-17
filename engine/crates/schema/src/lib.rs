@@ -46,6 +46,7 @@ pub struct LinkField {
 pub struct ObjectType {
     name: String,
     declared_fields: Vec<Field>,
+    implicit_fields: Vec<Field>,
 }
 
 impl ObjectType {
@@ -53,6 +54,12 @@ impl ObjectType {
         Self {
             name: name.into(),
             declared_fields,
+            implicit_fields: vec![Field::Scalar(ScalarField {
+                name: "id".to_string(),
+                scalar_type: ScalarType::Uuid,
+                cardinality: SingleCardinality::Required,
+                is_implicit: true,
+            })],
         }
     }
 
@@ -65,6 +72,16 @@ impl ObjectType {
 
     pub fn declared_fields(&self) -> &[Field] {
         &self.declared_fields
+    }
+
+    pub fn find_field(&self, name: &str) -> Option<&Field> {
+        self.implicit_fields
+            .iter()
+            .find(|field| match field {
+                Field::Scalar(scalar) => scalar.name == name,
+                Field::Link(link) => link.name == name,
+            })
+            .or_else(|| self.find_declared_field(name))
     }
 }
 
@@ -101,7 +118,9 @@ mod tests {
                     assert_eq!(scalar.scalar_type, ScalarType::Str);
                     assert!(!scalar.is_implicit);
                 }
-                Field::Link(_) => panic!("expected scalar field"),
+                Field::Link(_) => {
+                    panic!("expected declared field `name` on `User` to be a scalar field")
+                }
             }
         }
 
@@ -136,7 +155,9 @@ mod tests {
                     assert_eq!(link.target_type_name, "User");
                     assert_eq!(link.cardinality, Cardinality::Required);
                 }
-                Field::Scalar(_) => panic!("expected link field"),
+                Field::Scalar(_) => {
+                    panic!("expected declared field `author` on `Book` to be a link field")
+                }
             }
         }
 
@@ -170,17 +191,87 @@ mod tests {
 
             match &fields[0] {
                 Field::Scalar(scalar) => assert_eq!(scalar.name, "title"),
-                Field::Link(_) => panic!("expected scalar field"),
+                Field::Link(_) => {
+                    panic!("expected declared field at index 0 on `Book` to be scalar `title`")
+                }
             }
 
             match &fields[1] {
                 Field::Link(link) => assert_eq!(link.name, "author"),
-                Field::Scalar(_) => panic!("expected link field"),
+                Field::Scalar(_) => {
+                    panic!("expected declared field at index 1 on `Book` to be link `author`")
+                }
             }
 
             match &fields[2] {
                 Field::Scalar(scalar) => assert_eq!(scalar.name, "published_at"),
-                Field::Link(_) => panic!("expected scalar field"),
+                Field::Link(_) => panic!(
+                    "expected declared field at index 2 on `Book` to be scalar `published_at`"
+                ),
+            }
+        }
+
+        #[test]
+        fn implicit_id_field_exists_on_every_object_type() {
+            let user = ObjectType::new(
+                "User",
+                vec![Field::Scalar(ScalarField {
+                    name: "name".to_string(),
+                    scalar_type: ScalarType::Str,
+                    cardinality: SingleCardinality::Required,
+                    is_implicit: false,
+                })],
+            );
+
+            let id_field = user
+                .find_field("id")
+                .expect("implicit field `id` should exist on every object type");
+
+            match id_field {
+                Field::Scalar(scalar) => {
+                    assert_eq!(scalar.name, "id");
+                    assert_eq!(scalar.scalar_type, ScalarType::Uuid);
+                    assert_eq!(scalar.cardinality, SingleCardinality::Required);
+                    assert!(scalar.is_implicit);
+                }
+                Field::Link(_) => {
+                    panic!("expected implicit field `id` on `User` to be a scalar field")
+                }
+            }
+        }
+
+        #[test]
+        fn find_field_returns_declared_fields_as_well() {
+            let book = ObjectType::new(
+                "Book",
+                vec![
+                    Field::Link(LinkField {
+                        name: "author".to_string(),
+                        target_type_name: "User".to_string(),
+                        cardinality: Cardinality::Required,
+                    }),
+                    Field::Scalar(ScalarField {
+                        name: "title".to_string(),
+                        scalar_type: ScalarType::Str,
+                        cardinality: SingleCardinality::Required,
+                        is_implicit: false,
+                    }),
+                ],
+            );
+
+            let field = book
+                .find_field("author")
+                .expect("declared field `author` should be visible through `find_field`");
+
+            match field {
+                Field::Link(link) => {
+                    assert_eq!(link.name, "author");
+                    assert_eq!(link.target_type_name, "User");
+                    assert_eq!(link.cardinality, Cardinality::Required);
+                }
+                Field::Scalar(_) => {
+                    panic!("expected visible field `author` on `Book` to be a link field")
+                }
             }
         }
     }
