@@ -1,1 +1,15 @@
+# Legacy local directory
 gel/
+
+# Rust build output
+target/
+engine/target/
+
+# Zed editor workspace settings
+.zed/
+
+# Codex local state
+.codex/
+
+# macOS finder metadata
+.DS_Store
