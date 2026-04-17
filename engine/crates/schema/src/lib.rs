@@ -56,11 +56,15 @@ impl ObjectType {
         }
     }
 
-    pub fn declared_field(&self, name: &str) -> Option<&Field> {
+    pub fn find_declared_field(&self, name: &str) -> Option<&Field> {
         self.declared_fields.iter().find(|field| match field {
             Field::Scalar(scalar) => scalar.name == name,
             Field::Link(link) => link.name == name,
         })
+    }
+
+    pub fn declared_fields(&self) -> &[Field] {
+        &self.declared_fields
     }
 }
 
@@ -69,12 +73,11 @@ mod tests {
     mod object_type_model {
 
         use crate::{
-            Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType,
-            SingleCardinality,
+            Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SingleCardinality,
         };
 
         #[test]
-        fn exposed_declared_scalar_fields() {
+        fn object_type_exposes_declared_scalar_fields() {
             let user = ObjectType::new(
                 "User",
                 vec![Field::Scalar(ScalarField {
@@ -86,8 +89,8 @@ mod tests {
             );
 
             let field = user
-                .declared_field("name")
-                .expect("name filed should exist");
+                .find_declared_field("name")
+                .expect("name field should exist");
 
             assert!(matches!(field, Field::Scalar(_)));
 
@@ -103,7 +106,7 @@ mod tests {
         }
 
         #[test]
-        fn exposed_declared_link_fields() {
+        fn object_type_exposes_declared_link_fields() {
             let book = ObjectType::new(
                 "Book",
                 vec![
@@ -122,7 +125,7 @@ mod tests {
             );
 
             let field = book
-                .declared_field("author")
+                .find_declared_field("author")
                 .expect("author field should exist");
 
             assert!(matches!(field, Field::Link(_)));
@@ -134,6 +137,50 @@ mod tests {
                     assert_eq!(link.cardinality, Cardinality::Required);
                 }
                 Field::Scalar(_) => panic!("expected link field"),
+            }
+        }
+
+        #[test]
+        fn object_type_enumerates_declared_fields_in_definition_order() {
+            let book = ObjectType::new(
+                "Book",
+                vec![
+                    Field::Scalar(ScalarField {
+                        name: "title".to_string(),
+                        scalar_type: ScalarType::Str,
+                        cardinality: SingleCardinality::Required,
+                        is_implicit: false,
+                    }),
+                    Field::Link(LinkField {
+                        name: "author".to_string(),
+                        target_type_name: "User".to_string(),
+                        cardinality: Cardinality::Required,
+                    }),
+                    Field::Scalar(ScalarField {
+                        name: "published_at".to_string(),
+                        scalar_type: ScalarType::DateTime,
+                        cardinality: SingleCardinality::Required,
+                        is_implicit: false,
+                    }),
+                ],
+            );
+            let fields = book.declared_fields();
+
+            assert_eq!(fields.len(), 3);
+
+            match &fields[0] {
+                Field::Scalar(scalar) => assert_eq!(scalar.name, "title"),
+                Field::Link(_) => panic!("expected scalar field"),
+            }
+
+            match &fields[1] {
+                Field::Link(link) => assert_eq!(link.name, "author"),
+                Field::Scalar(_) => panic!("expected link field"),
+            }
+
+            match &fields[2] {
+                Field::Scalar(scalar) => assert_eq!(scalar.name, "published_at"),
+                Field::Link(_) => panic!("expected scalar field"),
             }
         }
     }
