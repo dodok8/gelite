@@ -1,0 +1,10 @@
+[workspace]
+members = [
+  "crates/schema",
+  "crates/query-ast",
+  "crates/ir",
+  "crates/resolver",
+  "crates/dev-cli",
+]
+
+resolver = "2"

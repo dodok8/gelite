@@ -1,0 +1,9 @@
+[package]
+name = "resolver"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+schema = { path = "../schema" }
+query-ast = { path = "../query-ast" }
+ir = { path = "../ir" }
