@@ -13,7 +13,10 @@ fn object_type_exposes_declared_scalar_fields() {
         .find_declared_field("name")
         .expect("name field should exist");
 
-    assert!(matches!(field, Field::Scalar(_)));
+    assert!(field.is_scalar());
+    assert!(!field.is_link());
+    assert_eq!(field.cardinality(), crate::Cardinality::Required);
+    assert!(!field.is_implicit());
 
     match field {
         Field::Scalar(scalar) => {
@@ -36,7 +39,10 @@ fn object_type_exposes_declared_link_fields() {
         .find_declared_field("author")
         .expect("author field should exist");
 
-    assert!(matches!(field, Field::Link(_)));
+    assert!(field.is_link());
+    assert!(!field.is_scalar());
+    assert_eq!(field.cardinality(), crate::Cardinality::Required);
+    assert!(!field.is_implicit());
 
     match field {
         Field::Link(link) => {
@@ -87,6 +93,11 @@ fn implicit_id_field_exists_on_every_object_type() {
         .find_field("id")
         .expect("implicit field `id` should exist on every object type");
 
+    assert!(id_field.is_scalar());
+    assert!(!id_field.is_link());
+    assert_eq!(id_field.cardinality(), crate::Cardinality::Required);
+    assert!(id_field.is_implicit());
+
     match id_field {
         Field::Scalar(scalar) => {
             assert_eq!(scalar.name, "id");
@@ -107,6 +118,10 @@ fn find_field_returns_declared_fields_as_well() {
     let field = book
         .find_field("author")
         .expect("declared field `author` should be visible through `find_field`");
+
+    assert!(field.is_link());
+    assert_eq!(field.cardinality(), crate::Cardinality::Required);
+    assert!(!field.is_implicit());
 
     match field {
         Field::Link(link) => {

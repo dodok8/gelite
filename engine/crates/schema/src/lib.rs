@@ -67,6 +67,31 @@ impl Field {
             Field::Link(link) => link.name.as_str(),
         }
     }
+
+    pub fn cardinality(&self) -> Cardinality {
+        match self {
+            Field::Scalar(scalar) => match scalar.cardinality {
+                SingleCardinality::Optional => Cardinality::Optional,
+                SingleCardinality::Required => Cardinality::Required,
+            },
+            Field::Link(link) => link.cardinality,
+        }
+    }
+
+    pub fn is_implicit(&self) -> bool {
+        match self {
+            Field::Scalar(scalar) => scalar.is_implicit,
+            Field::Link(_) => false,
+        }
+    }
+
+    pub fn is_scalar(&self) -> bool {
+        matches!(self, Field::Scalar(_))
+    }
+
+    pub fn is_link(&self) -> bool {
+        matches!(self, Field::Link(_))
+    }
 }
 
 impl ObjectType {
