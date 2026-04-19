@@ -49,6 +49,11 @@ pub struct ObjectType {
     implicit_fields: Vec<Field>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaCatalog {
+    object_types: Vec<ObjectType>,
+}
+
 impl ObjectType {
     pub fn new(name: impl Into<String>, declared_fields: Vec<Field>) -> Self {
         Self {
@@ -82,6 +87,27 @@ impl ObjectType {
                 Field::Link(link) => link.name == name,
             })
             .or_else(|| self.find_declared_field(name))
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl SchemaCatalog {
+    pub fn new(object_types: Vec<ObjectType>) -> Self {
+        Self { object_types }
+    }
+
+    pub fn find_type(&self, name: &str) -> Option<&ObjectType> {
+        self.object_types
+            .iter()
+            .find(|object_type| object_type.name == name)
+    }
+
+    pub fn find_field(&self, type_name: &str, field_name: &str) -> Option<&Field> {
+        self.find_type(type_name)
+            .and_then(|object_type| object_type.find_field(field_name))
     }
 }
 
@@ -275,7 +301,114 @@ mod tests {
             }
         }
     }
-    mod catalog_lookup { /* 2차 */
+    mod catalog_lookup {
+        use crate::{
+            Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
+            SingleCardinality,
+        };
+        #[test]
+        fn catalog_can_lookup_type_by_name() {
+            let user = ObjectType::new(
+                "User",
+                vec![Field::Scalar(ScalarField {
+                    name: "name".to_string(),
+                    scalar_type: ScalarType::Str,
+                    cardinality: SingleCardinality::Required,
+                    is_implicit: false,
+                })],
+            );
+
+            let book = ObjectType::new(
+                "Book",
+                vec![
+                    Field::Scalar(ScalarField {
+                        name: "title".to_string(),
+                        scalar_type: ScalarType::Str,
+                        cardinality: SingleCardinality::Required,
+                        is_implicit: false,
+                    }),
+                    Field::Link(LinkField {
+                        name: "author".to_string(),
+                        target_type_name: "User".to_string(),
+                        cardinality: Cardinality::Required,
+                    }),
+                ],
+            );
+
+            let schema = SchemaCatalog::new(vec![user, book]);
+
+            let object_type = schema
+                .find_type("User")
+                .expect("type `User` should be visible through catalog lookup");
+
+            assert_eq!(object_type.name(), "User");
+        }
+
+        #[test]
+        fn catalog_returns_none_for_unknown_type() {
+            let user = ObjectType::new(
+                "User",
+                vec![Field::Scalar(ScalarField {
+                    name: "name".to_string(),
+                    scalar_type: ScalarType::Str,
+                    cardinality: SingleCardinality::Required,
+                    is_implicit: false,
+                })],
+            );
+
+            let schema = SchemaCatalog::new(vec![user]);
+
+            let missing_type = schema.find_type("Comment");
+
+            assert!(missing_type.is_none());
+        }
+
+        #[test]
+        fn catalog_can_lookup_field_by_type_and_name() {
+            let user = ObjectType::new(
+                "User",
+                vec![Field::Scalar(ScalarField {
+                    name: "name".to_string(),
+                    scalar_type: ScalarType::Str,
+                    cardinality: SingleCardinality::Required,
+                    is_implicit: false,
+                })],
+            );
+
+            let book = ObjectType::new(
+                "Book",
+                vec![
+                    Field::Scalar(ScalarField {
+                        name: "title".to_string(),
+                        scalar_type: ScalarType::Str,
+                        cardinality: SingleCardinality::Required,
+                        is_implicit: false,
+                    }),
+                    Field::Link(LinkField {
+                        name: "author".to_string(),
+                        target_type_name: "User".to_string(),
+                        cardinality: Cardinality::Required,
+                    }),
+                ],
+            );
+
+            let schema = SchemaCatalog::new(vec![user, book]);
+
+            let field = schema
+                .find_field("Book", "author")
+                .expect("field `author` on `Book` should be visible through catalog lookup");
+
+            match field {
+                Field::Link(link) => {
+                    assert_eq!(link.name, "author");
+                    assert_eq!(link.target_type_name, "User");
+                    assert_eq!(link.cardinality, Cardinality::Required);
+                }
+                Field::Scalar(_) => {
+                    panic!("expected field `author` on `Book` to be a link field")
+                }
+            }
+        }
     }
     mod validation { /* 3차 */
     }
