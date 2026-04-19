@@ -279,6 +279,183 @@ clearly enough that work can be resumed later without rediscovering intent.
 - `Literal`
 - `OrderExpr`
 
+## Recommended Next Step After `schema`
+
+Once the `schema` crate can model valid schemas, expose lookup APIs, and reject
+invalid schema structure, the next implementation target should be `query-ast`.
+
+This is the recommended next step because:
+
+- `resolver` needs a concrete input model before it can lower anything
+- `schema` is now stable enough to serve as the validation target
+- implementing `ir` alone first would leave no producer for the data
+
+The goal of `query-ast` is not parsing yet. The first goal is to define a small
+Rust AST that can be constructed directly in tests and experiments.
+
+## Recommended Scope For `query-ast`
+
+The first `query-ast` pass should support only the minimum AST needed for one
+resolved `select` query.
+
+Include:
+
+- root object selection
+- output shape
+- nested single-link shape
+- filter expressions over paths and literals
+- order expressions over paths
+- limit
+- offset
+
+Do not include yet:
+
+- parser tokens or spans
+- pretty-printing
+- insert/update/delete
+- functions beyond the minimum needed for filters
+- computed fields
+- advanced query operators
+
+## Recommended Data Structures For `query-ast`
+
+The first pass only needs a small set of AST nodes.
+
+### Core query nodes
+
+- `SelectQuery`
+- `Shape`
+- `ShapeItem`
+- `Path`
+- `PathStep`
+- `Expr`
+- `Literal`
+- `OrderExpr`
+
+### Suggested early shape
+
+This is descriptive, not binding API:
+
+- `SelectQuery`
+  - root type name
+  - shape
+  - optional filter expression
+  - zero or more order expressions
+  - optional limit
+  - optional offset
+- `Shape`
+  - ordered shape items
+- `ShapeItem`
+  - output field name or selected path step
+  - optional nested child shape
+- `Path`
+  - ordered path steps
+- `Expr`
+  - literal
+  - path expression
+  - compare expression
+  - boolean combinations if needed
+- `Literal`
+  - string
+  - integer
+  - float
+  - bool
+  - null if needed by the query spec
+- `OrderExpr`
+  - path
+  - direction
+
+## Recommended Test Plan For `query-ast`
+
+As with `schema`, start by testing data-model behavior before adding more API
+surface.
+
+### Layer 1: query shape representation tests
+
+Recommended tests:
+
+- `select_query_can_store_root_type_name`
+- `shape_can_contain_scalar_field_selection`
+- `shape_can_contain_nested_link_selection`
+- `shape_preserves_item_definition_order`
+
+What these tests should prove:
+
+- the root selected type is stored explicitly
+- scalar shape selections can be represented
+- nested link selections can be represented
+- shape order is deterministic
+
+### Layer 2: expression and path tests
+
+Recommended tests:
+
+- `path_can_represent_single_step_field_access`
+- `path_can_represent_multi_step_link_traversal`
+- `literal_expr_can_store_string_values`
+- `compare_expr_can_reference_path_and_literal`
+- `order_expr_can_reference_a_path`
+
+What these tests should prove:
+
+- path segments are explicit and ordered
+- filters can target schema fields through paths
+- literals preserve value kinds
+- ordering can be attached to a path
+
+### Layer 3: full query assembly tests
+
+Recommended tests:
+
+- `select_query_can_store_filter_order_and_limit`
+- `select_query_can_store_nested_shape_with_filter_inputs`
+
+What these tests should prove:
+
+- one complete `select` query can be assembled in Rust
+- the AST contains all inputs the resolver will need
+
+## Suggested Test Writing Order For `query-ast`
+
+To keep the first pass small and easy to reason about, write tests in this
+order:
+
+1. `select_query_can_store_root_type_name`
+2. `shape_can_contain_scalar_field_selection`
+3. `shape_can_contain_nested_link_selection`
+4. `shape_preserves_item_definition_order`
+5. `path_can_represent_single_step_field_access`
+6. `compare_expr_can_reference_path_and_literal`
+7. `order_expr_can_reference_a_path`
+8. `select_query_can_store_filter_order_and_limit`
+
+This order is recommended because it moves from:
+
+- data shape representation
+- to path/expression inputs
+- to one full resolver-ready query
+
+## First Hardcoded `query-ast` Example
+
+The first AST built in tests should match the first resolver milestone:
+
+```text
+select Post {
+  id,
+  title,
+  author: {
+    id,
+    name
+  }
+}
+filter .author.id = "00000000-0000-0000-0000-000000000001"
+order by .title asc
+limit 10
+```
+
+The `query-ast` crate does not need to parse this string yet. It only needs to
+represent this query faithfully as Rust data.
+
 ### In `ir`
 
 - `SelectQuery`
