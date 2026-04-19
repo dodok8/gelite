@@ -1,6 +1,6 @@
 mod fixtures;
 
-use crate::{Field, ScalarType, SchemaCatalog, SingleCardinality};
+use crate::{Field, ScalarType, SchemaCatalog, SchemaError, SingleCardinality};
 use fixtures::{book_type, schema_with_user_and_book, user_type};
 
 #[test]
@@ -203,8 +203,16 @@ fn catalog_preserves_type_iteration_order() {
     assert_eq!(object_types[1].name(), "Book");
 }
 
-// #[test]
-// fn rejects_duplicate_type_names() {
-//     let user1 = user_type();
-//     let user2 = user_type();
-// }
+#[test]
+fn rejects_duplicate_type_names() {
+    let user1 = user_type();
+    let user2 = user_type();
+
+    let result = SchemaCatalog::try_new(vec![user1, user2]);
+    assert_eq!(
+        result,
+        Err(SchemaError::DuplicateTypeName {
+            name: "User".to_string()
+        })
+    );
+}

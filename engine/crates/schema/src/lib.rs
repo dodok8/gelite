@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScalarType {
     Str,
@@ -96,7 +98,22 @@ impl ObjectType {
 
 impl SchemaCatalog {
     pub fn try_new(object_types: Vec<ObjectType>) -> Result<Self, SchemaError> {
+        Self::validate_unique_type_names(&object_types)?;
         Ok(Self { object_types })
+    }
+
+    fn validate_unique_type_names(object_types: &[ObjectType]) -> Result<(), SchemaError> {
+        let mut seen_types_names = HashSet::new();
+
+        for object_type in object_types {
+            let inserted = seen_types_names.insert(object_type.name().to_string());
+            if !inserted {
+                return Err(SchemaError::DuplicateTypeName {
+                    name: object_type.name().to_string(),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn find_type(&self, name: &str) -> Option<&ObjectType> {
