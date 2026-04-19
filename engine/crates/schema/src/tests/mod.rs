@@ -295,3 +295,25 @@ fn rejects_unknown_link_target() {
         })
     )
 }
+
+#[test]
+fn rejects_reserved_scalar_type_name_as_object_type_name() {
+    let reserved_name_type = ObjectType::new(
+        "str",
+        vec![Field::Scalar(ScalarField {
+            name: "value".to_string(),
+            scalar_type: ScalarType::Str,
+            cardinality: SingleCardinality::Optional,
+            is_implicit: false,
+        })],
+    );
+
+    let result = SchemaCatalog::try_new(vec![reserved_name_type]);
+
+    assert_eq!(
+        result,
+        Err(SchemaError::ReservedScalarTypeNameAsObjectTypeName {
+            name: "str".to_string(),
+        })
+    )
+}

@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
 const IMPLICIT_ID_FIELD_NAME: &str = "id";
+const BUILTIN_SCALAR_TYPE_NAMES: &[&str] =
+    &["str", "int64", "float64", "bool", "uuid", "datetime"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScalarType {
@@ -109,6 +111,7 @@ impl SchemaCatalog {
         Self::validate_unique_field_names_within_type(&object_types)?;
         Self::validate_no_explicit_id_field_declaration(&object_types)?;
         Self::validate_no_unknown_link_target(&object_types)?;
+        Self::validate_no_reserved_scalar_type_name_as_object_type_name(&object_types)?;
         Ok(Self { object_types })
     }
 
@@ -193,6 +196,22 @@ impl SchemaCatalog {
         Ok(())
     }
 
+    fn validate_no_reserved_scalar_type_name_as_object_type_name(
+        object_types: &[ObjectType],
+    ) -> Result<(), SchemaError> {
+        for object_type in object_types {
+            let type_name = object_type.name();
+
+            if BUILTIN_SCALAR_TYPE_NAMES.contains(&type_name) {
+                return Err(SchemaError::ReservedScalarTypeNameAsObjectTypeName {
+                    name: type_name.to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn find_type(&self, name: &str) -> Option<&ObjectType> {
         self.object_types
             .iter()
@@ -225,6 +244,9 @@ pub enum SchemaError {
         object_type: String,
         field_name: String,
         target_type: String,
+    },
+    ReservedScalarTypeNameAsObjectTypeName {
+        name: String,
     },
 }
 
