@@ -249,3 +249,33 @@ fn rejects_duplicate_field_names_within_type() {
         })
     )
 }
+
+#[test]
+fn rejects_explicit_id_field_declaration() {
+    let user = ObjectType::new(
+        "User",
+        vec![
+            Field::Scalar(ScalarField {
+                name: "name".to_string(),
+                scalar_type: ScalarType::Str,
+                cardinality: SingleCardinality::Optional,
+                is_implicit: false,
+            }),
+            Field::Scalar(ScalarField {
+                name: "id".to_string(),
+                scalar_type: ScalarType::Int64,
+                cardinality: SingleCardinality::Optional,
+                is_implicit: false,
+            }),
+        ],
+    );
+
+    let result = SchemaCatalog::try_new(vec![user]);
+
+    assert_eq!(
+        result,
+        Err(SchemaError::ExplicitIdFieldDeclaration {
+            object_type: "User".to_string(),
+        })
+    )
+}

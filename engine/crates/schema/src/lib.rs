@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+const IMPLICIT_ID_FIELD_NAME: &str = "id";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScalarType {
     Str,
@@ -56,13 +58,22 @@ pub struct SchemaCatalog {
     object_types: Vec<ObjectType>,
 }
 
+impl Field {
+    pub fn name(&self) -> &str {
+        match self {
+            Field::Scalar(scalar) => scalar.name.as_str(),
+            Field::Link(link) => link.name.as_str(),
+        }
+    }
+}
+
 impl ObjectType {
     pub fn new(name: impl Into<String>, declared_fields: Vec<Field>) -> Self {
         Self {
             name: name.into(),
             declared_fields,
             implicit_fields: vec![Field::Scalar(ScalarField {
-                name: "id".to_string(),
+                name: IMPLICIT_ID_FIELD_NAME.to_string(),
                 scalar_type: ScalarType::Uuid,
                 cardinality: SingleCardinality::Required,
                 is_implicit: true,
@@ -71,10 +82,7 @@ impl ObjectType {
     }
 
     pub fn find_declared_field(&self, name: &str) -> Option<&Field> {
-        self.declared_fields.iter().find(|field| match field {
-            Field::Scalar(scalar) => scalar.name == name,
-            Field::Link(link) => link.name == name,
-        })
+        self.declared_fields.iter().find(|field| field.name() == name)
     }
 
     pub fn declared_fields(&self) -> &[Field] {
@@ -84,10 +92,7 @@ impl ObjectType {
     pub fn find_field(&self, name: &str) -> Option<&Field> {
         self.implicit_fields
             .iter()
-            .find(|field| match field {
-                Field::Scalar(scalar) => scalar.name == name,
-                Field::Link(link) => link.name == name,
-            })
+            .find(|field| field.name() == name)
             .or_else(|| self.find_declared_field(name))
     }
 
@@ -100,6 +105,7 @@ impl SchemaCatalog {
     pub fn try_new(object_types: Vec<ObjectType>) -> Result<Self, SchemaError> {
         Self::validate_unique_type_names(&object_types)?;
         Self::validate_unique_field_names_within_type(&object_types)?;
+        Self::validate_no_explicit_id_field_declaration(&object_types)?;
         Ok(Self { object_types })
     }
 
@@ -124,10 +130,7 @@ impl SchemaCatalog {
             let mut seen_field_names = HashSet::new();
 
             for field in object_type.declared_fields() {
-                let field_name = match field {
-                    Field::Scalar(scalar) => scalar.name.as_str(),
-                    Field::Link(link) => link.name.as_str(),
-                };
+                let field_name = field.name();
 
                 let inserted = seen_field_names.insert(field_name);
 
@@ -140,6 +143,23 @@ impl SchemaCatalog {
             }
         }
 
+        Ok(())
+    }
+
+    fn validate_no_explicit_id_field_declaration(
+        object_types: &[ObjectType],
+    ) -> Result<(), SchemaError> {
+        for object_type in object_types {
+            for field in object_type.declared_fields() {
+                let field_name = field.name();
+
+                if field_name == IMPLICIT_ID_FIELD_NAME {
+                    return Err(SchemaError::ExplicitIdFieldDeclaration {
+                        object_type: object_type.name().to_string(),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 
@@ -167,6 +187,9 @@ pub enum SchemaError {
     DuplicateFieldName {
         object_type: String,
         field_name: String,
+    },
+    ExplicitIdFieldDeclaration {
+        object_type: String,
     },
 }
 
