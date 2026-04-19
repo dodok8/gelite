@@ -99,6 +99,7 @@ impl ObjectType {
 impl SchemaCatalog {
     pub fn try_new(object_types: Vec<ObjectType>) -> Result<Self, SchemaError> {
         Self::validate_unique_type_names(&object_types)?;
+        Self::validate_unique_field_names_within_type(&object_types)?;
         Ok(Self { object_types })
     }
 
@@ -113,6 +114,32 @@ impl SchemaCatalog {
                 });
             }
         }
+        Ok(())
+    }
+
+    fn validate_unique_field_names_within_type(
+        object_types: &[ObjectType],
+    ) -> Result<(), SchemaError> {
+        for object_type in object_types {
+            let mut seen_field_names = HashSet::new();
+
+            for field in object_type.declared_fields() {
+                let field_name = match field {
+                    Field::Scalar(scalar) => scalar.name.as_str(),
+                    Field::Link(link) => link.name.as_str(),
+                };
+
+                let inserted = seen_field_names.insert(field_name);
+
+                if !inserted {
+                    return Err(SchemaError::DuplicateFieldName {
+                        object_type: object_type.name().to_string(),
+                        field_name: field_name.to_string(),
+                    });
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -134,7 +161,13 @@ impl SchemaCatalog {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
-    DuplicateTypeName { name: String },
+    DuplicateTypeName {
+        name: String,
+    },
+    DuplicateFieldName {
+        object_type: String,
+        field_name: String,
+    },
 }
 
 #[cfg(test)]

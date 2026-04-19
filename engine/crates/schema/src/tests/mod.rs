@@ -1,6 +1,8 @@
 mod fixtures;
 
-use crate::{Field, ScalarType, SchemaCatalog, SchemaError, SingleCardinality};
+use crate::{
+    Field, ObjectType, ScalarField, ScalarType, SchemaCatalog, SchemaError, SingleCardinality,
+};
 use fixtures::{book_type, schema_with_user_and_book, user_type};
 
 #[test]
@@ -215,4 +217,35 @@ fn rejects_duplicate_type_names() {
             name: "User".to_string()
         })
     );
+}
+
+#[test]
+fn rejects_duplicate_field_names_within_type() {
+    let user = ObjectType::new(
+        "User",
+        vec![
+            Field::Scalar(ScalarField {
+                name: "name".to_string(),
+                scalar_type: ScalarType::Str,
+                cardinality: SingleCardinality::Optional,
+                is_implicit: false,
+            }),
+            Field::Scalar(ScalarField {
+                name: "name".to_string(),
+                scalar_type: ScalarType::Str,
+                cardinality: SingleCardinality::Optional,
+                is_implicit: false,
+            }),
+        ],
+    );
+
+    let result = SchemaCatalog::try_new(vec![user]);
+
+    assert_eq!(
+        result,
+        Err(SchemaError::DuplicateFieldName {
+            object_type: "User".to_string(),
+            field_name: "name".to_string()
+        })
+    )
 }
