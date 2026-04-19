@@ -82,7 +82,9 @@ impl ObjectType {
     }
 
     pub fn find_declared_field(&self, name: &str) -> Option<&Field> {
-        self.declared_fields.iter().find(|field| field.name() == name)
+        self.declared_fields
+            .iter()
+            .find(|field| field.name() == name)
     }
 
     pub fn declared_fields(&self) -> &[Field] {
@@ -106,6 +108,7 @@ impl SchemaCatalog {
         Self::validate_unique_type_names(&object_types)?;
         Self::validate_unique_field_names_within_type(&object_types)?;
         Self::validate_no_explicit_id_field_declaration(&object_types)?;
+        Self::validate_no_unknown_link_target(&object_types)?;
         Ok(Self { object_types })
     }
 
@@ -163,6 +166,33 @@ impl SchemaCatalog {
         Ok(())
     }
 
+    fn validate_no_unknown_link_target(object_types: &[ObjectType]) -> Result<(), SchemaError> {
+        let known_type_names: HashSet<&str> = object_types
+            .iter()
+            .map(|object_type| object_type.name())
+            .collect();
+
+        for object_type in object_types {
+            for field in object_type.declared_fields() {
+                let Field::Link(link) = field else {
+                    continue;
+                };
+
+                let target_type = link.target_type_name.as_str();
+
+                if !known_type_names.contains(target_type) {
+                    return Err(SchemaError::UnknownLinkTarget {
+                        object_type: object_type.name().to_string(),
+                        field_name: field.name().to_string(),
+                        target_type: target_type.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn find_type(&self, name: &str) -> Option<&ObjectType> {
         self.object_types
             .iter()
@@ -190,6 +220,11 @@ pub enum SchemaError {
     },
     ExplicitIdFieldDeclaration {
         object_type: String,
+    },
+    UnknownLinkTarget {
+        object_type: String,
+        field_name: String,
+        target_type: String,
     },
 }
 

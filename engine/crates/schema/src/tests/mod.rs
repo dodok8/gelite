@@ -279,3 +279,19 @@ fn rejects_explicit_id_field_declaration() {
         })
     )
 }
+
+#[test]
+fn rejects_unknown_link_target() {
+    let book = book_type();
+
+    let result = SchemaCatalog::try_new(vec![book]);
+
+    assert_eq!(
+        result,
+        Err(SchemaError::UnknownLinkTarget {
+            object_type: "Book".to_string(),
+            field_name: "author".to_string(),
+            target_type: "User".to_string()
+        })
+    )
+}
