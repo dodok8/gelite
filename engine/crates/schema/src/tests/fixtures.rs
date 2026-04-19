@@ -41,5 +41,5 @@ pub fn book_type() -> ObjectType {
 }
 
 pub fn schema_with_user_and_book() -> SchemaCatalog {
-    SchemaCatalog::new(vec![user_type(), book_type()])
+    SchemaCatalog::try_new(vec![user_type(), book_type()]).unwrap()
 }

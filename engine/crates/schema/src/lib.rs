@@ -95,8 +95,8 @@ impl ObjectType {
 }
 
 impl SchemaCatalog {
-    pub fn new(object_types: Vec<ObjectType>) -> Self {
-        Self { object_types }
+    pub fn try_new(object_types: Vec<ObjectType>) -> Result<Self, SchemaError> {
+        Ok(Self { object_types })
     }
 
     pub fn find_type(&self, name: &str) -> Option<&ObjectType> {
@@ -113,6 +113,11 @@ impl SchemaCatalog {
     pub fn object_types(&self) -> &[ObjectType] {
         &self.object_types
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaError {
+    DuplicateTypeName { name: String },
 }
 
 #[cfg(test)]

@@ -131,7 +131,7 @@ fn catalog_can_lookup_type_by_name() {
 
 #[test]
 fn catalog_returns_none_for_unknown_type() {
-    let schema = SchemaCatalog::new(vec![user_type()]);
+    let schema = SchemaCatalog::try_new(vec![user_type()]).unwrap();
 
     let missing_type = schema.find_type("Comment");
 
@@ -197,8 +197,14 @@ fn catalog_returns_none_for_unknown_type_when_looking_up_field() {
 
 #[test]
 fn catalog_preserves_type_iteration_order() {
-    let schema = SchemaCatalog::new(vec![user_type(), book_type()]);
+    let schema = SchemaCatalog::try_new(vec![user_type(), book_type()]).unwrap();
     let object_types = schema.object_types();
     assert_eq!(object_types[0].name(), "User");
     assert_eq!(object_types[1].name(), "Book");
 }
+
+// #[test]
+// fn rejects_duplicate_type_names() {
+//     let user1 = user_type();
+//     let user2 = user_type();
+// }
