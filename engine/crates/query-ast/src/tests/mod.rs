@@ -1,4 +1,7 @@
-use crate::{CompareExpr, CompareOp, Expr, Literal, Path, PathStep, SelectQuery, Shape, ShapeItem};
+use crate::{
+    CompareExpr, CompareOp, Expr, Literal, OrderDirection, OrderExpr, Path, PathStep, SelectQuery,
+    Shape, ShapeItem,
+};
 
 #[test]
 fn select_query_can_store_root_type_name() {
@@ -122,4 +125,14 @@ fn compare_expr_can_reference_path_and_literal() {
         }
         _ => panic!("expected expression to be a compare expression"),
     }
+}
+
+#[test]
+fn order_expr_can_reference_a_path() {
+    let path = Path::new(vec![PathStep::new("title")]);
+    let order = OrderExpr::new(path, crate::OrderDirection::Asc);
+
+    assert_eq!(order.path().steps().len(), 1);
+    assert_eq!(order.path().steps()[0].field_name(), "title");
+    assert_eq!(order.direction(), OrderDirection::Asc);
 }

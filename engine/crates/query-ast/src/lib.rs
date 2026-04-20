@@ -161,15 +161,15 @@ impl PathStep {
 
 impl OrderExpr {
     pub fn new(path: Path, direction: OrderDirection) -> Self {
-        todo!()
+        Self { path, direction }
     }
 
     pub fn path(&self) -> &Path {
-        todo!()
+        &self.path
     }
 
     pub fn direction(&self) -> OrderDirection {
-        todo!()
+        self.direction
     }
 }
 
