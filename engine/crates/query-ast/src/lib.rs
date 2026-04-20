@@ -173,5 +173,20 @@ impl OrderExpr {
     }
 }
 
+impl CompareExpr {
+    pub fn new(left: Path, op: CompareOp, right: Literal) -> Self {
+        Self { left, op, right }
+    }
+    pub fn left(&self) -> &Path {
+        &self.left
+    }
+    pub fn op(&self) -> CompareOp {
+        self.op
+    }
+    pub fn right(&self) -> &Literal {
+        &self.right
+    }
+}
+
 #[cfg(test)]
 mod tests;

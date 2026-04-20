@@ -1,4 +1,4 @@
-use crate::{Path, PathStep, SelectQuery, Shape, ShapeItem};
+use crate::{CompareExpr, CompareOp, Expr, Literal, Path, PathStep, SelectQuery, Shape, ShapeItem};
 
 #[test]
 fn select_query_can_store_root_type_name() {
@@ -84,4 +84,42 @@ fn path_can_represent_multi_step_link_traversal() {
     assert_eq!(steps.len(), 2);
     assert_eq!(steps[0].field_name(), "author");
     assert_eq!(steps[1].field_name(), "id");
+}
+
+#[test]
+fn literal_expr_can_store_string_values() {
+    let hello = Literal::String("hello".to_string());
+
+    match hello {
+        Literal::String(val) => {
+            assert_eq!(val, "hello".to_string());
+        }
+        _ => panic!("Expected String"),
+    }
+}
+
+#[test]
+fn compare_expr_can_reference_path_and_literal() {
+    let left_path = Path::new(vec![PathStep::new("author"), PathStep::new("id")]);
+
+    let right_literal = Literal::String("00000000-0000-0000-0000-000000000001".to_string());
+
+    let expr = Expr::Compare(CompareExpr::new(left_path, CompareOp::Eq, right_literal));
+
+    match expr {
+        Expr::Compare(compare) => {
+            assert_eq!(compare.left().steps().len(), 2);
+            assert_eq!(compare.left().steps()[0].field_name(), "author");
+            assert_eq!(compare.left().steps()[1].field_name(), "id");
+            assert_eq!(compare.op(), CompareOp::Eq);
+
+            match compare.right() {
+                Literal::String(value) => {
+                    assert_eq!(value, "00000000-0000-0000-0000-000000000001");
+                }
+                _ => panic!("expected compare expression right side to be a string literal"),
+            }
+        }
+        _ => panic!("expected expression to be a compare expression"),
+    }
 }
