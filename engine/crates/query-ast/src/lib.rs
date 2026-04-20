@@ -1,14 +1,177 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectQuery {
+    root_type_name: String,
+    shape: Shape,
+    filter: Option<Expr>,
+    order_by: Vec<OrderExpr>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shape {
+    items: Vec<ShapeItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapeItem {
+    path: Path,
+    child_shape: Option<Shape>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Path {
+    steps: Vec<PathStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathStep {
+    field_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Literal(Literal),
+    Path(Path),
+    Compare(CompareExpr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompareExpr {
+    left: Path,
+    op: CompareOp,
+    right: Literal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompareOp {
+    Eq,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    String(String),
+    Int64(i64),
+    Float64(f64),
+    Bool(bool),
+    Null,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderExpr {
+    path: Path,
+    direction: OrderDirection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderDirection {
+    Asc,
+    Desc,
+}
+
+impl SelectQuery {
+    pub fn new(
+        root_type_name: impl Into<String>,
+        shape: Shape,
+        filter: Option<Expr>,
+        order_by: Vec<OrderExpr>,
+        limit: Option<u64>,
+        offset: Option<u64>,
+    ) -> Self {
+        Self {
+            root_type_name: root_type_name.into(),
+            shape,
+            filter,
+            order_by,
+            limit,
+            offset,
+        }
+    }
+
+    pub fn root_type_name(&self) -> &str {
+        &self.root_type_name
+    }
+
+    pub fn shape(&self) -> &Shape {
+        todo!()
+    }
+
+    pub fn filter(&self) -> Option<&Expr> {
+        todo!()
+    }
+
+    pub fn order_by(&self) -> &[OrderExpr] {
+        todo!()
+    }
+
+    pub fn limit(&self) -> Option<u64> {
+        todo!()
+    }
+
+    pub fn offset(&self) -> Option<u64> {
+        todo!()
+    }
+}
+
+impl Shape {
+    pub fn new(items: Vec<ShapeItem>) -> Self {
+        Self { items }
+    }
+
+    pub fn items(&self) -> &[ShapeItem] {
+        &self.items
+    }
+}
+
+impl ShapeItem {
+    pub fn new(path: Path, child_shape: Option<Shape>) -> Self {
+        Self { path, child_shape }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn child_shape(&self) -> Option<&Shape> {
+        self.child_shape.as_ref()
+    }
+}
+
+impl Path {
+    pub fn new(steps: Vec<PathStep>) -> Self {
+        Path { steps }
+    }
+
+    pub fn steps(&self) -> &[PathStep] {
+        self.steps.as_ref()
+    }
+}
+
+impl PathStep {
+    pub fn new(field_name: impl Into<String>) -> Self {
+        Self {
+            field_name: field_name.into(),
+        }
+    }
+
+    pub fn field_name(&self) -> &str {
+        &self.field_name
+    }
+}
+
+impl OrderExpr {
+    pub fn new(path: Path, direction: OrderDirection) -> Self {
+        todo!()
+    }
+
+    pub fn path(&self) -> &Path {
+        todo!()
+    }
+
+    pub fn direction(&self) -> OrderDirection {
+        todo!()
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+mod tests;
