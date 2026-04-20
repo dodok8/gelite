@@ -93,23 +93,23 @@ impl SelectQuery {
     }
 
     pub fn shape(&self) -> &Shape {
-        todo!()
+        &self.shape
     }
 
     pub fn filter(&self) -> Option<&Expr> {
-        todo!()
+        self.filter.as_ref()
     }
 
     pub fn order_by(&self) -> &[OrderExpr] {
-        todo!()
+        &self.order_by
     }
 
     pub fn limit(&self) -> Option<u64> {
-        todo!()
+        self.limit
     }
 
     pub fn offset(&self) -> Option<u64> {
-        todo!()
+        self.offset
     }
 }
 

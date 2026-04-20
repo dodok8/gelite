@@ -136,3 +136,61 @@ fn order_expr_can_reference_a_path() {
     assert_eq!(order.path().steps()[0].field_name(), "title");
     assert_eq!(order.direction(), OrderDirection::Asc);
 }
+
+#[test]
+fn select_query_can_store_filter_order_and_limit() {
+    let shape = Shape::new(vec![
+        ShapeItem::new(Path::new(vec![PathStep::new("id")]), None),
+        ShapeItem::new(Path::new(vec![PathStep::new("title")]), None),
+    ]);
+
+    let filter = Expr::Compare(CompareExpr::new(
+        Path::new(vec![PathStep::new("author"), PathStep::new("id")]),
+        CompareOp::Eq,
+        Literal::String("00000000-0000-0000-0000-000000000001".to_string()),
+    ));
+
+    let order = OrderExpr::new(
+        Path::new(vec![PathStep::new("title")]),
+        OrderDirection::Asc,
+    );
+
+    let query = SelectQuery::new(
+        "Post",
+        shape,
+        Some(filter),
+        vec![order],
+        Some(10),
+        Some(0),
+    );
+
+    assert_eq!(query.root_type_name(), "Post");
+    assert_eq!(query.shape().items().len(), 2);
+
+    let filter = query
+        .filter()
+        .expect("select query should store its filter expression");
+
+    match filter {
+        Expr::Compare(compare) => {
+            assert_eq!(compare.left().steps().len(), 2);
+            assert_eq!(compare.left().steps()[0].field_name(), "author");
+            assert_eq!(compare.left().steps()[1].field_name(), "id");
+            assert_eq!(compare.op(), CompareOp::Eq);
+
+            match compare.right() {
+                Literal::String(value) => {
+                    assert_eq!(value, "00000000-0000-0000-0000-000000000001");
+                }
+                _ => panic!("expected select query filter to store a string literal"),
+            }
+        }
+        _ => panic!("expected select query filter to be a compare expression"),
+    }
+
+    assert_eq!(query.order_by().len(), 1);
+    assert_eq!(query.order_by()[0].path().steps()[0].field_name(), "title");
+    assert_eq!(query.order_by()[0].direction(), OrderDirection::Asc);
+    assert_eq!(query.limit(), Some(10));
+    assert_eq!(query.offset(), Some(0));
+}
