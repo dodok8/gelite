@@ -66,3 +66,22 @@ fn shape_preserves_item_definition_order() {
     assert_eq!(items[1].path().steps()[0].field_name(), "title");
     assert_eq!(items[2].path().steps()[0].field_name(), "author");
 }
+
+#[test]
+fn path_can_represent_single_step_field_access() {
+    let path = Path::new(vec![PathStep::new("title")]);
+    let steps = path.steps();
+
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].field_name(), "title");
+}
+
+#[test]
+fn path_can_represent_multi_step_link_traversal() {
+    let path = Path::new(vec![PathStep::new("author"), PathStep::new("id")]);
+    let steps = path.steps();
+
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[0].field_name(), "author");
+    assert_eq!(steps[1].field_name(), "id");
+}
