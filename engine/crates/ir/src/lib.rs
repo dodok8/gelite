@@ -32,6 +32,22 @@ impl SelectQuery {
     pub fn root_object_type(&self) -> &ObjectTypeRef {
         &self.root_object_type
     }
+
+    pub fn filter(&self) -> Option<&Expr> {
+        self.filter.as_ref()
+    }
+
+    pub fn limit(&self) -> Option<u64> {
+        self.limit
+    }
+
+    pub fn offset(&self) -> Option<u64> {
+        self.offset
+    }
+
+    pub fn order_by(&self) -> &[OrderExpr] {
+        &self.order_by
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,11 +109,77 @@ impl ResolvedShapeField {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Expr {}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expr {
+    Compare(CompareExpr),
+}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct OrderExpr;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompareExpr {
+    left: ValueExpr,
+    op: CompareOp,
+    right: ValueExpr,
+}
+
+impl CompareExpr {
+    pub fn new(left: ValueExpr, op: CompareOp, right: ValueExpr) -> Self {
+        Self { left, op, right }
+    }
+
+    pub fn left(&self) -> &ValueExpr {
+        &self.left
+    }
+
+    pub fn op(&self) -> CompareOp {
+        self.op
+    }
+
+    pub fn right(&self) -> &ValueExpr {
+        &self.right
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompareOp {
+    Eq,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderExpr {
+    value: ValueExpr,
+    direction: OrderDirection,
+}
+
+impl OrderExpr {
+    pub fn new(value: ValueExpr, direction: OrderDirection) -> Self {
+        Self { value, direction }
+    }
+
+    pub fn value(&self) -> &ValueExpr {
+        &self.value
+    }
+
+    pub fn direction(&self) -> OrderDirection {
+        self.direction
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueExpr {
+    Field(FieldRef),
+    Literal(Literal),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Literal {
+    String(String),
+}
 
 #[cfg(test)]
 mod tests;

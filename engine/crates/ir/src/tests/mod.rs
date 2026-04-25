@@ -1,4 +1,7 @@
-use crate::{ResolvedShape, ResolvedShapeField, SelectQuery};
+use crate::{
+    CompareExpr, CompareOp, Expr, Literal, OrderDirection, OrderExpr, ResolvedShape,
+    ResolvedShapeField, SelectQuery, ValueExpr,
+};
 use schema::{Cardinality, FieldId, FieldRef, ObjectTypeId, ObjectTypeRef};
 
 #[test]
@@ -193,4 +196,78 @@ fn resolved_shape_can_contain_optional_link_field() {
 
     assert_eq!(child_shape.source_object_type().name(), "User");
     assert_eq!(child_shape.fields()[0].output_name(), "name");
+}
+
+#[test]
+fn resolved_select_query_can_store_limit_and_offset() {
+    let root_object_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let shape = ResolvedShape::new(root_object_type.clone(), vec![]);
+
+    let query = SelectQuery::new(root_object_type, shape, None, vec![], Some(10), Some(20));
+
+    assert_eq!(query.limit(), Some(10));
+    assert_eq!(query.offset(), Some(20));
+}
+
+#[test]
+fn resolved_select_query_can_store_order_by_field() {
+    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let title_field = FieldRef::new(FieldId::new(1), post_type.clone(), "title");
+    let order = OrderExpr::new(ValueExpr::Field(title_field), OrderDirection::Desc);
+
+    let query = SelectQuery::new(
+        post_type.clone(),
+        ResolvedShape::new(post_type.clone(), vec![]),
+        None,
+        vec![order],
+        None,
+        None,
+    );
+
+    assert_eq!(query.order_by().len(), 1);
+    assert_eq!(query.order_by()[0].direction(), OrderDirection::Desc);
+
+    match query.order_by()[0].value() {
+        ValueExpr::Field(field) => {
+            assert_eq!(field.owner_object_type().name(), "Post");
+            assert_eq!(field.name(), "title");
+        }
+        ValueExpr::Literal(_) => panic!("order by should reference a resolved field"),
+    }
+}
+
+#[test]
+fn resolved_select_query_can_store_filter_compare_expr() {
+    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let title_field = FieldRef::new(FieldId::new(1), post_type.clone(), "title");
+    let filter = Expr::Compare(CompareExpr::new(
+        ValueExpr::Field(title_field),
+        CompareOp::Eq,
+        ValueExpr::Literal(Literal::String("Hello".to_string())),
+    ));
+
+    let query = SelectQuery::new(
+        post_type.clone(),
+        ResolvedShape::new(post_type, vec![]),
+        Some(filter),
+        vec![],
+        None,
+        None,
+    );
+
+    let Expr::Compare(compare) = query.filter().expect("select query has filter");
+    assert_eq!(compare.op(), CompareOp::Eq);
+
+    match compare.left() {
+        ValueExpr::Field(field) => {
+            assert_eq!(field.owner_object_type().name(), "Post");
+            assert_eq!(field.name(), "title");
+        }
+        ValueExpr::Literal(_) => panic!("filter left side should reference a resolved field"),
+    }
+
+    match compare.right() {
+        ValueExpr::Literal(Literal::String(value)) => assert_eq!(value, "Hello"),
+        ValueExpr::Field(_) => panic!("filter right side should store a literal"),
+    }
 }
