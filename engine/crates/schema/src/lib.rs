@@ -64,6 +64,16 @@ pub struct ObjectTypeRef {
     name: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FieldId(u64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FieldRef {
+    id: FieldId,
+    owner_object_type: ObjectTypeRef,
+    name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaCatalog {
     object_types: Vec<ObjectType>,
@@ -89,6 +99,38 @@ impl ObjectTypeRef {
 
     pub fn id(&self) -> ObjectTypeId {
         self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl FieldId {
+    pub fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn value(self) -> u64 {
+        self.0
+    }
+}
+
+impl FieldRef {
+    pub fn new(id: FieldId, owner_object_type: ObjectTypeRef, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            owner_object_type,
+            name: name.into(),
+        }
+    }
+
+    pub fn id(&self) -> FieldId {
+        self.id
+    }
+
+    pub fn owner_object_type(&self) -> &ObjectTypeRef {
+        &self.owner_object_type
     }
 
     pub fn name(&self) -> &str {

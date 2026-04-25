@@ -1,7 +1,8 @@
 mod fixtures;
 
 use crate::{
-    Field, ObjectType, ScalarField, ScalarType, SchemaCatalog, SchemaError, SingleCardinality,
+    Field, FieldId, FieldRef, ObjectType, ObjectTypeId, ObjectTypeRef, ScalarField, ScalarType,
+    SchemaCatalog, SchemaError, SingleCardinality,
 };
 use fixtures::{book_type, schema_with_user_and_book, user_type};
 
@@ -218,6 +219,17 @@ fn catalog_preserves_type_iteration_order() {
     let object_types = schema.object_types();
     assert_eq!(object_types[0].name(), "User");
     assert_eq!(object_types[1].name(), "Book");
+}
+
+#[test]
+fn field_ref_can_store_owner_object_type_and_field_name() {
+    let owner_object_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let field = FieldRef::new(FieldId::new(10), owner_object_type, "title");
+
+    assert_eq!(field.id(), FieldId::new(10));
+    assert_eq!(field.owner_object_type().id(), ObjectTypeId::new(1));
+    assert_eq!(field.owner_object_type().name(), "Post");
+    assert_eq!(field.name(), "title");
 }
 
 #[test]
