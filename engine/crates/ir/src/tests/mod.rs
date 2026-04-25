@@ -97,3 +97,20 @@ fn resolved_shape_preserves_field_order() {
     assert_eq!(fields[0].output_name(), "title");
     assert_eq!(fields[1].output_name(), "author");
 }
+
+#[test]
+fn resolved_shape_field_can_have_output_alias() {
+    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
+    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
+    let user_name_shape_field =
+        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
+    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
+
+    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
+    let shape_field =
+        ResolvedShapeField::new("writer", author_field, Cardinality::Many, Some(user_shape));
+
+    assert_eq!(shape_field.output_name(), "writer");
+    assert_eq!(shape_field.field().name(), "author");
+}
