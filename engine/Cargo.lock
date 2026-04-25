@@ -15,6 +15,9 @@ dependencies = [
 [[package]]
 name = "ir"
 version = "0.1.0"
+dependencies = [
+ "schema",
+]
 
 [[package]]
 name = "query-ast"

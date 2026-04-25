@@ -55,9 +55,45 @@ pub struct ObjectType {
     implicit_fields: Vec<Field>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ObjectTypeId(u64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ObjectTypeRef {
+    id: ObjectTypeId,
+    name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaCatalog {
     object_types: Vec<ObjectType>,
+}
+
+impl ObjectTypeId {
+    pub fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn value(self) -> u64 {
+        self.0
+    }
+}
+
+impl ObjectTypeRef {
+    pub fn new(id: ObjectTypeId, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+        }
+    }
+
+    pub fn id(&self) -> ObjectTypeId {
+        self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl Field {
