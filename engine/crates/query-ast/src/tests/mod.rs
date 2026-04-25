@@ -150,19 +150,9 @@ fn select_query_can_store_filter_order_and_limit() {
         Literal::String("00000000-0000-0000-0000-000000000001".to_string()),
     ));
 
-    let order = OrderExpr::new(
-        Path::new(vec![PathStep::new("title")]),
-        OrderDirection::Asc,
-    );
+    let order = OrderExpr::new(Path::new(vec![PathStep::new("title")]), OrderDirection::Asc);
 
-    let query = SelectQuery::new(
-        "Post",
-        shape,
-        Some(filter),
-        vec![order],
-        Some(10),
-        Some(0),
-    );
+    let query = SelectQuery::new("Post", shape, Some(filter), vec![order], Some(10), Some(0));
 
     assert_eq!(query.root_type_name(), "Post");
     assert_eq!(query.shape().items().len(), 2);
