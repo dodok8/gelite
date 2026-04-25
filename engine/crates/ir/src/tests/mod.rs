@@ -1,12 +1,18 @@
+mod fixtures;
+
 use crate::{
     CompareExpr, CompareOp, Expr, Literal, OrderDirection, OrderExpr, ResolvedShape,
     ResolvedShapeField, SelectQuery, ValueExpr,
 };
-use schema::{Cardinality, FieldId, FieldRef, ObjectTypeId, ObjectTypeRef};
+use fixtures::{
+    empty_post_shape, post_author_field, post_subtitle_field, post_title_field, post_type,
+    user_name_shape,
+};
+use schema::{Cardinality, ObjectTypeId};
 
 #[test]
 fn resolved_select_query_can_store_root_object_type() {
-    let root_object_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let root_object_type = post_type();
     let shape = ResolvedShape::new(root_object_type.clone(), vec![]);
 
     let query = SelectQuery::new(root_object_type, shape, None, vec![], None, None);
@@ -17,9 +23,7 @@ fn resolved_select_query_can_store_root_object_type() {
 
 #[test]
 fn resolve_shape_can_store_source_object_type() {
-    let source_object_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-
-    let shape = ResolvedShape::new(source_object_type, vec![]);
+    let shape = empty_post_shape();
 
     assert_eq!(shape.source_object_type().id(), ObjectTypeId::new(1));
     assert_eq!(shape.source_object_type().name(), "Post");
@@ -27,13 +31,10 @@ fn resolve_shape_can_store_source_object_type() {
 
 #[test]
 fn resolved_shape_can_contain_scalar_field() {
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let title_field = FieldRef::new(FieldId::new(1), post_type.clone(), "title");
+    let shape_field =
+        ResolvedShapeField::new("title", post_title_field(), Cardinality::Required, None);
 
-    let shape_field = ResolvedShapeField::new("title", title_field, Cardinality::Required, None);
-
-    let shape = ResolvedShape::new(post_type, vec![shape_field]);
-
+    let shape = ResolvedShape::new(post_type(), vec![shape_field]);
     let fields = shape.fields();
 
     assert_eq!(fields.len(), 1);
@@ -45,22 +46,14 @@ fn resolved_shape_can_contain_scalar_field() {
 
 #[test]
 fn resolved_shape_can_contain_link_field_with_child_shape() {
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
-    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
-    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
-
-    let user_name_shape_field =
-        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
-    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
     let author_shape_field = ResolvedShapeField::new(
         "author",
-        author_field,
+        post_author_field(),
         Cardinality::Required,
-        Some(user_shape),
+        Some(user_name_shape()),
     );
 
-    let post_shape = ResolvedShape::new(post_type, vec![author_shape_field]);
+    let post_shape = ResolvedShape::new(post_type(), vec![author_shape_field]);
     let fields = post_shape.fields();
 
     assert_eq!(fields.len(), 1);
@@ -80,21 +73,16 @@ fn resolved_shape_can_contain_link_field_with_child_shape() {
 
 #[test]
 fn resolved_shape_preserves_field_order() {
-    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
-    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
-    let user_name_shape_field =
-        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
-    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
-
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let title_field = FieldRef::new(FieldId::new(2), post_type.clone(), "title");
-    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
-    let author_shape_field =
-        ResolvedShapeField::new("author", author_field, Cardinality::Many, Some(user_shape));
+    let author_shape_field = ResolvedShapeField::new(
+        "author",
+        post_author_field(),
+        Cardinality::Many,
+        Some(user_name_shape()),
+    );
     let title_shape_field =
-        ResolvedShapeField::new("title", title_field, Cardinality::Required, None);
+        ResolvedShapeField::new("title", post_title_field(), Cardinality::Required, None);
 
-    let shape = ResolvedShape::new(post_type, vec![title_shape_field, author_shape_field]);
+    let shape = ResolvedShape::new(post_type(), vec![title_shape_field, author_shape_field]);
     let fields = shape.fields();
 
     assert_eq!(fields[0].output_name(), "title");
@@ -103,16 +91,12 @@ fn resolved_shape_preserves_field_order() {
 
 #[test]
 fn resolved_shape_field_can_have_output_alias() {
-    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
-    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
-    let user_name_shape_field =
-        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
-    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
-
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
-    let shape_field =
-        ResolvedShapeField::new("writer", author_field, Cardinality::Many, Some(user_shape));
+    let shape_field = ResolvedShapeField::new(
+        "writer",
+        post_author_field(),
+        Cardinality::Many,
+        Some(user_name_shape()),
+    );
 
     assert_eq!(shape_field.output_name(), "writer");
     assert_eq!(shape_field.field().name(), "author");
@@ -120,13 +104,14 @@ fn resolved_shape_field_can_have_output_alias() {
 
 #[test]
 fn resolved_shape_can_contain_optional_scalar_field() {
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let subtitle_field = FieldRef::new(FieldId::new(1), post_type.clone(), "subtitle");
+    let shape_field = ResolvedShapeField::new(
+        "subtitle",
+        post_subtitle_field(),
+        Cardinality::Optional,
+        None,
+    );
 
-    let shape_field =
-        ResolvedShapeField::new("subtitle", subtitle_field, Cardinality::Optional, None);
-
-    let shape = ResolvedShape::new(post_type, vec![shape_field]);
+    let shape = ResolvedShape::new(post_type(), vec![shape_field]);
     let fields = shape.fields();
 
     assert_eq!(fields.len(), 1);
@@ -138,18 +123,14 @@ fn resolved_shape_can_contain_optional_scalar_field() {
 
 #[test]
 fn resolved_shape_can_contain_multi_link_field() {
-    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
-    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
-    let user_name_shape_field =
-        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
-    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
+    let shape_field = ResolvedShapeField::new(
+        "author",
+        post_author_field(),
+        Cardinality::Many,
+        Some(user_name_shape()),
+    );
 
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
-    let shape_field =
-        ResolvedShapeField::new("author", author_field, Cardinality::Many, Some(user_shape));
-
-    let shape = ResolvedShape::new(post_type, vec![shape_field]);
+    let shape = ResolvedShape::new(post_type(), vec![shape_field]);
     let fields = shape.fields();
 
     assert_eq!(fields.len(), 1);
@@ -167,22 +148,14 @@ fn resolved_shape_can_contain_multi_link_field() {
 
 #[test]
 fn resolved_shape_can_contain_optional_link_field() {
-    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
-    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
-    let user_name_shape_field =
-        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
-    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
-
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
     let shape_field = ResolvedShapeField::new(
         "author",
-        author_field,
+        post_author_field(),
         Cardinality::Optional,
-        Some(user_shape),
+        Some(user_name_shape()),
     );
 
-    let shape = ResolvedShape::new(post_type, vec![shape_field]);
+    let shape = ResolvedShape::new(post_type(), vec![shape_field]);
     let fields = shape.fields();
 
     assert_eq!(fields.len(), 1);
@@ -200,10 +173,14 @@ fn resolved_shape_can_contain_optional_link_field() {
 
 #[test]
 fn resolved_select_query_can_store_limit_and_offset() {
-    let root_object_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let shape = ResolvedShape::new(root_object_type.clone(), vec![]);
-
-    let query = SelectQuery::new(root_object_type, shape, None, vec![], Some(10), Some(20));
+    let query = SelectQuery::new(
+        post_type(),
+        empty_post_shape(),
+        None,
+        vec![],
+        Some(10),
+        Some(20),
+    );
 
     assert_eq!(query.limit(), Some(10));
     assert_eq!(query.offset(), Some(20));
@@ -211,13 +188,11 @@ fn resolved_select_query_can_store_limit_and_offset() {
 
 #[test]
 fn resolved_select_query_can_store_order_by_field() {
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let title_field = FieldRef::new(FieldId::new(1), post_type.clone(), "title");
-    let order = OrderExpr::new(ValueExpr::Field(title_field), OrderDirection::Desc);
+    let order = OrderExpr::new(ValueExpr::Field(post_title_field()), OrderDirection::Desc);
 
     let query = SelectQuery::new(
-        post_type.clone(),
-        ResolvedShape::new(post_type.clone(), vec![]),
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
         None,
         vec![order],
         None,
@@ -238,17 +213,15 @@ fn resolved_select_query_can_store_order_by_field() {
 
 #[test]
 fn resolved_select_query_can_store_filter_compare_expr() {
-    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
-    let title_field = FieldRef::new(FieldId::new(1), post_type.clone(), "title");
     let filter = Expr::Compare(CompareExpr::new(
-        ValueExpr::Field(title_field),
+        ValueExpr::Field(post_title_field()),
         CompareOp::Eq,
         ValueExpr::Literal(Literal::String("Hello".to_string())),
     ));
 
     let query = SelectQuery::new(
-        post_type.clone(),
-        ResolvedShape::new(post_type, vec![]),
+        post_type(),
+        empty_post_shape(),
         Some(filter),
         vec![],
         None,

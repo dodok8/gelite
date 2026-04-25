@@ -461,14 +461,68 @@ represent this query faithfully as Rust data.
 - `SelectQuery`
 - `ResolvedShape`
 - `ResolvedShapeField`
-- `ResolvedPath`
-- `FieldRef`
-- `ObjectTypeRef`
-- `ScalarTypeRef`
 - `Expr`
+- `CompareExpr`
+- `ValueExpr`
 - `OrderExpr`
+- `ObjectTypeRef` and `FieldRef` from the `schema` crate
 
-### In `resolver`
+## Current Implementation Status
+
+The initial `schema`, `query-ast`, and `ir` passes are now implemented as
+small Rust crates.
+
+### Implemented in `schema`
+
+- object type, scalar field, and link field representation
+- scalar and link cardinality modeling
+- implicit `id` field exposure
+- catalog lookup by type name and field name
+- schema validation for duplicate type names, duplicate field names, explicit
+  `id`, unknown link targets, and reserved scalar type names
+- shared reference types:
+  - `ObjectTypeId`
+  - `ObjectTypeRef`
+  - `FieldId`
+  - `FieldRef`
+
+### Implemented in `query-ast`
+
+- root object selection
+- ordered shape items
+- nested shape representation
+- paths
+- literals
+- compare expressions
+- order expressions
+- filter/order/limit/offset query assembly
+
+The query AST remains parser-independent. Tests construct AST values directly.
+
+### Implemented in `ir`
+
+- `SelectQuery`
+- `ResolvedShape`
+- `ResolvedShapeField`
+- `ValueExpr::Field`
+- `ValueExpr::Literal`
+- `Expr::Compare`
+- `CompareExpr`
+- `CompareOp::Eq`
+- `OrderExpr`
+- `OrderDirection::{Asc, Desc}`
+- `limit` and `offset` passthrough
+
+The IR currently models resolved semantic structure only. It does not yet
+perform validation by itself. For example, whether a selected field is scalar
+or link, whether a link target exists, and whether a filter comparison is type
+compatible should be checked by `resolver`.
+
+`ObjectTypeRef` and `FieldRef` are intentionally owned by `schema`, not `ir`.
+This keeps resolved references shared across the resolver and downstream IR
+consumers without duplicating identity types.
+
+### Next in `resolver`
 
 Start with support for:
 
