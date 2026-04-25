@@ -114,3 +114,83 @@ fn resolved_shape_field_can_have_output_alias() {
     assert_eq!(shape_field.output_name(), "writer");
     assert_eq!(shape_field.field().name(), "author");
 }
+
+#[test]
+fn resolved_shape_can_contain_optional_scalar_field() {
+    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let subtitle_field = FieldRef::new(FieldId::new(1), post_type.clone(), "subtitle");
+
+    let shape_field =
+        ResolvedShapeField::new("subtitle", subtitle_field, Cardinality::Optional, None);
+
+    let shape = ResolvedShape::new(post_type, vec![shape_field]);
+    let fields = shape.fields();
+
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].output_name(), "subtitle");
+    assert_eq!(fields[0].field().name(), "subtitle");
+    assert_eq!(fields[0].cardinality(), Cardinality::Optional);
+    assert!(fields[0].child_shape().is_none());
+}
+
+#[test]
+fn resolved_shape_can_contain_multi_link_field() {
+    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
+    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
+    let user_name_shape_field =
+        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
+    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
+
+    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
+    let shape_field =
+        ResolvedShapeField::new("author", author_field, Cardinality::Many, Some(user_shape));
+
+    let shape = ResolvedShape::new(post_type, vec![shape_field]);
+    let fields = shape.fields();
+
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].output_name(), "author");
+    assert_eq!(fields[0].field().name(), "author");
+    assert_eq!(fields[0].cardinality(), Cardinality::Many);
+
+    let child_shape = fields[0]
+        .child_shape()
+        .expect("multi link field has child shape");
+
+    assert_eq!(child_shape.source_object_type().name(), "User");
+    assert_eq!(child_shape.fields()[0].output_name(), "name");
+}
+
+#[test]
+fn resolved_shape_can_contain_optional_link_field() {
+    let user_type = ObjectTypeRef::new(ObjectTypeId::new(2), "User");
+    let user_name_field = FieldRef::new(FieldId::new(2), user_type.clone(), "name");
+    let user_name_shape_field =
+        ResolvedShapeField::new("name", user_name_field, Cardinality::Required, None);
+    let user_shape = ResolvedShape::new(user_type, vec![user_name_shape_field]);
+
+    let post_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
+    let author_field = FieldRef::new(FieldId::new(1), post_type.clone(), "author");
+    let shape_field = ResolvedShapeField::new(
+        "author",
+        author_field,
+        Cardinality::Optional,
+        Some(user_shape),
+    );
+
+    let shape = ResolvedShape::new(post_type, vec![shape_field]);
+    let fields = shape.fields();
+
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].output_name(), "author");
+    assert_eq!(fields[0].field().name(), "author");
+    assert_eq!(fields[0].cardinality(), Cardinality::Optional);
+
+    let child_shape = fields[0]
+        .child_shape()
+        .expect("optional link field has child shape");
+
+    assert_eq!(child_shape.source_object_type().name(), "User");
+    assert_eq!(child_shape.fields()[0].output_name(), "name");
+}
