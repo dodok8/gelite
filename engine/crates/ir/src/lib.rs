@@ -1,6 +1,6 @@
-use schema::ObjectTypeRef;
+use schema::{Cardinality, FieldRef, ObjectTypeRef};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectQuery {
     root_object_type: ObjectTypeRef,
     shape: ResolvedShape,
@@ -9,21 +9,6 @@ pub struct SelectQuery {
     limit: Option<u64>,
     offset: Option<u64>,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ResolvedShape {
-    source_object_type: ObjectTypeRef,
-    fields: Vec<ResolvedShapeField>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ResolvedShapeField;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Expr {}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct OrderExpr;
 
 impl SelectQuery {
     pub fn new(
@@ -49,6 +34,12 @@ impl SelectQuery {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedShape {
+    source_object_type: ObjectTypeRef,
+    fields: Vec<ResolvedShapeField>,
+}
+
 impl ResolvedShape {
     pub fn new(source_object_type: ObjectTypeRef, fields: Vec<ResolvedShapeField>) -> Self {
         Self {
@@ -56,7 +47,57 @@ impl ResolvedShape {
             fields,
         }
     }
+
+    pub fn source_object_type(&self) -> &ObjectTypeRef {
+        &self.source_object_type
+    }
+
+    pub fn fields(&self) -> &[ResolvedShapeField] {
+        &self.fields
+    }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedShapeField {
+    output_name: String,
+    field: FieldRef,
+    cardinality: Cardinality,
+    child_shape: Option<ResolvedShape>,
+}
+
+impl ResolvedShapeField {
+    pub fn new(
+        output_name: impl Into<String>,
+        field: FieldRef,
+        cardinality: Cardinality,
+        child_shape: Option<ResolvedShape>,
+    ) -> Self {
+        Self {
+            output_name: output_name.into(),
+            field,
+            cardinality,
+            child_shape,
+        }
+    }
+    pub fn output_name(&self) -> &str {
+        &self.output_name
+    }
+    pub fn cardinality(&self) -> Cardinality {
+        self.cardinality
+    }
+    pub fn child_shape(&self) -> Option<&ResolvedShape> {
+        self.child_shape.as_ref()
+    }
+    pub fn field(&self) -> &FieldRef {
+        &self.field
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Expr {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OrderExpr;
 
 #[cfg(test)]
 mod tests;
