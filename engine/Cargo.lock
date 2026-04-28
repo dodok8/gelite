@@ -35,3 +35,10 @@ dependencies = [
 [[package]]
 name = "schema"
 version = "0.1.0"
+
+[[package]]
+name = "sqlite-plan"
+version = "0.1.0"
+dependencies = [
+ "ir",
+]

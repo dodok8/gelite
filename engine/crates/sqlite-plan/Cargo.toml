@@ -1,0 +1,7 @@
+[package]
+name = "sqlite-plan"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ir = { path = "../ir" }

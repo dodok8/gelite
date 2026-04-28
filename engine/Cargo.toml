@@ -5,6 +5,7 @@ members = [
   "crates/ir",
   "crates/resolver",
   "crates/dev-cli",
+  "crates/sqlite-plan",
 ]
 
 resolver = "2"
