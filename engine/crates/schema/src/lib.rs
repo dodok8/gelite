@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
 const IMPLICIT_ID_FIELD_NAME: &str = "id";
-const BUILTIN_SCALAR_TYPE_NAMES: &[&str] =
-    &["str", "int64", "float64", "bool", "uuid", "datetime"];
+const BUILTIN_SCALAR_TYPE_NAMES: &[&str] = &["str", "int64", "float64", "bool", "uuid", "datetime"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScalarType {
@@ -363,6 +362,28 @@ impl SchemaCatalog {
     pub fn find_field(&self, type_name: &str, field_name: &str) -> Option<&Field> {
         self.find_type(type_name)
             .and_then(|object_type| object_type.find_field(field_name))
+    }
+
+    pub fn find_field_ref(&self, type_name: &str, field_name: &str) -> Option<FieldRef> {
+        let object_type_index = self
+            .object_types
+            .iter()
+            .position(|object_type| object_type.name == type_name)?;
+        let object_type = &self.object_types[object_type_index];
+        let field_index = object_type
+            .implicit_fields
+            .iter()
+            .chain(object_type.declared_fields.iter())
+            .position(|field| field.name() == field_name)?;
+
+        Some(FieldRef::new(
+            FieldId::new((field_index + 1) as u64),
+            ObjectTypeRef::new(
+                ObjectTypeId::new((object_type_index + 1) as u64),
+                object_type.name(),
+            ),
+            field_name,
+        ))
     }
 
     pub fn object_types(&self) -> &[ObjectType] {

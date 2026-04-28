@@ -234,6 +234,20 @@ fn catalog_can_return_object_type_ref_by_name() {
 }
 
 #[test]
+fn catalog_can_return_field_ref_by_type_and_field_name() {
+    let schema = SchemaCatalog::try_new(vec![user_type(), book_type()]).unwrap();
+
+    let field_ref = schema
+        .find_field_ref("Book", "title")
+        .expect("field `title` on `Book` should be visible as a field ref");
+
+    assert_eq!(field_ref.id(), FieldId::new(2));
+    assert_eq!(field_ref.owner_object_type().id(), ObjectTypeId::new(2));
+    assert_eq!(field_ref.owner_object_type().name(), "Book");
+    assert_eq!(field_ref.name(), "title");
+}
+
+#[test]
 fn field_ref_can_store_owner_object_type_and_field_name() {
     let owner_object_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
     let field = FieldRef::new(FieldId::new(10), owner_object_type, "title");
