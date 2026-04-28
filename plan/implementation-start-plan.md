@@ -861,3 +861,6 @@ This phase is complete when:
 
 At that point, the next planning conversation should focus on the
 `Semantic IR -> SQLite Plan` lowering implementation.
+
+The detailed follow-up plan is tracked in
+[sqlite-plan-implementation-plan.md](sqlite-plan-implementation-plan.md).
