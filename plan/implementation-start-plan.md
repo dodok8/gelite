@@ -685,6 +685,34 @@ ir::ValueExpr::Field(FieldRef(Post.title))
 `query-ast::Literal` should be converted into `ir::Literal`. At first, string
 literals are enough because the current IR only models `Literal::String`.
 
+For the first pass, `query-ast::CompareExpr` is intentionally asymmetric:
+
+```text
+left: Path
+right: Literal
+```
+
+That means the resolver may lower the left side as a resolved field and the
+right side as a literal for now. This is not the final expression model.
+
+Later, compare expressions should be generalized so both sides can be value
+expressions:
+
+```text
+left: ValueExpr
+right: ValueExpr
+```
+
+That future model should allow cases such as:
+
+- `"Hello" = .title`
+- `.created_at = .updated_at`
+- computed expressions if the query language grows to support them
+
+Do not implement this generalization during the first resolver pass. The first
+goal is to resolve the current AST contract correctly and keep the parser-free
+pipeline moving.
+
 ### Error handling guidelines
 
 Do not return strings as the primary error representation. Use an enum so tests
