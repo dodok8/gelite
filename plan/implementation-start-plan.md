@@ -540,6 +540,170 @@ Do not start with:
 - `multi link` result fetching
 - SQLite planning
 
+## Resolver Implementation Plan
+
+The resolver is the next implementation target. Its job is to lower
+`query-ast` into `ir` by validating names and paths against `schema`.
+
+The resolver should not parse query text, execute queries, generate SQL, or
+own schema identity types. It should connect the already implemented crates:
+
+```text
+query-ast + schema -> resolver -> ir
+```
+
+### Resolver responsibilities
+
+- resolve the selected root type name into `schema::ObjectTypeRef`
+- resolve each shape item name against the current source object type
+- convert resolved scalar selections into `ir::ResolvedShapeField`
+- convert resolved link selections into nested `ir::ResolvedShapeField`
+- preserve shape item order from `query-ast`
+- propagate field cardinality from `schema` into `ir`
+- resolve filter paths into `ir::ValueExpr::Field`
+- resolve order paths into `ir::ValueExpr::Field`
+- pass `limit` and `offset` through unchanged
+- return structured errors for semantic failures
+
+### Resolver non-responsibilities
+
+- parsing query text
+- checking schema catalog structural validity
+- deciding SQLite table or column names
+- generating SQL
+- executing queries
+- row shaping
+- supporting insert/update/delete
+- supporting computed expressions or functions
+
+### Suggested public API
+
+Start with a small API that is easy to test:
+
+```rust
+pub fn resolve_select(
+    catalog: &schema::SchemaCatalog,
+    query: &query_ast::SelectQuery,
+) -> Result<ir::SelectQuery, ResolveError>
+```
+
+Keep `ResolveError` minimal at first. The first useful variants are:
+
+- `UnknownObjectType`
+- `UnknownField`
+- `NestedShapeOnScalarField`
+- `MissingShapeOnLinkField`
+- `UnsupportedPath`
+
+The exact payloads can start small, but they should include the relevant type
+or field name so failing tests can assert the specific error cause.
+
+### Test writing order for `resolver`
+
+Write resolver tests in this order. Each test should add only one new semantic
+contract.
+
+1. `resolves_select_root_object_type`
+2. `rejects_unknown_root_object_type`
+3. `resolves_scalar_shape_field`
+4. `rejects_unknown_shape_field`
+5. `resolves_implicit_id_shape_field`
+6. `rejects_nested_shape_on_scalar_field`
+7. `resolves_link_shape_with_child_shape`
+8. `rejects_link_shape_without_child_shape`
+9. `preserves_shape_field_order`
+10. `resolves_filter_compare_path_to_field`
+11. `rejects_filter_path_with_unknown_field`
+12. `resolves_order_path_to_field`
+13. `passes_limit_and_offset_through`
+
+This order intentionally starts with root type resolution, then shape
+resolution, then filter/order resolution. Shape resolution should be stable
+before paths in filters and ordering are added.
+
+### First resolver success case
+
+The first successful resolver test should use a smaller query than the full
+hardcoded example:
+
+```text
+select Post {
+  title
+}
+```
+
+Expected result:
+
+- `ir::SelectQuery.root_object_type()` is `Post`
+- `ir::ResolvedShape.source_object_type()` is `Post`
+- the shape has one field
+- that field references `Post.title`
+- cardinality is copied from the schema field
+- the field has no child shape
+
+This test proves the minimum end-to-end path without requiring nested links,
+filters, ordering, or pagination.
+
+### Shape resolution rules
+
+For each `query-ast::ShapeItem`, the resolver should inspect the field found in
+the current source object type.
+
+- scalar field without child shape: valid
+- scalar field with child shape: invalid
+- link field with child shape: valid
+- link field without child shape: invalid for the first resolver pass
+- implicit `id`: valid as a scalar field exposed by the catalog
+
+If a link field is valid, the resolver should find the link target object type
+and recursively resolve the child shape with that target as the new source
+object type.
+
+### Filter and order path rules
+
+For the first resolver pass, keep paths intentionally limited.
+
+- filter paths may resolve to scalar fields
+- order paths may resolve to scalar fields
+- single-step scalar paths such as `.title` should be implemented first
+- link traversal such as `.author.id` can be added after single-step paths are
+  stable
+- unknown path steps should return a resolver error
+
+The resolver should convert:
+
+```text
+query-ast path `.title`
+```
+
+into:
+
+```text
+ir::ValueExpr::Field(FieldRef(Post.title))
+```
+
+`query-ast::Literal` should be converted into `ir::Literal`. At first, string
+literals are enough because the current IR only models `Literal::String`.
+
+### Error handling guidelines
+
+Do not return strings as the primary error representation. Use an enum so tests
+can assert exact semantic failures:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveError {
+    UnknownObjectType { name: String },
+    UnknownField { object_type: String, field: String },
+    NestedShapeOnScalarField { object_type: String, field: String },
+    MissingShapeOnLinkField { object_type: String, field: String },
+    UnsupportedPath,
+}
+```
+
+The enum can grow later. Keep the initial variants focused on the tests being
+written.
+
 ## First Example To Hardcode
 
 Use this schema shape:
