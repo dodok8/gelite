@@ -48,6 +48,10 @@ impl SelectQuery {
     pub fn order_by(&self) -> &[OrderExpr] {
         &self.order_by
     }
+
+    pub fn shape(&self) -> &ResolvedShape {
+        &self.shape
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
