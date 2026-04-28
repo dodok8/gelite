@@ -1,3 +1,5 @@
+use query_ast::Path;
+
 pub fn resolve_select(
     catalog: &schema::SchemaCatalog,
     query: &query_ast::SelectQuery,
@@ -15,10 +17,15 @@ pub fn resolve_select(
         .map(|item| resolve_shape_item(catalog, &root_object_type, item))
         .collect::<Result<Vec<_>, ResolveError>>()?;
 
+    let filter = query
+        .filter()
+        .map(|expr| resolve_expr(catalog, &root_object_type, expr))
+        .transpose()?;
+
     Ok(ir::SelectQuery::new(
         root_object_type.clone(),
         ir::ResolvedShape::new(root_object_type, fields),
-        None,
+        filter,
         vec![],
         None,
         None,
@@ -98,6 +105,73 @@ fn resolve_shape_item(
     }
 }
 
+fn resolve_expr(
+    catalog: &schema::SchemaCatalog,
+    source_object_type: &schema::ObjectTypeRef,
+    expr: &query_ast::Expr,
+) -> Result<ir::Expr, ResolveError> {
+    match expr {
+        query_ast::Expr::Compare(compare) => {
+            let left = resolve_path_expr(catalog, source_object_type, compare.left())?;
+            let right = resolve_literal_expr(compare.right())?;
+
+            Ok(ir::Expr::Compare(ir::CompareExpr::new(
+                left,
+                ir::CompareOp::Eq,
+                right,
+            )))
+        }
+        query_ast::Expr::Literal(_) => Err(ResolveError::UnsupportedExpr {
+            expr_type: "literal".to_string(),
+        }),
+        query_ast::Expr::Path(_) => Err(ResolveError::UnsupportedExpr {
+            expr_type: "path".to_string(),
+        }),
+    }
+}
+
+fn resolve_path_expr(
+    catalog: &schema::SchemaCatalog,
+    source_object_type: &schema::ObjectTypeRef,
+    path: &Path,
+) -> Result<ir::ValueExpr, ResolveError> {
+    let steps = path.steps();
+
+    if steps.len() != 1 {
+        return Err(ResolveError::UnsupportedPath);
+    }
+
+    let field_name = steps[0].field_name();
+
+    let field = catalog
+        .find_field(source_object_type.name(), field_name)
+        .ok_or_else(|| ResolveError::UnknownField {
+            object_type: source_object_type.name().to_string(),
+            field: field_name.to_string(),
+        })?;
+
+    if !field.is_scalar() {
+        return Err(ResolveError::UnsupportedPath);
+    }
+
+    let field_ref = catalog
+        .find_field_ref(source_object_type.name(), field_name)
+        .expect("field ref should exist for a field already found in the catalog");
+
+    Ok(ir::ValueExpr::Field(field_ref))
+}
+
+fn resolve_literal_expr(literal: &query_ast::Literal) -> Result<ir::ValueExpr, ResolveError> {
+    match literal {
+        query_ast::Literal::String(value) => {
+            Ok(ir::ValueExpr::Literal(ir::Literal::String(value.clone())))
+        }
+        _ => Err(ResolveError::UnsupportedLiteral {
+            literal: format!("{literal:?}"),
+        }),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
     UnknownObjectType { name: String },
@@ -105,6 +179,8 @@ pub enum ResolveError {
     NestedShapeOnScalarField { object_type: String, field: String },
     MissingShapeOnLinkField { object_type: String, field: String },
     UnsupportedPath,
+    UnsupportedExpr { expr_type: String },
+    UnsupportedLiteral { literal: String },
 }
 
 #[cfg(test)]
