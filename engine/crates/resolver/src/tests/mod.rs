@@ -221,6 +221,27 @@ fn rejects_link_shape_without_child_shape() {
 }
 
 #[test]
+fn rejects_multi_step_shape_path() {
+    let catalog = post_with_author_catalog();
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("author"), PathStep::new("name")]),
+            None,
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let resolved = resolve_select(&catalog, &query);
+
+    assert_eq!(resolved, Err(ResolveError::UnsupportedPath));
+}
+
+#[test]
 fn preserves_shape_field_order() {
     let catalog = post_with_author_catalog();
 
