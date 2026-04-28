@@ -359,3 +359,25 @@ fn resolves_order_path_to_field() {
         ir::ValueExpr::Literal(_) => panic!("order by should resolve to a field"),
     }
 }
+
+#[test]
+fn passes_limit_and_offset_through() {
+    let catalog = post_with_title_catalog();
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("title")]),
+            None,
+        )]),
+        None,
+        vec![],
+        Some(10),
+        Some(20),
+    );
+
+    let resolved = resolve_select(&catalog, &query).expect("select query resolves");
+
+    assert_eq!(resolved.limit(), Some(10));
+    assert_eq!(resolved.offset(), Some(20));
+}

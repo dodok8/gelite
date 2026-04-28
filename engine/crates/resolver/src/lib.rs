@@ -33,8 +33,8 @@ pub fn resolve_select(
         ir::ResolvedShape::new(root_object_type, fields),
         filter,
         order_by,
-        None,
-        None,
+        query.limit(),
+        query.offset(),
     ))
 }
 
