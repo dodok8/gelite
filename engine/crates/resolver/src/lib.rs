@@ -22,11 +22,17 @@ pub fn resolve_select(
         .map(|expr| resolve_expr(catalog, &root_object_type, expr))
         .transpose()?;
 
+    let order_by = query
+        .order_by()
+        .iter()
+        .map(|order| resolve_order_expr(catalog, &root_object_type, order))
+        .collect::<Result<Vec<_>, ResolveError>>()?;
+
     Ok(ir::SelectQuery::new(
         root_object_type.clone(),
         ir::ResolvedShape::new(root_object_type, fields),
         filter,
-        vec![],
+        order_by,
         None,
         None,
     ))
@@ -170,6 +176,20 @@ fn resolve_literal_expr(literal: &query_ast::Literal) -> Result<ir::ValueExpr, R
             literal: format!("{literal:?}"),
         }),
     }
+}
+
+fn resolve_order_expr(
+    catalog: &schema::SchemaCatalog,
+    source_object_type: &schema::ObjectTypeRef,
+    order: &query_ast::OrderExpr,
+) -> Result<ir::OrderExpr, ResolveError> {
+    let value = resolve_path_expr(catalog, source_object_type, order.path())?;
+    let direction = match order.direction() {
+        query_ast::OrderDirection::Asc => ir::OrderDirection::Asc,
+        query_ast::OrderDirection::Desc => ir::OrderDirection::Desc,
+    };
+
+    Ok(ir::OrderExpr::new(value, direction))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

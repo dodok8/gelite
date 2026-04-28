@@ -324,3 +324,38 @@ fn rejects_filter_path_with_unknown_field() {
         })
     );
 }
+
+#[test]
+fn resolves_order_path_to_field() {
+    let catalog = post_with_title_catalog();
+
+    let order = query_ast::OrderExpr::new(
+        Path::new(vec![PathStep::new("title")]),
+        query_ast::OrderDirection::Desc,
+    );
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("title")]),
+            None,
+        )]),
+        None,
+        vec![order],
+        None,
+        None,
+    );
+
+    let resolved = resolve_select(&catalog, &query).expect("select query resolves");
+
+    assert_eq!(resolved.order_by().len(), 1);
+    assert_eq!(resolved.order_by()[0].direction(), ir::OrderDirection::Desc);
+
+    match resolved.order_by()[0].value() {
+        ir::ValueExpr::Field(field) => {
+            assert_eq!(field.owner_object_type().name(), "Post");
+            assert_eq!(field.name(), "title");
+        }
+        ir::ValueExpr::Literal(_) => panic!("order by should resolve to a field"),
+    }
+}
