@@ -6,12 +6,11 @@ use crate::{
 pub fn user_type() -> ObjectType {
     ObjectType::new(
         "User",
-        vec![Field::Scalar(ScalarField {
-            name: "name".to_string(),
-            scalar_type: ScalarType::Str,
-            cardinality: SingleCardinality::Required,
-            is_implicit: false,
-        })],
+        vec![Field::Scalar(ScalarField::new(
+            "name",
+            ScalarType::Str,
+            SingleCardinality::Required,
+        ))],
     )
 }
 
@@ -19,23 +18,17 @@ pub fn book_type() -> ObjectType {
     ObjectType::new(
         "Book",
         vec![
-            Field::Scalar(ScalarField {
-                name: "title".to_string(),
-                scalar_type: ScalarType::Str,
-                cardinality: SingleCardinality::Required,
-                is_implicit: false,
-            }),
-            Field::Link(LinkField {
-                name: "author".to_string(),
-                target_type_name: "User".to_string(),
-                cardinality: Cardinality::Required,
-            }),
-            Field::Scalar(ScalarField {
-                name: "published_at".to_string(),
-                scalar_type: ScalarType::DateTime,
-                cardinality: SingleCardinality::Required,
-                is_implicit: false,
-            }),
+            Field::Scalar(ScalarField::new(
+                "title",
+                ScalarType::Str,
+                SingleCardinality::Required,
+            )),
+            Field::Link(LinkField::new("author", "User", Cardinality::Required)),
+            Field::Scalar(ScalarField::new(
+                "published_at",
+                ScalarType::DateTime,
+                SingleCardinality::Required,
+            )),
         ],
     )
 }

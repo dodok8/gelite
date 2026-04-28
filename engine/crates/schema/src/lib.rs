@@ -138,6 +138,35 @@ impl FieldRef {
     }
 }
 
+impl ScalarField {
+    pub fn new(
+        name: impl Into<String>,
+        scalar_type: ScalarType,
+        cardinality: SingleCardinality,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            scalar_type,
+            cardinality,
+            is_implicit: false,
+        }
+    }
+}
+
+impl LinkField {
+    pub fn new(
+        name: impl Into<String>,
+        target_type_name: impl Into<String>,
+        cardinality: Cardinality,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            target_type_name: target_type_name.into(),
+            cardinality,
+        }
+    }
+}
+
 impl Field {
     pub fn name(&self) -> &str {
         match self {
