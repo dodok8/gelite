@@ -321,6 +321,16 @@ impl SchemaCatalog {
             .find(|object_type| object_type.name == name)
     }
 
+    pub fn find_type_ref(&self, name: &str) -> Option<ObjectTypeRef> {
+        self.object_types
+            .iter()
+            .position(|object_type| object_type.name == name)
+            .map(|index| {
+                let object_type = &self.object_types[index];
+                ObjectTypeRef::new(ObjectTypeId::new((index + 1) as u64), object_type.name())
+            })
+    }
+
     pub fn find_field(&self, type_name: &str, field_name: &str) -> Option<&Field> {
         self.find_type(type_name)
             .and_then(|object_type| object_type.find_field(field_name))

@@ -222,6 +222,18 @@ fn catalog_preserves_type_iteration_order() {
 }
 
 #[test]
+fn catalog_can_return_object_type_ref_by_name() {
+    let schema = SchemaCatalog::try_new(vec![user_type(), book_type()]).unwrap();
+
+    let object_type_ref = schema
+        .find_type_ref("Book")
+        .expect("type `Book` should be visible as an object type ref");
+
+    assert_eq!(object_type_ref.id(), ObjectTypeId::new(2));
+    assert_eq!(object_type_ref.name(), "Book");
+}
+
+#[test]
 fn field_ref_can_store_owner_object_type_and_field_name() {
     let owner_object_type = ObjectTypeRef::new(ObjectTypeId::new(1), "Post");
     let field = FieldRef::new(FieldId::new(10), owner_object_type, "title");
