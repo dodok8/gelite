@@ -326,6 +326,33 @@ fn rejects_filter_path_with_unknown_field() {
 }
 
 #[test]
+fn rejects_filter_path_with_link_field() {
+    let catalog = post_with_author_catalog();
+
+    let filter = Expr::Compare(CompareExpr::new(
+        Path::new(vec![PathStep::new("author")]),
+        CompareOp::Eq,
+        Literal::String("Ada".to_string()),
+    ));
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("title")]),
+            None,
+        )]),
+        Some(filter),
+        vec![],
+        None,
+        None,
+    );
+
+    let resolved = resolve_select(&catalog, &query);
+
+    assert_eq!(resolved, Err(ResolveError::UnsupportedPath));
+}
+
+#[test]
 fn resolves_order_path_to_field() {
     let catalog = post_with_title_catalog();
 
@@ -358,6 +385,32 @@ fn resolves_order_path_to_field() {
         }
         ir::ValueExpr::Literal(_) => panic!("order by should resolve to a field"),
     }
+}
+
+#[test]
+fn rejects_order_path_with_link_field() {
+    let catalog = post_with_author_catalog();
+
+    let order = query_ast::OrderExpr::new(
+        Path::new(vec![PathStep::new("author")]),
+        query_ast::OrderDirection::Asc,
+    );
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("title")]),
+            None,
+        )]),
+        None,
+        vec![order],
+        None,
+        None,
+    );
+
+    let resolved = resolve_select(&catalog, &query);
+
+    assert_eq!(resolved, Err(ResolveError::UnsupportedPath));
 }
 
 #[test]
