@@ -49,6 +49,7 @@ fn object_type_exposes_declared_link_fields() {
         Field::Link(link) => {
             assert_eq!(link.name, "author");
             assert_eq!(link.target_type_name, "User");
+            assert_eq!(link.target_type_name(), "User");
             assert_eq!(link.cardinality, crate::Cardinality::Required);
         }
         Field::Scalar(_) => {

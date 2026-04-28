@@ -164,6 +164,10 @@ impl LinkField {
             cardinality,
         }
     }
+
+    pub fn target_type_name(&self) -> &str {
+        &self.target_type_name
+    }
 }
 
 impl Field {
