@@ -11,6 +11,12 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         .map(|field| SQLiteSelectValue::root_scalar(field.field().clone(), field.output_name()))
         .collect();
 
+    let order_by = ir
+        .order_by()
+        .iter()
+        .map(|order| SQLiteOrderBy::root_field(order))
+        .collect();
+
     SQLiteSelectPlan {
         root_source: SQLiteObjectSource {
             table_name: root_object_type.name().to_ascii_lowercase().to_string(),
@@ -19,7 +25,9 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
             object_type: root_object_type,
         },
         selected_values,
+        order_by,
         limit: ir.limit(),
+        offset: ir.offset(),
     }
 }
 
@@ -31,7 +39,9 @@ pub enum SQLiteValueRole {
 pub struct SQLiteSelectPlan {
     root_source: SQLiteObjectSource,
     selected_values: Vec<SQLiteSelectValue>,
+    order_by: Vec<SQLiteOrderBy>,
     limit: Option<u64>,
+    offset: Option<u64>,
 }
 
 impl SQLiteSelectPlan {
@@ -43,8 +53,16 @@ impl SQLiteSelectPlan {
         &self.selected_values
     }
 
+    pub fn order_by(&self) -> &[SQLiteOrderBy] {
+        &self.order_by
+    }
+
     pub fn limit(&self) -> Option<u64> {
         self.limit
+    }
+
+    pub fn offset(&self) -> Option<u64> {
+        self.offset
     }
 }
 
@@ -110,6 +128,54 @@ impl SQLiteObjectSource {
 
     pub fn id_column(&self) -> &str {
         &self.id_column
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SQLiteOrderDirection {
+    Asc,
+    Desc,
+}
+
+impl SQLiteOrderDirection {
+    pub fn from_ir(direction: ir::OrderDirection) -> Self {
+        match direction {
+            ir::OrderDirection::Asc => Self::Asc,
+            ir::OrderDirection::Desc => Self::Desc,
+        }
+    }
+}
+
+pub struct SQLiteOrderBy {
+    source_alias: String,
+    column_name: String,
+    direction: SQLiteOrderDirection,
+}
+
+impl SQLiteOrderBy {
+    pub fn root_field(order: &ir::OrderExpr) -> Self {
+        let field = match order.value() {
+            ir::ValueExpr::Field(field) => field,
+            ir::ValueExpr::Literal(_) => todo!("ORDER BY literal is not supported yet"),
+        };
+
+        Self {
+            source_alias: "root".to_string(),
+            column_name: field.name().to_string(),
+            direction: SQLiteOrderDirection::from_ir(order.direction()),
+        }
+    }
+
+    pub fn source_alias(&self) -> &str {
+        &self.source_alias
+    }
+
+    pub fn column_name(&self) -> &str {
+        &self.column_name
+    }
+
+    pub fn direction(&self) -> SQLiteOrderDirection {
+        self.direction
     }
 }
 

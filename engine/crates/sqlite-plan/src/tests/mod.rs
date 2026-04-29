@@ -1,6 +1,6 @@
 mod fixtures;
 
-use crate::{SQLiteValueRole, plan_select};
+use crate::{SQLiteOrderDirection, SQLiteValueRole, plan_select};
 use fixtures::{post_author_field, post_title_field, post_type};
 use ir::{ResolvedShape, ResolvedShapeField, SelectQuery};
 
@@ -138,4 +138,101 @@ fn sqlite_select_plan_can_apply_limit() {
     let plan = plan_select(&ir);
 
     assert_eq!(plan.limit(), Some(10));
+}
+
+#[test]
+fn sqlite_select_plan_can_apply_offset() {
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![],
+        None,
+        Some(20),
+    );
+
+    let plan = plan_select(&ir);
+
+    assert_eq!(plan.offset(), Some(20));
+}
+
+#[test]
+fn sqlite_select_plan_can_order_by_root_scalar_field() {
+    let order_by = ir::OrderExpr::new(
+        ir::ValueExpr::Field(post_title_field()),
+        ir::OrderDirection::Asc,
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![order_by],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let order_by = plan.order_by();
+
+    assert_eq!(order_by.len(), 1);
+    assert_eq!(order_by[0].source_alias(), "root");
+    assert_eq!(order_by[0].column_name(), "title");
+    assert_eq!(order_by[0].direction(), SQLiteOrderDirection::Asc);
+}
+
+#[test]
+fn sqlite_select_plan_can_order_by_root_scalar_field_desc() {
+    let order_by = ir::OrderExpr::new(
+        ir::ValueExpr::Field(post_title_field()),
+        ir::OrderDirection::Desc,
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![order_by],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let order_by = plan.order_by();
+
+    assert_eq!(order_by.len(), 1);
+    assert_eq!(order_by[0].source_alias(), "root");
+    assert_eq!(order_by[0].column_name(), "title");
+    assert_eq!(order_by[0].direction(), SQLiteOrderDirection::Desc);
+}
+
+#[test]
+fn sqlite_select_plan_preserves_order_by_order() {
+    let title_order = ir::OrderExpr::new(
+        ir::ValueExpr::Field(post_title_field()),
+        ir::OrderDirection::Asc,
+    );
+
+    let author_order = ir::OrderExpr::new(
+        ir::ValueExpr::Field(post_author_field()),
+        ir::OrderDirection::Desc,
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![title_order, author_order],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let order_by = plan.order_by();
+
+    assert_eq!(order_by.len(), 2);
+    assert_eq!(order_by[0].column_name(), "title");
+    assert_eq!(order_by[0].direction(), SQLiteOrderDirection::Asc);
+    assert_eq!(order_by[1].column_name(), "author");
+    assert_eq!(order_by[1].direction(), SQLiteOrderDirection::Desc);
 }
