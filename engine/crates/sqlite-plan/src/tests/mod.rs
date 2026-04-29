@@ -1,0 +1,141 @@
+mod fixtures;
+
+use crate::{SQLiteValueRole, plan_select};
+use fixtures::{post_author_field, post_title_field, post_type};
+use ir::{ResolvedShape, ResolvedShapeField, SelectQuery};
+
+#[test]
+fn sqlite_select_plan_can_store_root_source() {
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+
+    assert_eq!(plan.root_source().object_type().name(), "Post");
+    assert_eq!(plan.root_source().table_name(), "post");
+    assert_eq!(plan.root_source().alias(), "root");
+    assert_eq!(plan.root_source().id_column(), "id");
+}
+
+#[test]
+fn sqlite_select_plan_can_project_root_scalar_field() {
+    let title = ResolvedShapeField::new(
+        "title",
+        post_title_field(),
+        schema::Cardinality::Required,
+        None,
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![title]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values.len(), 1);
+    assert_eq!(selected_values[0].source_alias(), "root");
+    assert_eq!(selected_values[0].column_name(), "title");
+    assert_eq!(selected_values[0].output_name(), "title");
+    assert_eq!(selected_values[0].field().name(), "title");
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootScalar);
+}
+
+#[test]
+fn sqlite_select_plan_preserves_root_scalar_output_name() {
+    let title = ResolvedShapeField::new(
+        "headline",
+        post_title_field(),
+        schema::Cardinality::Required,
+        None,
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![title]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values.len(), 1);
+    assert_eq!(selected_values[0].source_alias(), "root");
+    assert_eq!(selected_values[0].column_name(), "title");
+    assert_eq!(selected_values[0].output_name(), "headline");
+    assert_eq!(selected_values[0].field().name(), "title");
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootScalar);
+}
+
+#[test]
+fn sqlite_select_plan_preserves_root_scalar_projection_order() {
+    let title = ResolvedShapeField::new(
+        "title",
+        post_title_field(),
+        schema::Cardinality::Required,
+        None,
+    );
+
+    let author = ResolvedShapeField::new(
+        "author",
+        post_author_field(),
+        schema::Cardinality::Required,
+        None,
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![title, author]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values.len(), 2);
+
+    assert_eq!(selected_values[0].source_alias(), "root");
+    assert_eq!(selected_values[0].column_name(), "title");
+    assert_eq!(selected_values[0].output_name(), "title");
+    assert_eq!(selected_values[0].field().name(), "title");
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootScalar);
+
+    assert_eq!(selected_values[1].source_alias(), "root");
+    assert_eq!(selected_values[1].column_name(), "author");
+    assert_eq!(selected_values[1].output_name(), "author");
+    assert_eq!(selected_values[1].field().name(), "author");
+    assert_eq!(selected_values[1].role(), SQLiteValueRole::RootScalar);
+}
+
+#[test]
+fn sqlite_select_plan_can_apply_limit() {
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![],
+        Some(10),
+        None,
+    );
+
+    let plan = plan_select(&ir);
+
+    assert_eq!(plan.limit(), Some(10));
+}

@@ -41,4 +41,5 @@ name = "sqlite-plan"
 version = "0.1.0"
 dependencies = [
  "ir",
+ "schema",
 ]
