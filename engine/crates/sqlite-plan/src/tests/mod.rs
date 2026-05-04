@@ -284,3 +284,19 @@ fn sqlite_select_plan_can_filter_root_scalar_field_equals_string_literal() {
         None => panic!("Expected Some Filter!"),
     }
 }
+
+#[test]
+fn sqlite_select_plan_preserves_absent_filter() {
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+
+    assert!(plan.filter().is_none());
+}
