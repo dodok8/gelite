@@ -1,0 +1,11 @@
+[package]
+name = "sqlite-sqlgen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sqlite-plan = { path = "../sqlite-plan" }
+
+[dev-dependencies]
+ir = { path = "../ir" }
+schema = { path = "../schema" }

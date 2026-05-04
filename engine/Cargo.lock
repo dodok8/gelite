@@ -43,3 +43,12 @@ dependencies = [
  "ir",
  "schema",
 ]
+
+[[package]]
+name = "sqlite-sqlgen"
+version = "0.1.0"
+dependencies = [
+ "ir",
+ "schema",
+ "sqlite-plan",
+]
