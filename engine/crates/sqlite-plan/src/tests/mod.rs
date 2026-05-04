@@ -427,3 +427,25 @@ fn sqlite_select_plan_projects_selected_single_link_identity() {
     assert_eq!(selected_values[1].output_name(), "name");
     assert_eq!(selected_values[1].role(), SQLiteValueRole::Scalar);
 }
+
+#[test]
+fn sqlite_select_plan_preserves_selected_value_order_with_nested_link() {
+    let ir = post_query_with_shape(vec![post_title_shape_field(), post_author_shape_field()]);
+
+    let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values.len(), 3);
+
+    assert_eq!(selected_values[0].source_alias(), "root");
+    assert_eq!(selected_values[0].column_name(), "title");
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::Scalar);
+
+    assert_eq!(selected_values[1].source_alias(), "author");
+    assert_eq!(selected_values[1].column_name(), "id");
+    assert_eq!(selected_values[1].role(), SQLiteValueRole::ObjectId);
+
+    assert_eq!(selected_values[2].source_alias(), "author");
+    assert_eq!(selected_values[2].column_name(), "name");
+    assert_eq!(selected_values[2].role(), SQLiteValueRole::Scalar);
+}
