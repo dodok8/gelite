@@ -11,3 +11,7 @@ pub fn post_title_field() -> FieldRef {
 pub fn post_author_field() -> FieldRef {
     FieldRef::new(FieldId::new(3), post_type(), "author")
 }
+
+pub fn post_id_field() -> FieldRef {
+    FieldRef::new(FieldId::new(1), post_type(), "id")
+}

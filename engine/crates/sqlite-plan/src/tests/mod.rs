@@ -4,7 +4,7 @@ use crate::{
     SQLiteCompareOp, SQLiteOrderDirection, SQLiteValueExpr, SQLiteValueRole, SQLiteWhereExpr,
     plan_select,
 };
-use fixtures::{post_author_field, post_title_field, post_type};
+use fixtures::{post_author_field, post_id_field, post_title_field, post_type};
 use ir::{Literal, ResolvedShape, ResolvedShapeField, SelectQuery};
 
 #[test]
@@ -299,4 +299,74 @@ fn sqlite_select_plan_preserves_absent_filter() {
     let plan = plan_select(&ir);
 
     assert!(plan.filter().is_none());
+}
+
+#[test]
+fn sqlite_select_plan_can_filter_implicit_id_equals_string_literal() {
+    let filter = ir::CompareExpr::new(
+        ir::ValueExpr::Field(post_id_field()),
+        ir::CompareOp::Eq,
+        ir::ValueExpr::Literal(Literal::String("hello".to_string())),
+    );
+
+    let expr = ir::Expr::Compare(filter);
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        Some(expr),
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let filter = plan.filter();
+
+    match filter {
+        Some(SQLiteWhereExpr::Compare(compare)) => {
+            match compare.left() {
+                SQLiteValueExpr::Column(column) => {
+                    assert_eq!(column.source_alias(), "root");
+                    assert_eq!(column.column_name(), "id");
+                }
+                SQLiteValueExpr::Literal(_) => panic!("filter left side should be a column"),
+            }
+
+            assert_eq!(compare.op(), SQLiteCompareOp::Eq);
+
+            match compare.right() {
+                SQLiteValueExpr::Literal(crate::SQLiteLiteral::String(value)) => {
+                    assert_eq!(value, "hello");
+                }
+                SQLiteValueExpr::Column(_) => panic!("filter right side should be a literal"),
+            }
+        }
+        None => panic!("Expected Some Filter!"),
+    }
+}
+
+#[test]
+fn sqlite_select_plan_can_order_by_implicit_id() {
+    let order_by = ir::OrderExpr::new(
+        ir::ValueExpr::Field(post_id_field()),
+        ir::OrderDirection::Asc,
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        None,
+        vec![order_by],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let order_by = plan.order_by();
+
+    assert_eq!(order_by.len(), 1);
+    assert_eq!(order_by[0].source_alias(), "root");
+    assert_eq!(order_by[0].column_name(), "id");
+    assert_eq!(order_by[0].direction(), SQLiteOrderDirection::Asc);
 }
