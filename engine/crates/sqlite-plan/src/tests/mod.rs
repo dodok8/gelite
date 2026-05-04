@@ -5,9 +5,9 @@ use crate::{
     SQLiteValueRole, SQLiteWhereExpr, plan_select,
 };
 use fixtures::{
-    empty_post_query, post_author_field, post_author_shape_field, post_id_field,
-    post_id_shape_field, post_query_with_shape, post_title_field, post_title_shape_field,
-    post_type,
+    empty_post_query, optional_post_author_shape_field, post_author_field,
+    post_author_shape_field, post_author_shape_field_with_id_then_name, post_id_field,
+    post_id_shape_field, post_query_with_shape, post_title_field, post_title_shape_field, post_type,
 };
 use ir::{Literal, ResolvedShape, ResolvedShapeField, SelectQuery};
 
@@ -526,4 +526,41 @@ fn sqlite_result_shape_for_selected_single_link_has_identity_value() {
     assert_eq!(identity.source_alias(), "author");
     assert_eq!(identity.column_name(), "id");
     assert_eq!(identity.role(), SQLiteValueRole::ObjectId);
+}
+
+#[test]
+fn sqlite_select_plan_preserves_result_shape_field_order() {
+    let ir = post_query_with_shape(vec![post_title_shape_field(), post_author_shape_field()]);
+    let plan = plan_select(&ir);
+    let fields = plan.result_shape().fields();
+
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].output_name(), "title");
+    assert_eq!(fields[1].output_name(), "author");
+}
+
+#[test]
+fn sqlite_select_plan_can_join_optional_selected_single_link() {
+    let ir = post_query_with_shape(vec![optional_post_author_shape_field()]);
+    let plan = plan_select(&ir);
+    let joins = plan.joins();
+
+    assert_eq!(joins.len(), 1);
+    assert_eq!(joins[0].kind(), SQLiteJoinKind::Left);
+    assert_eq!(joins[0].target_alias(), "author");
+}
+
+#[test]
+fn sqlite_select_plan_preserves_nested_result_shape_field_order() {
+    let ir = post_query_with_shape(vec![post_author_shape_field_with_id_then_name()]);
+    let plan = plan_select(&ir);
+    let author = &plan.result_shape().fields()[0];
+    let nested_shape = author
+        .nested_shape()
+        .expect("author should have nested result shape");
+    let nested_fields = nested_shape.fields();
+
+    assert_eq!(nested_fields.len(), 2);
+    assert_eq!(nested_fields[0].output_name(), "id");
+    assert_eq!(nested_fields[1].output_name(), "name");
 }

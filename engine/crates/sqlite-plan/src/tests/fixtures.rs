@@ -68,6 +68,40 @@ pub fn post_author_shape_field() -> ir::ResolvedShapeField {
     )
 }
 
+pub fn optional_post_author_shape_field() -> ir::ResolvedShapeField {
+    let author_shape = ir::ResolvedShape::new(user_type(), vec![user_name_shape_field()]);
+
+    ir::ResolvedShapeField::new(
+        "author",
+        post_author_field(),
+        schema::Cardinality::Optional,
+        Some(author_shape),
+    )
+}
+
+pub fn post_author_shape_field_with_id_then_name() -> ir::ResolvedShapeField {
+    let author_shape = ir::ResolvedShape::new(
+        user_type(),
+        vec![user_id_shape_field(), user_name_shape_field()],
+    );
+
+    ir::ResolvedShapeField::new(
+        "author",
+        post_author_field(),
+        schema::Cardinality::Required,
+        Some(author_shape),
+    )
+}
+
+fn user_id_shape_field() -> ir::ResolvedShapeField {
+    ir::ResolvedShapeField::new(
+        "id",
+        FieldRef::new(FieldId::new(1), user_type(), "id"),
+        schema::Cardinality::Required,
+        None,
+    )
+}
+
 pub fn post_query_with_shape(fields: Vec<ir::ResolvedShapeField>) -> ir::SelectQuery {
     ir::SelectQuery::new(
         post_type(),
