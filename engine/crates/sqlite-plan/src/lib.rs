@@ -1,4 +1,4 @@
-use ir::SelectQuery;
+use ir::{CompareExpr, CompareOp, Expr, SelectQuery};
 use schema::ObjectTypeRef;
 
 pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
@@ -17,6 +17,8 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         .map(|order| SQLiteOrderBy::root_field(order))
         .collect();
 
+    let filter = ir.filter().map(SQLiteWhereExpr::from_ir);
+
     SQLiteSelectPlan {
         root_source: SQLiteObjectSource {
             table_name: root_object_type.name().to_ascii_lowercase().to_string(),
@@ -26,6 +28,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         },
         selected_values,
         order_by,
+        filter,
         limit: ir.limit(),
         offset: ir.offset(),
     }
@@ -42,6 +45,7 @@ pub struct SQLiteSelectPlan {
     order_by: Vec<SQLiteOrderBy>,
     limit: Option<u64>,
     offset: Option<u64>,
+    filter: Option<SQLiteWhereExpr>,
 }
 
 impl SQLiteSelectPlan {
@@ -63,6 +67,10 @@ impl SQLiteSelectPlan {
 
     pub fn offset(&self) -> Option<u64> {
         self.offset
+    }
+
+    pub fn filter(&self) -> &Option<SQLiteWhereExpr> {
+        &self.filter
     }
 }
 
@@ -176,6 +184,97 @@ impl SQLiteOrderBy {
 
     pub fn direction(&self) -> SQLiteOrderDirection {
         self.direction
+    }
+}
+
+pub enum SQLiteWhereExpr {
+    Compare(SQLiteCompareExpr),
+}
+
+impl SQLiteWhereExpr {
+    pub fn from_ir(expr: &Expr) -> Self {
+        match expr {
+            Expr::Compare(compare) => SQLiteWhereExpr::Compare(SQLiteCompareExpr::from_ir(compare)),
+        }
+    }
+}
+
+pub struct SQLiteCompareExpr {
+    left: SQLiteValueExpr,
+    op: SQLiteCompareOp,
+    right: SQLiteValueExpr,
+}
+
+impl SQLiteCompareExpr {
+    pub fn from_ir(compare: &CompareExpr) -> Self {
+        SQLiteCompareExpr {
+            left: SQLiteValueExpr::from_ir(compare.left()),
+            op: SQLiteCompareOp::from_ir(compare.op()),
+            right: SQLiteValueExpr::from_ir(compare.right()),
+        }
+    }
+
+    pub fn left(&self) -> &SQLiteValueExpr {
+        &self.left
+    }
+
+    pub fn op(&self) -> SQLiteCompareOp {
+        self.op
+    }
+
+    pub fn right(&self) -> &SQLiteValueExpr {
+        &self.right
+    }
+}
+
+pub enum SQLiteValueExpr {
+    Column(SQLiteColumnRef),
+    Literal(SQLiteLiteral),
+}
+
+impl SQLiteValueExpr {
+    pub fn from_ir(expr: &ir::ValueExpr) -> Self {
+        match expr {
+            ir::ValueExpr::Field(field) => SQLiteValueExpr::Column(SQLiteColumnRef {
+                source_alias: "root".to_string(),
+                column_name: field.name().to_string(),
+            }),
+            ir::ValueExpr::Literal(ir::Literal::String(value)) => {
+                SQLiteValueExpr::Literal(SQLiteLiteral::String(value.clone()))
+            }
+        }
+    }
+}
+
+pub struct SQLiteColumnRef {
+    source_alias: String,
+    column_name: String,
+}
+
+impl SQLiteColumnRef {
+    pub fn source_alias(&self) -> &str {
+        &self.source_alias
+    }
+
+    pub fn column_name(&self) -> &str {
+        &self.column_name
+    }
+}
+
+pub enum SQLiteLiteral {
+    String(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SQLiteCompareOp {
+    Eq,
+}
+
+impl SQLiteCompareOp {
+    pub fn from_ir(compare_op: CompareOp) -> Self {
+        match compare_op {
+            CompareOp::Eq => Self::Eq,
+        }
     }
 }
 

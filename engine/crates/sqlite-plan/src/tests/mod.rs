@@ -1,8 +1,11 @@
 mod fixtures;
 
-use crate::{SQLiteOrderDirection, SQLiteValueRole, plan_select};
+use crate::{
+    SQLiteCompareOp, SQLiteOrderDirection, SQLiteValueExpr, SQLiteValueRole, SQLiteWhereExpr,
+    plan_select,
+};
 use fixtures::{post_author_field, post_title_field, post_type};
-use ir::{ResolvedShape, ResolvedShapeField, SelectQuery};
+use ir::{Literal, ResolvedShape, ResolvedShapeField, SelectQuery};
 
 #[test]
 fn sqlite_select_plan_can_store_root_source() {
@@ -235,4 +238,49 @@ fn sqlite_select_plan_preserves_order_by_order() {
     assert_eq!(order_by[0].direction(), SQLiteOrderDirection::Asc);
     assert_eq!(order_by[1].column_name(), "author");
     assert_eq!(order_by[1].direction(), SQLiteOrderDirection::Desc);
+}
+
+#[test]
+fn sqlite_select_plan_can_filter_root_scalar_field_equals_string_literal() {
+    let filter = ir::CompareExpr::new(
+        ir::ValueExpr::Field(post_title_field()),
+        ir::CompareOp::Eq,
+        ir::ValueExpr::Literal(Literal::String("hello".to_string())),
+    );
+
+    let expr = ir::Expr::Compare(filter);
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        Some(expr),
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let filter = plan.filter();
+
+    match filter {
+        Some(SQLiteWhereExpr::Compare(compare)) => {
+            match compare.left() {
+                SQLiteValueExpr::Column(column) => {
+                    assert_eq!(column.source_alias(), "root");
+                    assert_eq!(column.column_name(), "title");
+                }
+                SQLiteValueExpr::Literal(_) => panic!("filter left side should be a column"),
+            }
+
+            assert_eq!(compare.op(), SQLiteCompareOp::Eq);
+
+            match compare.right() {
+                SQLiteValueExpr::Literal(crate::SQLiteLiteral::String(value)) => {
+                    assert_eq!(value, "hello");
+                }
+                SQLiteValueExpr::Column(_) => panic!("filter right side should be a literal"),
+            }
+        }
+        None => panic!("Expected Some Filter!"),
+    }
 }
