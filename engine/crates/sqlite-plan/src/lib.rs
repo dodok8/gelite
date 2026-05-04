@@ -14,7 +14,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     let order_by = ir
         .order_by()
         .iter()
-        .map(|order| SQLiteOrderBy::root_field(order))
+        .map(|order| SQLiteOrder::root_field(order))
         .collect();
 
     let filter = ir.filter().map(SQLiteWhereExpr::from_ir);
@@ -52,7 +52,7 @@ pub enum SQLiteValueRole {
 pub struct SQLiteSelectPlan {
     root_source: SQLiteObjectSource,
     selected_values: Vec<SQLiteSelectValue>,
-    order_by: Vec<SQLiteOrderBy>,
+    order_by: Vec<SQLiteOrder>,
     limit: Option<u64>,
     offset: Option<u64>,
     filter: Option<SQLiteWhereExpr>,
@@ -68,7 +68,7 @@ impl SQLiteSelectPlan {
         &self.selected_values
     }
 
-    pub fn order_by(&self) -> &[SQLiteOrderBy] {
+    pub fn order_by(&self) -> &[SQLiteOrder] {
         &self.order_by
     }
 
@@ -175,13 +175,13 @@ impl SQLiteOrderDirection {
     }
 }
 
-pub struct SQLiteOrderBy {
+pub struct SQLiteOrder {
     source_alias: String,
     column_name: String,
     direction: SQLiteOrderDirection,
 }
 
-impl SQLiteOrderBy {
+impl SQLiteOrder {
     pub fn root_field(order: &ir::OrderExpr) -> Self {
         let field = match order.value() {
             ir::ValueExpr::Field(field) => field,
