@@ -4,12 +4,7 @@ use schema::{Cardinality, FieldRef, ObjectTypeRef};
 pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     let root_object_type = ir.root_object_type().clone();
 
-    let selected_values = ir
-        .shape()
-        .fields()
-        .iter()
-        .map(|field| SQLiteSelectValue::root_field(field.field().clone(), field.output_name()))
-        .collect();
+    let selected_values = plan_shape_values(ir.shape(), "root");
 
     let order_by = ir
         .order_by()
@@ -45,8 +40,8 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SQLiteValueRole {
-    RootId,
-    RootScalar,
+    ObjectId,
+    Scalar,
 }
 
 pub struct SQLiteSelectPlan {
@@ -98,19 +93,17 @@ pub struct SQLiteSelectValue {
 }
 
 impl SQLiteSelectValue {
-    pub fn root_field(field: schema::FieldRef, output_name: impl Into<String>) -> Self {
-        let role = if field.name() == "id" {
-            SQLiteValueRole::RootId
-        } else {
-            SQLiteValueRole::RootScalar
-        };
-
+    pub fn from_field(
+        source_alias: impl Into<String>,
+        field: schema::FieldRef,
+        output_name: impl Into<String>,
+    ) -> Self {
         Self {
-            source_alias: "root".to_string(),
+            source_alias: source_alias.into(),
             column_name: field.name().to_string(),
             output_name: output_name.into(),
+            role: SQLiteValueRole::for_field(&field),
             field,
-            role,
         }
     }
 
@@ -133,6 +126,31 @@ impl SQLiteSelectValue {
     pub fn role(&self) -> SQLiteValueRole {
         self.role
     }
+}
+
+impl SQLiteValueRole {
+    fn for_field(field: &schema::FieldRef) -> Self {
+        if field.name() == "id" {
+            Self::ObjectId
+        } else {
+            Self::Scalar
+        }
+    }
+}
+
+fn plan_shape_values(shape: &ir::ResolvedShape, source_alias: &str) -> Vec<SQLiteSelectValue> {
+    shape
+        .fields()
+        .iter()
+        .flat_map(|field| match field.child_shape() {
+            Some(child_shape) => plan_shape_values(child_shape, field.output_name()),
+            None => vec![SQLiteSelectValue::from_field(
+                source_alias,
+                field.field().clone(),
+                field.output_name(),
+            )],
+        })
+        .collect()
 }
 
 pub struct SQLiteObjectSource {

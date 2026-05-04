@@ -5,20 +5,15 @@ use crate::{
     SQLiteValueRole, SQLiteWhereExpr, plan_select,
 };
 use fixtures::{
-    post_author_field, post_id_field, post_title_field, post_type, user_name_field, user_type,
+    empty_post_query, post_author_field, post_author_shape_field, post_id_field,
+    post_id_shape_field, post_query_with_shape, post_title_field, post_title_shape_field,
+    post_type,
 };
 use ir::{Literal, ResolvedShape, ResolvedShapeField, SelectQuery};
 
 #[test]
 fn sqlite_select_plan_can_store_root_source() {
-    let ir = SelectQuery::new(
-        post_type(),
-        ResolvedShape::new(post_type(), vec![]),
-        None,
-        vec![],
-        None,
-        None,
-    );
+    let ir = empty_post_query();
 
     let plan = plan_select(&ir);
 
@@ -30,21 +25,7 @@ fn sqlite_select_plan_can_store_root_source() {
 
 #[test]
 fn sqlite_select_plan_can_project_root_scalar_field() {
-    let title = ResolvedShapeField::new(
-        "title",
-        post_title_field(),
-        schema::Cardinality::Required,
-        None,
-    );
-
-    let ir = SelectQuery::new(
-        post_type(),
-        ResolvedShape::new(post_type(), vec![title]),
-        None,
-        vec![],
-        None,
-        None,
-    );
+    let ir = post_query_with_shape(vec![post_title_shape_field()]);
 
     let plan = plan_select(&ir);
     let selected_values = plan.selected_values();
@@ -54,7 +35,7 @@ fn sqlite_select_plan_can_project_root_scalar_field() {
     assert_eq!(selected_values[0].column_name(), "title");
     assert_eq!(selected_values[0].output_name(), "title");
     assert_eq!(selected_values[0].field().name(), "title");
-    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootScalar);
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::Scalar);
 }
 
 #[test]
@@ -83,7 +64,7 @@ fn sqlite_select_plan_preserves_root_scalar_output_name() {
     assert_eq!(selected_values[0].column_name(), "title");
     assert_eq!(selected_values[0].output_name(), "headline");
     assert_eq!(selected_values[0].field().name(), "title");
-    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootScalar);
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::Scalar);
 }
 
 #[test]
@@ -120,13 +101,13 @@ fn sqlite_select_plan_preserves_root_scalar_projection_order() {
     assert_eq!(selected_values[0].column_name(), "title");
     assert_eq!(selected_values[0].output_name(), "title");
     assert_eq!(selected_values[0].field().name(), "title");
-    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootScalar);
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::Scalar);
 
     assert_eq!(selected_values[1].source_alias(), "root");
     assert_eq!(selected_values[1].column_name(), "author");
     assert_eq!(selected_values[1].output_name(), "author");
     assert_eq!(selected_values[1].field().name(), "author");
-    assert_eq!(selected_values[1].role(), SQLiteValueRole::RootScalar);
+    assert_eq!(selected_values[1].role(), SQLiteValueRole::Scalar);
 }
 
 #[test]
@@ -375,16 +356,7 @@ fn sqlite_select_plan_can_order_by_implicit_id() {
 
 #[test]
 fn sqlite_select_plan_can_project_implicit_id() {
-    let id = ResolvedShapeField::new("id", post_id_field(), schema::Cardinality::Required, None);
-
-    let ir = SelectQuery::new(
-        post_type(),
-        ResolvedShape::new(post_type(), vec![id]),
-        None,
-        vec![],
-        None,
-        None,
-    );
+    let ir = post_query_with_shape(vec![post_id_shape_field()]);
 
     let plan = plan_select(&ir);
     let selected_values = plan.selected_values();
@@ -394,36 +366,12 @@ fn sqlite_select_plan_can_project_implicit_id() {
     assert_eq!(selected_values[0].column_name(), "id");
     assert_eq!(selected_values[0].output_name(), "id");
     assert_eq!(selected_values[0].field().name(), "id");
-    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootId);
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::ObjectId);
 }
 
 #[test]
 fn sqlite_select_plan_can_join_selected_single_link() {
-    let author_shape = ResolvedShape::new(
-        user_type(),
-        vec![ResolvedShapeField::new(
-            "name",
-            user_name_field(),
-            schema::Cardinality::Required,
-            None,
-        )],
-    );
-
-    let author = ResolvedShapeField::new(
-        "author",
-        post_author_field(),
-        schema::Cardinality::Required,
-        Some(author_shape),
-    );
-
-    let ir = SelectQuery::new(
-        post_type(),
-        ResolvedShape::new(post_type(), vec![author]),
-        None,
-        vec![],
-        None,
-        None,
-    );
+    let ir = post_query_with_shape(vec![post_author_shape_field()]);
 
     let plan = plan_select(&ir);
     let joins = plan.joins();
@@ -446,4 +394,17 @@ fn sqlite_select_plan_can_join_selected_single_link() {
             assert_eq!(field.name(), "author");
         }
     }
+}
+
+#[test]
+fn sqlite_select_plan_can_project_selected_single_link_scalar_field() {
+    let ir = post_query_with_shape(vec![post_author_shape_field()]);
+
+    let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values[0].source_alias(), "author");
+    assert_eq!(selected_values[0].column_name(), "name");
+    assert_eq!(selected_values[0].output_name(), "name");
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::Scalar);
 }

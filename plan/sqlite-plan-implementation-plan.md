@@ -230,20 +230,21 @@ Initial roles:
 
 ```rust
 pub enum SQLiteValueRole {
-    RootId,
-    RootScalar,
-    NestedObjectId,
-    NestedScalar,
+    ObjectId,
+    Scalar,
 }
 ```
 
-The role tells result shaping why the value was selected.
+The role tells result shaping why the value was selected. It should describe
+the value's purpose, not whether the value came from the root source or a nested
+source. Root versus nested location is represented by source aliases and result
+shape metadata.
 
 For the current implementation, `schema::FieldRef` only carries field identity,
 owner object type, and field name. It does not yet carry field kind or
 `is_implicit` metadata. Because the schema layer rejects explicit `id` field
 declarations, the SQLite planner may temporarily classify a root selected field
-with `field.name() == "id"` as `SQLiteValueRole::RootId`.
+with `field.name() == "id"` as `SQLiteValueRole::ObjectId`.
 
 This is an intentional short-term rule, not the final metadata model. If the
 planner later needs to distinguish implicit fields, declared scalar fields, and
@@ -266,7 +267,7 @@ Expected first-pass behavior:
 
 - selected column is `root.id`
 - output name is preserved from `ir::ResolvedShapeField`
-- selected value role is `RootId`
+- selected value role is `ObjectId`
 
 ### `SQLiteJoin`
 
@@ -489,7 +490,7 @@ select Post { title }
 Expected:
 
 - one selected value for `root.title`
-- role is `RootScalar`
+- role is `Scalar`
 - result shape contains output field `title`
 
 4. `sqlite_select_plan_can_project_implicit_id`
@@ -503,7 +504,7 @@ select Post { id }
 Expected:
 
 - selected value column is `id`
-- role is `RootId`
+- role is `ObjectId`
 
 ### Layer 3: pagination and ordering
 
