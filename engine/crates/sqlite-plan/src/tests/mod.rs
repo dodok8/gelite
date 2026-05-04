@@ -449,3 +449,62 @@ fn sqlite_select_plan_preserves_selected_value_order_with_nested_link() {
     assert_eq!(selected_values[2].column_name(), "name");
     assert_eq!(selected_values[2].role(), SQLiteValueRole::Scalar);
 }
+
+#[test]
+fn sqlite_select_plan_can_build_result_shape_for_root_scalar_fields() {
+    let ir = post_query_with_shape(vec![post_title_shape_field()]);
+    let plan = plan_select(&ir);
+    let result_shape = plan.result_shape();
+
+    let fields = result_shape.fields();
+
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].output_name(), "title");
+    assert_eq!(fields[0].cardinality(), schema::Cardinality::Required);
+
+    let value = fields[0]
+        .value()
+        .expect("title should point to a selected value");
+
+    assert_eq!(value.source_alias(), "root");
+    assert_eq!(value.column_name(), "title");
+    assert_eq!(value.role(), SQLiteValueRole::Scalar);
+
+    assert!(fields[0].nested_shape().is_none());
+}
+
+#[test]
+fn sqlite_select_plan_can_build_result_shape_for_selected_single_link() {
+    let ir = post_query_with_shape(vec![post_author_shape_field()]);
+    let plan = plan_select(&ir);
+    let result_shape = plan.result_shape();
+
+    let fields = result_shape.fields();
+
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].output_name(), "author");
+    assert_eq!(fields[0].cardinality(), schema::Cardinality::Required);
+    assert!(fields[0].value().is_none());
+
+    let nested_shape = fields[0]
+        .nested_shape()
+        .expect("author should have nested result shape");
+
+    let nested_fields = nested_shape.fields();
+
+    assert_eq!(nested_fields.len(), 1);
+    assert_eq!(nested_fields[0].output_name(), "name");
+    assert_eq!(
+        nested_fields[0].cardinality(),
+        schema::Cardinality::Required
+    );
+
+    let value = nested_fields[0]
+        .value()
+        .expect("name should point to a selected value");
+
+    assert_eq!(value.source_alias(), "author");
+    assert_eq!(value.column_name(), "name");
+    assert_eq!(value.role(), SQLiteValueRole::Scalar);
+    assert!(nested_fields[0].nested_shape().is_none());
+}

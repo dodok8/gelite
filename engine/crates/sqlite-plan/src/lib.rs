@@ -5,6 +5,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     let root_object_type = ir.root_object_type().clone();
 
     let selected_values = plan_shape_values(ir.shape(), "root");
+    let result_shape = plan_result_shape(ir.shape(), "root");
 
     let order_by = ir
         .order_by()
@@ -35,6 +36,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         limit: ir.limit(),
         offset: ir.offset(),
         joins,
+        result_shape,
     }
 }
 
@@ -52,6 +54,7 @@ pub struct SQLiteSelectPlan {
     offset: Option<u64>,
     filter: Option<SQLiteWhereExpr>,
     joins: Vec<SQLiteJoin>,
+    result_shape: SQLiteResultShapePlan,
 }
 
 impl SQLiteSelectPlan {
@@ -81,6 +84,10 @@ impl SQLiteSelectPlan {
 
     pub fn joins(&self) -> &[SQLiteJoin] {
         &self.joins
+    }
+
+    pub fn result_shape(&self) -> &SQLiteResultShapePlan {
+        &self.result_shape
     }
 }
 
@@ -167,6 +174,88 @@ fn plan_shape_values(shape: &ir::ResolvedShape, source_alias: &str) -> Vec<SQLit
             )],
         })
         .collect()
+}
+
+fn plan_result_shape(shape: &ir::ResolvedShape, source_alias: &str) -> SQLiteResultShapePlan {
+    let fields = shape
+        .fields()
+        .iter()
+        .map(|field| match field.child_shape() {
+            Some(child_shape) => SQLiteResultField {
+                output_name: field.output_name().to_string(),
+                cardinality: field.cardinality(),
+                value: None,
+                nested_shape: Some(plan_result_shape(child_shape, field.output_name())),
+            },
+            None => SQLiteResultField {
+                output_name: field.output_name().to_string(),
+                cardinality: field.cardinality(),
+                value: Some(SQLiteResultValueRef {
+                    source_alias: source_alias.to_string(),
+                    column_name: field.field().name().to_string(),
+                    role: SQLiteValueRole::for_field(field.field()),
+                }),
+                nested_shape: None,
+            },
+        })
+        .collect();
+
+    SQLiteResultShapePlan { fields }
+}
+
+pub struct SQLiteResultShapePlan {
+    fields: Vec<SQLiteResultField>,
+}
+
+impl SQLiteResultShapePlan {
+    pub fn fields(&self) -> &[SQLiteResultField] {
+        &self.fields
+    }
+}
+
+pub struct SQLiteResultField {
+    output_name: String,
+    cardinality: schema::Cardinality,
+    value: Option<SQLiteResultValueRef>,
+    nested_shape: Option<SQLiteResultShapePlan>,
+}
+
+impl SQLiteResultField {
+    pub fn output_name(&self) -> &str {
+        &self.output_name
+    }
+
+    pub fn cardinality(&self) -> schema::Cardinality {
+        self.cardinality
+    }
+
+    pub fn value(&self) -> Option<&SQLiteResultValueRef> {
+        self.value.as_ref()
+    }
+
+    pub fn nested_shape(&self) -> Option<&SQLiteResultShapePlan> {
+        self.nested_shape.as_ref()
+    }
+}
+
+pub struct SQLiteResultValueRef {
+    source_alias: String,
+    column_name: String,
+    role: SQLiteValueRole,
+}
+
+impl SQLiteResultValueRef {
+    pub fn source_alias(&self) -> &str {
+        &self.source_alias
+    }
+
+    pub fn column_name(&self) -> &str {
+        &self.column_name
+    }
+
+    pub fn role(&self) -> SQLiteValueRole {
+        self.role
+    }
 }
 
 pub struct SQLiteObjectSource {
