@@ -143,7 +143,23 @@ fn plan_shape_values(shape: &ir::ResolvedShape, source_alias: &str) -> Vec<SQLit
         .fields()
         .iter()
         .flat_map(|field| match field.child_shape() {
-            Some(child_shape) => plan_shape_values(child_shape, field.output_name()),
+            Some(child_shape) => {
+                let nested_alias = field.output_name();
+                let child_id_field = FieldRef::new(
+                    schema::FieldId::new(1),
+                    child_shape.source_object_type().clone(),
+                    "id",
+                );
+
+                let mut values = vec![SQLiteSelectValue::from_field(
+                    nested_alias,
+                    child_id_field,
+                    "id",
+                )];
+
+                values.extend(plan_shape_values(child_shape, nested_alias));
+                values
+            }
             None => vec![SQLiteSelectValue::from_field(
                 source_alias,
                 field.field().clone(),

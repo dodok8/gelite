@@ -403,8 +403,27 @@ fn sqlite_select_plan_can_project_selected_single_link_scalar_field() {
     let plan = plan_select(&ir);
     let selected_values = plan.selected_values();
 
+    assert_eq!(selected_values[1].source_alias(), "author");
+    assert_eq!(selected_values[1].column_name(), "name");
+    assert_eq!(selected_values[1].output_name(), "name");
+    assert_eq!(selected_values[1].role(), SQLiteValueRole::Scalar);
+}
+
+#[test]
+fn sqlite_select_plan_projects_selected_single_link_identity() {
+    let ir = post_query_with_shape(vec![post_author_shape_field()]);
+    let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values.len(), 2);
+
     assert_eq!(selected_values[0].source_alias(), "author");
-    assert_eq!(selected_values[0].column_name(), "name");
-    assert_eq!(selected_values[0].output_name(), "name");
-    assert_eq!(selected_values[0].role(), SQLiteValueRole::Scalar);
+    assert_eq!(selected_values[0].column_name(), "id");
+    assert_eq!(selected_values[0].output_name(), "id");
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::ObjectId);
+
+    assert_eq!(selected_values[1].source_alias(), "author");
+    assert_eq!(selected_values[1].column_name(), "name");
+    assert_eq!(selected_values[1].output_name(), "name");
+    assert_eq!(selected_values[1].role(), SQLiteValueRole::Scalar);
 }
