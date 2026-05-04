@@ -628,6 +628,50 @@ fn sqlite_select_plan_can_store_root_source() {
 This first test fixes the boundary between semantic object type identity and
 SQLite physical table access.
 
+## Current Completion Status
+
+The first `sqlite-plan` pass now covers the select-planning contracts needed
+before SQL generation:
+
+- root source planning
+- root scalar projection
+- root implicit `id` projection
+- selected value output name preservation
+- selected value order preservation
+- limit and offset passthrough
+- root scalar ordering, including `asc`, `desc`, and implicit `id`
+- scalar equality predicates over root fields and string literals
+- absent filter preservation
+- selected required single-link joins
+- selected optional single-link joins
+- selected single-link scalar projection
+- selected single-link identity value projection
+- root result shape fields
+- selected single-link nested result shape
+- nested result identity value
+- root and nested result shape field order preservation
+
+This means the project can now move to SQL generation for the currently
+supported plan subset.
+
+The next layer should consume `sqlite-plan`, not `ir` or `query-ast` directly.
+
+```text
+ir -> sqlite-plan -> sqlite-sqlgen -> SQL string
+```
+
+The SQL generation layer should render the already-planned physical structure:
+
+- `SQLiteSelectPlan.root_source` -> `FROM`
+- `SQLiteSelectPlan.selected_values` -> `SELECT`
+- `SQLiteSelectPlan.joins` -> `JOIN`
+- `SQLiteSelectPlan.filter` -> `WHERE`
+- `SQLiteSelectPlan.order_by` -> `ORDER BY`
+- `limit` and `offset` -> `LIMIT` and `OFFSET`
+
+It should not perform schema resolution, query validation, result shaping, or
+new join planning.
+
 ## Commit Strategy
 
 Use small commits:
@@ -638,6 +682,8 @@ Use small commits:
 4. add order/limit/offset planning
 5. add scalar predicate planning
 6. add single-link join planning
+7. add result shape planning
+8. add SQL generation in a separate layer
 
 Avoid mixing SQL generation into these commits.
 
