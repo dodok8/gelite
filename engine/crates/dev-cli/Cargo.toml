@@ -8,3 +8,5 @@ schema = { path = "../schema" }
 query-ast = { path = "../query-ast" }
 ir = { path = "../ir" }
 resolver = { path = "../resolver" }
+sqlite-plan = { path = "../sqlite-plan" }
+sqlite-sqlgen = { path = "../sqlite-sqlgen" }

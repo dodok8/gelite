@@ -10,6 +10,8 @@ dependencies = [
  "query-ast",
  "resolver",
  "schema",
+ "sqlite-plan",
+ "sqlite-sqlgen",
 ]
 
 [[package]]

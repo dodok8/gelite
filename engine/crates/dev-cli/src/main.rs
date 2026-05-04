@@ -13,7 +13,42 @@ fn main() {
 
     match resolver::resolve_select(&catalog, &query) {
         Ok(resolved) => {
-            println!("{resolved:#?}");
+            let plan = sqlite_plan::plan_select(&resolved);
+            let statement = sqlite_sqlgen::render_select(&plan);
+
+            println!("Resolved IR:\n{resolved:#?}");
+            println!(
+                "SQLite Plan:\n  root: {} as {}\n  selected values:",
+                plan.root_source().table_name(),
+                plan.root_source().alias()
+            );
+            for value in plan.selected_values() {
+                println!(
+                    "    {}.{} -> {}",
+                    value.source_alias(),
+                    value.column_name(),
+                    value.output_name()
+                );
+            }
+            println!("  joins:");
+            for join in plan.joins() {
+                let on = join.on();
+                let join_kind = match join.kind() {
+                    sqlite_plan::SQLiteJoinKind::Inner => "inner join",
+                    sqlite_plan::SQLiteJoinKind::Left => "left join",
+                };
+                println!(
+                    "    {} {} as {} on {}.{} = {}.{}",
+                    join_kind,
+                    join.target_table(),
+                    join.target_alias(),
+                    on.left_alias(),
+                    on.left_column(),
+                    on.right_alias(),
+                    on.right_column()
+                );
+            }
+            println!("SQL:\n{}", statement.sql());
         }
         Err(error) => {
             eprintln!("failed to resolve query: {error:#?}");
