@@ -5,7 +5,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     let root_object_type = ir.root_object_type().clone();
 
     let selected_values = plan_shape_values(ir.shape(), "root");
-    let result_shape = plan_result_shape(ir.shape(), "root");
+    let result_shape = plan_result_shape(ir.shape(), "root", false);
 
     let order_by = ir
         .order_by()
@@ -176,7 +176,11 @@ fn plan_shape_values(shape: &ir::ResolvedShape, source_alias: &str) -> Vec<SQLit
         .collect()
 }
 
-fn plan_result_shape(shape: &ir::ResolvedShape, source_alias: &str) -> SQLiteResultShapePlan {
+fn plan_result_shape(
+    shape: &ir::ResolvedShape,
+    source_alias: &str,
+    include_identity: bool,
+) -> SQLiteResultShapePlan {
     let fields = shape
         .fields()
         .iter()
@@ -185,7 +189,7 @@ fn plan_result_shape(shape: &ir::ResolvedShape, source_alias: &str) -> SQLiteRes
                 output_name: field.output_name().to_string(),
                 cardinality: field.cardinality(),
                 value: None,
-                nested_shape: Some(plan_result_shape(child_shape, field.output_name())),
+                nested_shape: Some(plan_result_shape(child_shape, field.output_name(), true)),
             },
             None => SQLiteResultField {
                 output_name: field.output_name().to_string(),
@@ -200,16 +204,27 @@ fn plan_result_shape(shape: &ir::ResolvedShape, source_alias: &str) -> SQLiteRes
         })
         .collect();
 
-    SQLiteResultShapePlan { fields }
+    SQLiteResultShapePlan {
+        identity_value: include_identity.then(|| SQLiteResultValueRef {
+            source_alias: source_alias.to_string(),
+            column_name: "id".to_string(),
+            role: SQLiteValueRole::ObjectId,
+        }),
+        fields,
+    }
 }
 
 pub struct SQLiteResultShapePlan {
+    identity_value: Option<SQLiteResultValueRef>,
     fields: Vec<SQLiteResultField>,
 }
 
 impl SQLiteResultShapePlan {
     pub fn fields(&self) -> &[SQLiteResultField] {
         &self.fields
+    }
+    pub fn identity_value(&self) -> Option<&SQLiteResultValueRef> {
+        self.identity_value.as_ref()
     }
 }
 

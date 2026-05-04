@@ -508,3 +508,22 @@ fn sqlite_select_plan_can_build_result_shape_for_selected_single_link() {
     assert_eq!(value.role(), SQLiteValueRole::Scalar);
     assert!(nested_fields[0].nested_shape().is_none());
 }
+
+#[test]
+fn sqlite_result_shape_for_selected_single_link_has_identity_value() {
+    let ir = post_query_with_shape(vec![post_author_shape_field()]);
+    let plan = plan_select(&ir);
+
+    let author = &plan.result_shape().fields()[0];
+    let nested_shape = author
+        .nested_shape()
+        .expect("author should have nested result shape");
+
+    let identity = nested_shape
+        .identity_value()
+        .expect("nested shape should have identity value");
+
+    assert_eq!(identity.source_alias(), "author");
+    assert_eq!(identity.column_name(), "id");
+    assert_eq!(identity.role(), SQLiteValueRole::ObjectId);
+}
