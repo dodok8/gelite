@@ -302,14 +302,45 @@ pub enum SQLitePredicate {
 
 ```rust
 pub struct SQLiteComparePredicate {
-    left: SQLiteValueRef,
+    left: SQLiteValueExpr,
     op: SQLiteCompareOp,
-    right: SQLiteLiteral,
+    right: SQLiteValueExpr,
 }
 ```
 
-For the current IR, compare expressions are `field = literal`, so this limited
-shape is enough.
+For the current resolver path, compare expressions are produced from the
+asymmetric `query-ast::CompareExpr` shape:
+
+```text
+Path = Literal
+```
+
+So the first sqlite-plan tests should focus on `Field = Literal` IR values that
+the resolver can actually produce today.
+
+However, the SQLite predicate plan should not bake in that AST limitation. The
+Semantic IR compare model already uses value expressions on both sides, and the
+query AST is expected to become more general later. The planner should therefore
+model both sides as SQLite value expressions, even if the first implemented
+cases only exercise `Column = Literal`.
+
+Do not add tests for `Literal = Column` or `Column = Column` until the AST and
+resolver can produce those forms. Those tests would be valid planner unit tests,
+but they are intentionally deferred to avoid making the implementation plan
+look broader than the current pipeline contract.
+
+### `SQLiteValueExpr`
+
+Represents a planned value expression used in predicates.
+
+Initial forms:
+
+```rust
+pub enum SQLiteValueExpr {
+    Column(SQLiteValueRef),
+    Literal(SQLiteLiteral),
+}
+```
 
 ### `SQLiteOrder`
 
