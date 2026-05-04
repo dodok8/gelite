@@ -1,5 +1,5 @@
 use ir::{CompareExpr, CompareOp, Expr, SelectQuery};
-use schema::ObjectTypeRef;
+use schema::{Cardinality, FieldRef, ObjectTypeRef};
 
 pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     let root_object_type = ir.root_object_type().clone();
@@ -19,6 +19,14 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
 
     let filter = ir.filter().map(SQLiteWhereExpr::from_ir);
 
+    let joins = ir
+        .shape()
+        .fields()
+        .iter()
+        .filter(|field| field.child_shape().is_some())
+        .map(SQLiteJoin::selected_single_link)
+        .collect();
+
     SQLiteSelectPlan {
         root_source: SQLiteObjectSource {
             table_name: root_object_type.name().to_ascii_lowercase().to_string(),
@@ -31,6 +39,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         filter,
         limit: ir.limit(),
         offset: ir.offset(),
+        joins,
     }
 }
 
@@ -47,6 +56,7 @@ pub struct SQLiteSelectPlan {
     limit: Option<u64>,
     offset: Option<u64>,
     filter: Option<SQLiteWhereExpr>,
+    joins: Vec<SQLiteJoin>,
 }
 
 impl SQLiteSelectPlan {
@@ -72,6 +82,10 @@ impl SQLiteSelectPlan {
 
     pub fn filter(&self) -> &Option<SQLiteWhereExpr> {
         &self.filter
+    }
+
+    pub fn joins(&self) -> &[SQLiteJoin] {
+        &self.joins
     }
 }
 
@@ -282,6 +296,113 @@ impl SQLiteCompareOp {
         match compare_op {
             CompareOp::Eq => Self::Eq,
         }
+    }
+}
+
+pub enum SQLiteJoinReason {
+    SelectedSingleLink { field: FieldRef },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SQLiteJoinKind {
+    Inner,
+    Left,
+}
+
+impl SQLiteJoinKind {
+    pub fn for_selected_single_link(cardinality: schema::Cardinality) -> Self {
+        match cardinality {
+            Cardinality::Required => Self::Inner,
+            Cardinality::Optional => Self::Left,
+            Cardinality::Many => {
+                todo!("multi link joins are not supported yet")
+            }
+        }
+    }
+}
+
+pub struct SQLiteJoinCondition {
+    left_alias: String,
+    left_column: String,
+    right_alias: String,
+    right_column: String,
+}
+impl SQLiteJoinCondition {
+    pub fn left_alias(&self) -> &str {
+        &self.left_alias
+    }
+
+    pub fn left_column(&self) -> &str {
+        &self.left_column
+    }
+
+    pub fn right_alias(&self) -> &str {
+        &self.right_alias
+    }
+
+    pub fn right_column(&self) -> &str {
+        &self.right_column
+    }
+}
+
+pub struct SQLiteJoin {
+    kind: SQLiteJoinKind,
+    source_alias: String,
+    target_table: String,
+    target_alias: String,
+    on: SQLiteJoinCondition,
+    reason: SQLiteJoinReason,
+}
+
+impl SQLiteJoin {
+    pub fn selected_single_link(shape_field: &ir::ResolvedShapeField) -> Self {
+        let child_shape = shape_field
+            .child_shape()
+            .expect("selected link field must have child shape");
+
+        let field = shape_field.field().clone();
+
+        Self {
+            kind: SQLiteJoinKind::for_selected_single_link(shape_field.cardinality()),
+            source_alias: "root".to_string(),
+            target_table: child_shape
+                .source_object_type()
+                .name()
+                .to_ascii_lowercase()
+                .to_string(),
+            target_alias: shape_field.output_name().to_string(),
+            on: SQLiteJoinCondition {
+                left_alias: "root".to_string(),
+                left_column: format!("{}_id", field.name()),
+                right_alias: shape_field.output_name().to_string(),
+                right_column: "id".to_string(),
+            },
+            reason: SQLiteJoinReason::SelectedSingleLink { field },
+        }
+    }
+
+    pub fn kind(&self) -> SQLiteJoinKind {
+        self.kind
+    }
+
+    pub fn source_alias(&self) -> &str {
+        &self.source_alias
+    }
+
+    pub fn target_table(&self) -> &str {
+        &self.target_table
+    }
+
+    pub fn target_alias(&self) -> &str {
+        &self.target_alias
+    }
+
+    pub fn on(&self) -> &SQLiteJoinCondition {
+        &self.on
+    }
+
+    pub fn reason(&self) -> &SQLiteJoinReason {
+        &self.reason
     }
 }
 

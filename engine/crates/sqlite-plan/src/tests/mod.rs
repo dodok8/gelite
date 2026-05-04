@@ -1,10 +1,12 @@
 mod fixtures;
 
 use crate::{
-    SQLiteCompareOp, SQLiteOrderDirection, SQLiteValueExpr, SQLiteValueRole, SQLiteWhereExpr,
-    plan_select,
+    SQLiteCompareOp, SQLiteJoinKind, SQLiteJoinReason, SQLiteOrderDirection, SQLiteValueExpr,
+    SQLiteValueRole, SQLiteWhereExpr, plan_select,
 };
-use fixtures::{post_author_field, post_id_field, post_title_field, post_type};
+use fixtures::{
+    post_author_field, post_id_field, post_title_field, post_type, user_name_field, user_type,
+};
 use ir::{Literal, ResolvedShape, ResolvedShapeField, SelectQuery};
 
 #[test]
@@ -393,4 +395,55 @@ fn sqlite_select_plan_can_project_implicit_id() {
     assert_eq!(selected_values[0].output_name(), "id");
     assert_eq!(selected_values[0].field().name(), "id");
     assert_eq!(selected_values[0].role(), SQLiteValueRole::RootId);
+}
+
+#[test]
+fn sqlite_select_plan_can_join_selected_single_link() {
+    let author_shape = ResolvedShape::new(
+        user_type(),
+        vec![ResolvedShapeField::new(
+            "name",
+            user_name_field(),
+            schema::Cardinality::Required,
+            None,
+        )],
+    );
+
+    let author = ResolvedShapeField::new(
+        "author",
+        post_author_field(),
+        schema::Cardinality::Required,
+        Some(author_shape),
+    );
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![author]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let joins = plan.joins();
+
+    assert_eq!(joins.len(), 1);
+    assert_eq!(joins[0].kind(), SQLiteJoinKind::Inner);
+    assert_eq!(joins[0].source_alias(), "root");
+    assert_eq!(joins[0].target_table(), "user");
+    assert_eq!(joins[0].target_alias(), "author");
+
+    let on = joins[0].on();
+
+    assert_eq!(on.left_alias(), "root");
+    assert_eq!(on.left_column(), "author_id");
+    assert_eq!(on.right_alias(), "author");
+    assert_eq!(on.right_column(), "id");
+
+    match joins[0].reason() {
+        SQLiteJoinReason::SelectedSingleLink { field } => {
+            assert_eq!(field.name(), "author");
+        }
+    }
 }

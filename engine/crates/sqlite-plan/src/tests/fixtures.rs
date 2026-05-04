@@ -15,3 +15,11 @@ pub fn post_author_field() -> FieldRef {
 pub fn post_id_field() -> FieldRef {
     FieldRef::new(FieldId::new(1), post_type(), "id")
 }
+
+pub fn user_type() -> ObjectTypeRef {
+    ObjectTypeRef::new(ObjectTypeId::new(2), "User")
+}
+
+pub fn user_name_field() -> FieldRef {
+    FieldRef::new(FieldId::new(2), user_type(), "name")
+}
