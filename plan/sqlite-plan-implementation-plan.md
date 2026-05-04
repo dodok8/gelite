@@ -239,6 +239,35 @@ pub enum SQLiteValueRole {
 
 The role tells result shaping why the value was selected.
 
+For the current implementation, `schema::FieldRef` only carries field identity,
+owner object type, and field name. It does not yet carry field kind or
+`is_implicit` metadata. Because the schema layer rejects explicit `id` field
+declarations, the SQLite planner may temporarily classify a root selected field
+with `field.name() == "id"` as `SQLiteValueRole::RootId`.
+
+This is an intentional short-term rule, not the final metadata model. If the
+planner later needs to distinguish implicit fields, declared scalar fields, and
+link fields without relying on reserved names, extend the resolved schema
+reference model first. Likely options are:
+
+- add field kind and `is_implicit` metadata to `schema::FieldRef`
+- introduce a richer resolved field descriptor in `ir`
+- keep `FieldRef` as identity only but provide catalog-backed metadata lookup
+  to planner inputs
+
+Do not expand this yet just to implement root `id` projection. The next test
+should document the current behavior and keep the implementation small:
+
+```text
+sqlite_select_plan_can_project_implicit_id
+```
+
+Expected first-pass behavior:
+
+- selected column is `root.id`
+- output name is preserved from `ir::ResolvedShapeField`
+- selected value role is `RootId`
+
 ### `SQLiteJoin`
 
 Minimum fields:

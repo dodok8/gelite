@@ -8,7 +8,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         .shape()
         .fields()
         .iter()
-        .map(|field| SQLiteSelectValue::root_scalar(field.field().clone(), field.output_name()))
+        .map(|field| SQLiteSelectValue::root_field(field.field().clone(), field.output_name()))
         .collect();
 
     let order_by = ir
@@ -36,6 +36,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SQLiteValueRole {
+    RootId,
     RootScalar,
 }
 
@@ -83,13 +84,19 @@ pub struct SQLiteSelectValue {
 }
 
 impl SQLiteSelectValue {
-    pub fn root_scalar(field: schema::FieldRef, output_name: impl Into<String>) -> Self {
+    pub fn root_field(field: schema::FieldRef, output_name: impl Into<String>) -> Self {
+        let role = if field.name() == "id" {
+            SQLiteValueRole::RootId
+        } else {
+            SQLiteValueRole::RootScalar
+        };
+
         Self {
             source_alias: "root".to_string(),
             column_name: field.name().to_string(),
             output_name: output_name.into(),
             field,
-            role: SQLiteValueRole::RootScalar,
+            role,
         }
     }
 

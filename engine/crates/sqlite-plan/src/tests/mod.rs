@@ -370,3 +370,27 @@ fn sqlite_select_plan_can_order_by_implicit_id() {
     assert_eq!(order_by[0].column_name(), "id");
     assert_eq!(order_by[0].direction(), SQLiteOrderDirection::Asc);
 }
+
+#[test]
+fn sqlite_select_plan_can_project_implicit_id() {
+    let id = ResolvedShapeField::new("id", post_id_field(), schema::Cardinality::Required, None);
+
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![id]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values.len(), 1);
+    assert_eq!(selected_values[0].source_alias(), "root");
+    assert_eq!(selected_values[0].column_name(), "id");
+    assert_eq!(selected_values[0].output_name(), "id");
+    assert_eq!(selected_values[0].field().name(), "id");
+    assert_eq!(selected_values[0].role(), SQLiteValueRole::RootId);
+}
