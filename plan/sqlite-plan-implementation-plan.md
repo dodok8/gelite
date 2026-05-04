@@ -655,3 +655,134 @@ Answer these only when tests force the decision:
 
 Do not resolve these prematurely. The first sqlite-plan pass should implement
 only root scalar fields and selected required single links.
+
+## Temporary Rules and Deferred Design Work
+
+The current sqlite-plan implementation intentionally uses several small
+short-term rules to keep the learning slice moving. These rules are acceptable
+for the first pass, but they must not become hidden permanent architecture.
+
+### Field metadata is inferred from names
+
+Current rule:
+
+- `field.name() == "id"` is treated as an object identity value.
+- This maps to `SQLiteValueRole::ObjectId`.
+- Other selected fields map to `SQLiteValueRole::Scalar`.
+
+Why this is temporary:
+
+- `schema::FieldRef` currently carries only field id, owner object type, and
+  field name.
+- It does not carry field kind, scalar type, link target, cardinality, or
+  `is_implicit`.
+- Name-based identity detection works only because the schema layer rejects
+  explicit `id` field declarations.
+
+Later replacement options:
+
+- enrich `schema::FieldRef` with field metadata
+- add a richer resolved field descriptor to `ir`
+- pass catalog-backed field metadata into sqlite planning
+
+### Implicit nested object identity is not fully modeled yet
+
+Selected nested objects need an identity value for result shaping. For example:
+
+```text
+select Post {
+  author { name }
+}
+```
+
+The planner will eventually need both:
+
+```text
+author.id
+author.name
+```
+
+Current limitation:
+
+- `ir::ResolvedShape` does not explicitly include internal identity slots.
+- `SQLiteSelectValue` does not distinguish user-requested output values from
+  internal shaping values.
+- `SQLiteSelectValue.output_name` is still a plain `String`, so internal values
+  cannot be represented as `None` yet.
+
+Short-term acceptable rule:
+
+- The planner may synthesize nested `id` values when entering a selected
+  single-link child shape.
+- The synthesized value may use output name `"id"` until result shape metadata
+  can distinguish internal identity slots.
+
+Later replacement:
+
+- introduce `SQLiteValueSlot`
+- introduce `SQLiteResultShapePlan`
+- make result shape fields point at slots
+- represent internal identity values separately from user output fields
+
+### Selected link detection relies on child shape presence
+
+Current rule:
+
+- a `ResolvedShapeField` with `child_shape().is_some()` is treated as a selected
+  single-link field
+- a field without child shape is treated as a scalar selected value
+
+Why this is temporary:
+
+- `ResolvedShapeField` currently exposes a `FieldRef`, but `FieldRef` does not
+  identify whether the field is scalar or link.
+- This rule depends on resolver validation preventing child shapes on scalar
+  fields and preventing missing child shapes on selected link fields.
+
+Later replacement:
+
+- carry field kind in resolved field metadata
+- allow sqlite planning to distinguish scalar, single-link, and multi-link
+  fields directly
+
+### Physical naming is intentionally simple
+
+Current rules:
+
+- object type name is lowercased for table name
+- scalar field name is used directly as column name
+- single-link foreign key column is `"{field_name}_id"`
+- root alias is `"root"`
+- selected single-link alias is the output field name
+
+Why this is temporary:
+
+- multi-word names, escaping, reserved SQL words, duplicate aliases, and nested
+  paths are not handled yet
+- alias generation will need to become collision-resistant before complex
+  nested shapes or multiple joins to the same table are supported
+
+Later replacement:
+
+- centralize physical naming helpers
+- define identifier escaping rules before SQL generation
+- introduce stable alias generation based on path or counters
+
+### Planner still assumes valid resolver output
+
+Current rule:
+
+- `plan_select` returns `SQLiteSelectPlan`, not `Result<_, SQLitePlanError>`
+- unsupported cases may use `todo!()` or `expect()` while tests remain inside
+  the supported MVP slice
+
+Why this is temporary:
+
+- once sqlite-plan starts receiving valid IR that it cannot yet lower, planner
+  errors must become explicit
+
+Later replacement:
+
+- introduce `SQLitePlanError`
+- convert unsupported multi-link, unsupported value expression, and invalid
+  physical naming cases into structured errors
