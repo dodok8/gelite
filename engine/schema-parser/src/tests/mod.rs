@@ -65,6 +65,14 @@ fn lexer_tokenizes_all_scalar_type_keywords() {
 }
 
 #[test]
+fn lexer_reserves_update_and_set_keywords() {
+    let tokens = lex("update set").expect("schema should lex");
+
+    assert_eq!(tokens[0].kind(), &TokenKind::Keyword(Keyword::Update));
+    assert_eq!(tokens[1].kind(), &TokenKind::Keyword(Keyword::Set));
+}
+
+#[test]
 fn lexer_distinguishes_keyword_prefix_identifiers() {
     let tokens = lex("typeName requiredField linkTarget").expect("schema should lex");
 
@@ -100,6 +108,18 @@ fn parser_can_parse_empty_object_type() {
     assert_eq!(catalog.object_types().len(), 1);
     assert_eq!(user.name(), "User");
     assert!(user.declared_fields().is_empty());
+}
+
+#[test]
+fn parser_rejects_update_and_set_as_identifiers() {
+    for schema in ["type update {}", "type Thing { set: str }"] {
+        let error = parse_schema(schema).expect_err("reserved identifier should fail");
+
+        assert_eq!(
+            error.kind(),
+            &ParseErrorKind::UnexpectedToken { expected: "IDENT" }
+        );
+    }
 }
 
 #[test]

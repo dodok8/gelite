@@ -5,10 +5,10 @@
 //! values. It does not resolve schema names, choose joins, or inspect query AST
 //! nodes. Those responsibilities belong to earlier compiler stages.
 //!
-//! The renderer currently emits select statements and literal-only insert
-//! statements for the subsets implemented by `sqlite-query-plan`. Literal
-//! values are emitted as bind placeholders instead of being interpolated into
-//! SQL strings.
+//! The renderer currently emits select statements and literal-only insert and
+//! update statements for the subsets implemented by `sqlite-query-plan`.
+//! Literal values are emitted as bind placeholders instead of being
+//! interpolated into SQL strings.
 
 extern crate alloc;
 
@@ -19,7 +19,8 @@ use alloc::vec::Vec;
 use sqlite_query_plan::{
     SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteGeneratedIdStrategy, SQLiteInOp,
     SQLiteInsertPlan, SQLiteJoinKind, SQLiteLiteral, SQLiteOrderDirection, SQLiteSelectPlan,
-    SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteValueExpr, SQLiteWhereExpr,
+    SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr,
+    SQLiteWhereExpr,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -89,6 +90,54 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
         ),
         bind_values,
     }
+}
+
+/// Renders a structured SQLite update plan into SQL text and bind values.
+pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
+    let mut bind_values = Vec::new();
+    let assignments = plan
+        .assignments()
+        .iter()
+        .map(|assignment| {
+            bind_values.push(bind_value_from_literal(assignment.value()));
+
+            format!("{} = ?", quote_identifier(assignment.column_name()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let target = plan.target();
+    let mut sql = if plan.joins().is_empty() {
+        format!(
+            "UPDATE {} AS {} SET {assignments}",
+            quote_identifier(target.table_name()),
+            quote_identifier(target.alias())
+        )
+    } else {
+        format!(
+            "UPDATE {} SET {assignments}",
+            quote_identifier(target.table_name())
+        )
+    };
+
+    if let Some(filter) = plan.filter() {
+        let filter_sql = render_where_expr(filter, &mut bind_values);
+
+        if plan.joins().is_empty() {
+            sql.push_str(&format!(" WHERE {filter_sql}"));
+        } else {
+            let joins = render_joins(plan.joins()).join(" ");
+            sql.push_str(&format!(
+                " WHERE {} IN (SELECT {} FROM {} AS {} {joins} WHERE {filter_sql})",
+                quote_identifier(target.id_column()),
+                render_qualified_identifier(target.alias(), target.id_column()),
+                quote_identifier(target.table_name()),
+                quote_identifier(target.alias()),
+            ));
+        }
+    }
+
+    SQLiteStatement { sql, bind_values }
 }
 
 fn render_select_clause(plan: &SQLiteSelectPlan) -> (String, Vec<SQLiteBindValue>) {
@@ -186,7 +235,11 @@ fn render_where_expr(expr: &SQLiteWhereExpr, bind_values: &mut Vec<SQLiteBindVal
 }
 
 fn render_join_clauses(plan: &SQLiteSelectPlan) -> Vec<String> {
-    plan.joins()
+    render_joins(plan.joins())
+}
+
+fn render_joins(joins: &[sqlite_query_plan::SQLiteJoin]) -> Vec<String> {
+    joins
         .iter()
         .map(|join| {
             let join_kind = match join.kind() {

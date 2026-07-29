@@ -146,11 +146,33 @@ fn run_repl_command(command: ReplCommand) -> Result<(), String> {
 
     match runner.as_mut() {
         Some(runner) => {
-            let mut executor = |statement: &sqlite_query_sqlgen::SQLiteStatement| {
-                runner
-                    .execute_select(statement)
-                    .map_err(|error| error.message().to_string())
-            };
+            let mut executor =
+                |kind: repl::QueryKind, statement: &sqlite_query_sqlgen::SQLiteStatement| match kind
+                {
+                    repl::QueryKind::Select => runner
+                        .execute_select(statement)
+                        .map_err(|error| error.message().to_string()),
+                    repl::QueryKind::Insert { generated_id } => {
+                        runner
+                            .execute_insert(statement)
+                            .map_err(|error| error.message().to_string())?;
+
+                        Ok(sqlite_runner::SQLiteQueryResult::new(
+                            vec!["id".to_string()],
+                            vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
+                        ))
+                    }
+                    repl::QueryKind::Update => {
+                        let affected_rows = runner
+                            .execute_update(statement)
+                            .map_err(|error| error.message().to_string())?;
+
+                        Ok(sqlite_runner::SQLiteQueryResult::new(
+                            vec!["affected_rows".to_string()],
+                            vec![vec![sqlite_runner::SQLiteCellValue::Integer(affected_rows)]],
+                        ))
+                    }
+                };
 
             repl::run_with_executor(&catalog, options, &mut executor)
         }

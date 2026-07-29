@@ -38,6 +38,8 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
             RawTokenKind::Bool => TokenKind::Keyword(Keyword::Bool),
             RawTokenKind::Uuid => TokenKind::Keyword(Keyword::Uuid),
             RawTokenKind::DateTime => TokenKind::Keyword(Keyword::DateTime),
+            RawTokenKind::Update => TokenKind::Keyword(Keyword::Update),
+            RawTokenKind::Set => TokenKind::Keyword(Keyword::Set),
 
             RawTokenKind::LBrace => TokenKind::LBrace,
             RawTokenKind::RBrace => TokenKind::RBrace,
@@ -90,6 +92,12 @@ enum RawTokenKind {
 
     #[token("datetime")]
     DateTime,
+
+    #[token("update")]
+    Update,
+
+    #[token("set")]
+    Set,
 
     #[token("{")]
     LBrace,
@@ -150,6 +158,8 @@ pub enum Keyword {
     Bool,
     Uuid,
     DateTime,
+    Update,
+    Set,
 }
 
 impl Keyword {
@@ -167,6 +177,8 @@ impl Keyword {
             Keyword::Bool => "bool",
             Keyword::Uuid => "uuid",
             Keyword::DateTime => "datetime",
+            Keyword::Update => "update",
+            Keyword::Set => "set",
         }
     }
 }

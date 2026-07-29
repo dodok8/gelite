@@ -147,6 +147,46 @@ fn native_runner_enforces_foreign_keys_for_query_inserts() {
 }
 
 #[test]
+fn native_runner_executes_update_and_returns_affected_rows() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+
+    runner
+        .execute("CREATE TABLE post (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
+        .expect("post table should be created");
+    runner
+        .execute("INSERT INTO post VALUES ('post-1', 'Draft'), ('post-2', 'Draft')")
+        .expect("posts should be inserted");
+
+    let statement = sqlite_query_sqlgen::SQLiteStatement::new(
+        "UPDATE post SET title = ? WHERE id = ?",
+        vec![
+            sqlite_query_sqlgen::SQLiteBindValue::String("Closed".to_string()),
+            sqlite_query_sqlgen::SQLiteBindValue::String("post-1".to_string()),
+        ],
+    );
+
+    let affected_rows = runner
+        .execute_update(&statement)
+        .expect("update should execute");
+
+    assert_eq!(affected_rows, 1);
+
+    let select =
+        sqlite_query_sqlgen::SQLiteStatement::new("SELECT title FROM post ORDER BY id", vec![]);
+    let result = runner
+        .execute_select(&select)
+        .expect("updated rows should be readable");
+
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![crate::SQLiteCellValue::Text("Closed".to_string())],
+            vec![crate::SQLiteCellValue::Text("Draft".to_string())],
+        ]
+    );
+}
+
+#[test]
 fn native_runner_can_apply_rendered_initial_schema() {
     let statements = rendered_post_schema_statements();
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");

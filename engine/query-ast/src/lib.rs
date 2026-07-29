@@ -7,9 +7,9 @@
 //! parser tests can focus on source syntax, while the resolver owns type,
 //! field, relation, and cardinality checks.
 //!
-//! The implemented AST currently covers `select` queries with explicit result
-//! shapes, filter expression trees, ordering, limit, and offset. Insert, update,
-//! and delete are specified in `spec/query.md` but are not represented here yet.
+//! The implemented AST currently covers `select`, `insert`, and `update`
+//! queries. Delete is specified in `spec/query.md` but is not represented here
+//! yet.
 
 extern crate alloc;
 
@@ -20,6 +20,18 @@ use alloc::vec::Vec;
 #[derive(Debug, Clone, PartialEq)]
 pub struct InsertQuery {
     root_type_name: String,
+    assignments: Vec<Assignment>,
+}
+
+/// Parsed `update` query before schema resolution.
+///
+/// The target name, filter paths, and assignment field names remain unresolved.
+/// The resolver owns object, field, type, cardinality, and writable-field
+/// validation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateQuery {
+    target_type_name: String,
+    filter: Option<Expr>,
     assignments: Vec<Assignment>,
 }
 
@@ -39,6 +51,32 @@ impl InsertQuery {
 
     pub fn root_type_name(&self) -> &str {
         &self.root_type_name
+    }
+
+    pub fn assignments(&self) -> &[Assignment] {
+        &self.assignments
+    }
+}
+
+impl UpdateQuery {
+    pub fn new(
+        target_type_name: impl Into<String>,
+        filter: Option<Expr>,
+        assignments: Vec<Assignment>,
+    ) -> Self {
+        Self {
+            target_type_name: target_type_name.into(),
+            filter,
+            assignments,
+        }
+    }
+
+    pub fn target_type_name(&self) -> &str {
+        &self.target_type_name
+    }
+
+    pub fn filter(&self) -> Option<&Expr> {
+        self.filter.as_ref()
     }
 
     pub fn assignments(&self) -> &[Assignment] {

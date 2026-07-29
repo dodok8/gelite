@@ -1,7 +1,7 @@
 use crate::{
     ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, Expr, FunctionCallExpr,
     InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, Path, PathStep, SelectQuery,
-    Shape, ShapeItem,
+    Shape, ShapeItem, UpdateQuery,
 };
 use alloc::string::ToString;
 use alloc::vec;
@@ -36,6 +36,29 @@ fn insert_query_can_store_root_type_and_assignments_in_definition_order() {
         query.assignments()[1].value(),
         &Literal::String("sheri@example.com".to_string())
     );
+}
+
+#[test]
+fn update_query_can_store_unresolved_filter_and_assignments_in_definition_order() {
+    let filter = Expr::Compare(CompareExpr::new(
+        Expr::Path(Path::new(vec![PathStep::new("id")])),
+        CompareOp::Eq,
+        Expr::Literal(Literal::String("post-1".to_string())),
+    ));
+    let query = UpdateQuery::new(
+        "Post",
+        Some(filter.clone()),
+        vec![
+            Assignment::new("title", Literal::String("Closed Case".to_string())),
+            Assignment::new("author", Literal::String("user-2".to_string())),
+        ],
+    );
+
+    assert_eq!(query.target_type_name(), "Post");
+    assert_eq!(query.filter(), Some(&filter));
+    assert_eq!(query.assignments().len(), 2);
+    assert_eq!(query.assignments()[0].field_name(), "title");
+    assert_eq!(query.assignments()[1].field_name(), "author");
 }
 
 #[test]

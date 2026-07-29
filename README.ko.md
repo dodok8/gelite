@@ -53,16 +53,17 @@ query text
 
 ## 현재 범위
 
-Gelite는 현재 두 개의 좁은 compiler path에 집중합니다.
+Gelite의 현재 범위는 다음과 같습니다.
 
-- query compilation: `select` parsing, semantic resolution, SQLite query
-  planning, SQL rendering
+- query compilation: `select`, `insert`, `update` parsing, semantic
+  resolution, SQLite query planning, SQL rendering
+- 현재 `select`, `insert`, `update` subset의 native query execution
 - initial schema planning: `.geli` parsing, SQLite schema planning, DDL SQL
   rendering
 
-Initial schema를 SQLite database에 적용할 수 있고, 현재 select subset은 CLI
-REPL을 통해 실행할 수 있습니다. 아직 migration diffing, insert/update/delete
-command, server, web UI는 없습니다.
+Initial schema를 SQLite database에 적용할 수 있고, 현재 query subset은 CLI
+REPL을 통해 실행할 수 있습니다. 아직 migration diffing, `delete`, server,
+web UI는 없습니다.
 
 이건 현재 단계의 의도입니다. runtime feature를 올리기 전에 language pipeline과
 schema pipeline이 정확하고 이해 가능한지 먼저 검증하는 것이 첫 번째 유효한
@@ -136,18 +137,16 @@ LIMIT 10
 - `schema-model`: object type, scalar field, link, cardinality, deterministic
   reference, implicit `id` lookup을 가진 semantic schema catalog.
 - `schema-parser`: 현재 `.geli` schema syntax용 lexer/parser.
-- `query-ast`: select query용 unresolved syntax tree.
-- `query-parser`: 현재 select syntax용 lexer/parser와 source span.
-- `query-resolver`: explicit select shape, filter, ordering, link traversal을
-  위한 AST-to-IR semantic analysis.
-- `query-ir`: select query용 backend-independent Semantic IR.
-- `sqlite-query-plan`: SQLite-specific structured select plan.
-- `sqlite-query-sqlgen`: select plan을 bind placeholder 기반 SQL로 렌더링하는
-  SQL renderer.
+- `query-ast`: select, insert, update query용 unresolved syntax tree.
+- `query-parser`: 현재 query syntax용 lexer/parser와 source span.
+- `query-resolver`: select, insert, update용 AST-to-IR semantic analysis.
+- `query-ir`: 지원되는 query용 backend-independent Semantic IR.
+- `sqlite-query-plan`: SQLite-specific structured query plan.
+- `sqlite-query-sqlgen`: bind placeholder 기반 SQL renderer.
 - `sqlite-schema-plan`: SQLite-specific initial schema plan.
 - `sqlite-schema-sqlgen`: initial schema DDL과 metadata insert를 렌더링하는 SQL
   renderer.
-- `sqlite-runner`: schema statement execution을 위한 runner-facing contract.
+- `sqlite-runner`: native schema와 query statement execution.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: CLI-facing tool들이 공유하는 command orchestration.
 - `tools/repl`: 현재 pipeline을 query 하나로 확인하는 inspection tool.
@@ -155,9 +154,8 @@ LIMIT 10
 ## 아직 구현되지 않은 것
 
 - `gelite query plan`, `gelite query run`.
-- Insert, update, delete.
+- Delete.
 - Migration diffing과 migration history.
-- Query execution runtime.
 - Runtime nested result shaping.
 - HTTP API.
 - Web playground.
@@ -225,9 +223,9 @@ interactive REPL을 시작하고, query 인자가 있으면 그 query 하나를 
 렌더링합니다.
 
 `gelite repl --database <app.db>`는 SQLite database 안의 Gelite metadata table에서
-catalog를 읽고, select query를 실제 database에 실행합니다. `--debug`가 없으면
-result row만 출력하고, `--debug`가 있으면 rendered SQL과 bind value를 먼저
-출력합니다.
+catalog를 읽고, select, insert, update query를 실제 database에 실행합니다.
+`--debug`가 없으면 result row, 생성된 insert ID 또는 update된 row 수를 출력하고,
+`--debug`가 있으면 rendered SQL과 bind value를 먼저 출력합니다.
 
 CLI REPL 실행:
 
@@ -235,10 +233,70 @@ CLI REPL 실행:
 cargo run -p gelite-cli -- repl --database app.db
 ```
 
+`examples/blog.geli`를 적용한 뒤 interactive REPL에서 다음 query들을 실행할 수
+있습니다.
+
+User insert:
+
+```text
+insert User {
+  email := "alice@example.com"
+}
+```
+
+REPL이 생성한 UUID를 출력합니다. 이 값을 link된 Post를 insert할 때 사용합니다.
+
+```text
+insert Post {
+  title := "Draft",
+  view_count := 5,
+  author := "<generated-user-id>"
+}
+```
+
+Insert한 Post와 author 조회:
+
+```text
+select Post {
+  id,
+  title,
+  view_count,
+  author: {
+    email
+  }
+}
+```
+
+Link된 object를 기준으로 Post update:
+
+```text
+update Post filter .author.email = "alice@example.com" set {
+  title := "Reviewed"
+}
+```
+
+Update 결과 확인:
+
+```text
+select Post {
+  title,
+  author: {
+    email
+  }
+}
+filter .title = "Reviewed"
+```
+
 query 하나 실행:
 
 ```sh
 cargo run -p gelite-cli -- repl --database app.db 'select Post { title, author: { email } } filter .title = "Hello" order by .title desc limit 10'
+```
+
+Membership filter 실행:
+
+```sh
+cargo run -p gelite-cli -- repl --database app.db 'select Post { title, author: { email } } filter .title in ["Draft", "Published"] and .author.email not in ["blocked@example.com"] order by .title asc limit 20'
 ```
 
 result row 전에 SQL과 bind value 출력:
@@ -287,5 +345,5 @@ foundation에 기대하는 기준을 유지해야 합니다.
 - direct AST-to-SQL shortcut 금지
 - 현재 있는 것과 아직 없는 것을 정확히 말하는 documentation
 
-다음 기술 목표는 select pipeline을 계속 확장해서 generated SQLite SQL을 실제로
-실행하고, 그 결과를 nested query result로 shape하는 것입니다.
+다음 기술 목표는 delete pipeline을 추가하고, SQLite 결과를 logical nested
+object로 shape하는 것입니다.

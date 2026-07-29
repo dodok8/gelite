@@ -1,4 +1,4 @@
-use query_parser::parse_select;
+use query_parser::{parse_select, parse_update};
 use rustyline::{DefaultEditor, error::ReadlineError};
 use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
@@ -15,7 +15,15 @@ pub struct ReplOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReplError;
 
-type QueryExecutor<'a> = dyn FnMut(&SQLiteStatement) -> Result<SQLiteQueryResult, String> + 'a;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryKind {
+    Select,
+    Insert { generated_id: String },
+    Update,
+}
+
+type QueryExecutor<'a> =
+    dyn FnMut(QueryKind, &SQLiteStatement) -> Result<SQLiteQueryResult, String> + 'a;
 
 pub fn run(options: ReplOptions) -> Result<(), ReplError> {
     let catalog = build_development_schema();
@@ -68,11 +76,11 @@ impl ReplRuntime<'_> {
         query_text: &str,
         debug: bool,
     ) -> Result<(), ReplError> {
-        let statement = compile_query(catalog, query_text, debug)?;
+        let (kind, statement) = compile_query(catalog, query_text, debug)?;
 
         match self.executor.as_deref_mut() {
             Some(executor) => {
-                let result = executor(&statement).map_err(|error| {
+                let result = executor(kind, &statement).map_err(|error| {
                     eprintln!("failed to execute query: {error}");
                     ReplError
                 })?;
@@ -91,7 +99,7 @@ fn run_repl(
     runtime: &mut ReplRuntime<'_>,
 ) -> Result<(), ReplError> {
     println!("gelite repl");
-    println!("Type a select query, or :quit / :exit to leave.");
+    println!("Type a select, insert, or update query, or :quit / :exit to leave.");
     println!("Use balanced braces for multiline input.");
     println!("Press Ctrl-C twice in a row to leave.");
     if debug {
@@ -238,32 +246,61 @@ fn compile_query(
     catalog: &SchemaCatalog,
     query_text: &str,
     debug: bool,
-) -> Result<SQLiteStatement, ReplError> {
-    let query = match parse_select(query_text) {
-        Ok(query) => query,
-        Err(error) => {
-            eprintln!("failed to parse query: {error:#?}");
+) -> Result<(QueryKind, SQLiteStatement), ReplError> {
+    let (kind, statement) = match query_text.split_whitespace().next() {
+        Some("select") => {
+            let query = parse_select(query_text).map_err(|error| {
+                eprintln!("failed to parse query: {error:#?}");
+                ReplError
+            })?;
+            let resolved = query_resolver::resolve_select(catalog, &query).map_err(|error| {
+                eprintln!("failed to resolve query: {error:#?}");
+                ReplError
+            })?;
+            let plan = sqlite_query_plan::plan_select(&resolved);
+
+            (QueryKind::Select, sqlite_query_sqlgen::render_select(&plan))
+        }
+        Some("insert") => {
+            let query = query_parser::parse_insert(query_text).map_err(|error| {
+                eprintln!("failed to parse query: {error:#?}");
+                ReplError
+            })?;
+            let resolved = query_resolver::resolve_insert(catalog, &query).map_err(|error| {
+                eprintln!("failed to resolve query: {error:#?}");
+                ReplError
+            })?;
+            let plan = sqlite_query_plan::plan_insert(&resolved);
+            let generated_id = uuid::Uuid::new_v4().to_string();
+            let statement = sqlite_query_sqlgen::render_insert(&plan, &generated_id);
+
+            (QueryKind::Insert { generated_id }, statement)
+        }
+        Some("update") => {
+            let query = parse_update(query_text).map_err(|error| {
+                eprintln!("failed to parse query: {error:#?}");
+                ReplError
+            })?;
+            let resolved = query_resolver::resolve_update(catalog, &query).map_err(|error| {
+                eprintln!("failed to resolve query: {error:#?}");
+                ReplError
+            })?;
+            let plan = sqlite_query_plan::plan_update(&resolved);
+
+            (QueryKind::Update, sqlite_query_sqlgen::render_update(&plan))
+        }
+        _ => {
+            eprintln!("query must start with `select`, `insert`, or `update`");
             return Err(ReplError);
         }
     };
 
-    match query_resolver::resolve_select(catalog, &query) {
-        Ok(resolved) => {
-            let plan = sqlite_query_plan::plan_select(&resolved);
-            let statement = sqlite_query_sqlgen::render_select(&plan);
-
-            if debug {
-                println!("SQL:\n{}", statement.sql());
-                println!("Bind values: {:?}", statement.bind_values());
-            }
-
-            Ok(statement)
-        }
-        Err(error) => {
-            eprintln!("failed to resolve query: {error:#?}");
-            Err(ReplError)
-        }
+    if debug {
+        println!("SQL:\n{}", statement.sql());
+        println!("Bind values: {:?}", statement.bind_values());
     }
+
+    Ok((kind, statement))
 }
 
 fn print_query_result(result: &SQLiteQueryResult) {
@@ -321,7 +358,7 @@ fn build_development_schema() -> SchemaCatalog {
 
 #[cfg(test)]
 mod tests {
-    use super::needs_more_input;
+    use super::{QueryKind, build_development_schema, compile_query, needs_more_input};
 
     #[test]
     fn multiline_input_continues_until_braces_are_balanced() {
@@ -335,5 +372,46 @@ mod tests {
         assert!(!needs_more_input(
             r#"select Post { title } filter .title = "{""#
         ));
+    }
+
+    #[test]
+    fn compile_query_dispatches_update_pipeline() {
+        let catalog = build_development_schema();
+
+        let (kind, statement) = compile_query(
+            &catalog,
+            r#"update Post filter .title = "Draft" set { title := "Reviewed" }"#,
+            false,
+        )
+        .expect("update should compile");
+
+        assert_eq!(kind, QueryKind::Update);
+        assert_eq!(
+            statement.sql(),
+            "UPDATE \"post\" AS \"root\" SET \"title\" = ? WHERE \"root\".\"title\" = ?"
+        );
+    }
+
+    #[test]
+    fn compile_query_dispatches_insert_pipeline_with_generated_id() {
+        let catalog = build_development_schema();
+
+        let (kind, statement) =
+            compile_query(&catalog, r#"insert User { name := "Sheri" }"#, false)
+                .expect("insert should compile");
+
+        let QueryKind::Insert { generated_id } = kind else {
+            panic!("expected insert query kind");
+        };
+        assert_eq!(
+            uuid::Uuid::parse_str(&generated_id)
+                .expect("generated id should be a UUID")
+                .get_version(),
+            Some(uuid::Version::Random)
+        );
+        assert_eq!(
+            statement.sql(),
+            "INSERT INTO \"user\" (\"id\", \"name\") VALUES (?, ?)"
+        );
     }
 }

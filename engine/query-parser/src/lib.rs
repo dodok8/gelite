@@ -15,7 +15,7 @@ mod lexer;
 mod parser;
 
 pub use lexer::{Keyword, LexError, LexErrorKind, Position, Span, Token, TokenKind, lex};
-pub use parser::{ParseError, ParseErrorKind, parse_insert, parse_select};
+pub use parser::{ParseError, ParseErrorKind, parse_insert, parse_select, parse_update};
 
 #[cfg(test)]
 mod tests;

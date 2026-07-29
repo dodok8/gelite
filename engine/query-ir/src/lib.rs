@@ -10,9 +10,8 @@
 //! crates such as `sqlite-query-plan` must be able to lower the IR without looking
 //! back at raw query text.
 //!
-//! The implemented subset currently represents `select` and `insert` queries.
-//! Update and delete are part of the MVP query spec but are deferred until the
-//! existing query pipelines are stable.
+//! The implemented subset currently represents `select`, `insert`, and
+//! `update` queries. Delete is part of the MVP query spec but remains deferred.
 
 extern crate alloc;
 
@@ -100,6 +99,43 @@ impl InsertQuery {
 
     pub fn root_object_type(&self) -> &ObjectTypeRef {
         &self.root_object_type
+    }
+
+    pub fn assignments(&self) -> &[Assignment] {
+        &self.assignments
+    }
+}
+
+/// Resolved update query.
+///
+/// The target object, optional filter, and every assignment use stable schema
+/// references and values already checked by the resolver.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateQuery {
+    target_object_type: ObjectTypeRef,
+    filter: Option<Expr>,
+    assignments: Vec<Assignment>,
+}
+
+impl UpdateQuery {
+    pub fn new(
+        target_object_type: ObjectTypeRef,
+        filter: Option<Expr>,
+        assignments: Vec<Assignment>,
+    ) -> Self {
+        Self {
+            target_object_type,
+            filter,
+            assignments,
+        }
+    }
+
+    pub fn target_object_type(&self) -> &ObjectTypeRef {
+        &self.target_object_type
+    }
+
+    pub fn filter(&self) -> Option<&Expr> {
+        self.filter.as_ref()
     }
 
     pub fn assignments(&self) -> &[Assignment] {
