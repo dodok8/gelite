@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use alloc::{string::String, vec};
 use query_ast::{
     ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, Expr, InExpr, InOp,
-    InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem,
+    InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
 };
 
 /// Parses one MVP `select` statement from source text.
@@ -943,13 +943,13 @@ impl<'a> Parser<'a> {
     fn parse_insert_stmt(&mut self) -> Result<InsertQuery, ParseError> {
         self.expect_keyword(Keyword::Insert)?;
         let root_type_name = self.expect_ident()?;
-        let assignments = self.parse_insert_assignments()?;
+        let assignments = self.parse_assignments()?;
         self.ensure_eof()?;
 
         Ok(InsertQuery::new(root_type_name, assignments))
     }
 
-    fn parse_insert_assignments(&mut self) -> Result<Vec<Assignment>, ParseError> {
+    fn parse_assignments(&mut self) -> Result<Vec<Assignment>, ParseError> {
         let mut results = Vec::new();
         self.expect_lbrace()?;
 
@@ -961,7 +961,7 @@ impl<'a> Parser<'a> {
             return Ok(results);
         }
 
-        results.push(self.parse_insert_assignment()?);
+        results.push(self.parse_assignment()?);
 
         loop {
             if self.consume_comma_if_present() {
@@ -972,7 +972,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
 
-                results.push(self.parse_insert_assignment()?);
+                results.push(self.parse_assignment()?);
                 continue;
             }
 
@@ -998,11 +998,37 @@ impl<'a> Parser<'a> {
         Ok(results)
     }
 
-    fn parse_insert_assignment(&mut self) -> Result<Assignment, ParseError> {
+    fn parse_assignment(&mut self) -> Result<Assignment, ParseError> {
         let field_name = self.expect_ident()?;
         self.expect_token(TokenKind::ColonEq)?;
         let value = self.expect_literal()?;
 
         Ok(Assignment::new(field_name, value))
+    }
+}
+
+/// Parses one MVP `update` statement from source text.
+///
+/// The parser preserves unresolved filters and assignments. Schema and
+/// writable-field validation belong to the resolver.
+pub fn parse_update(input: &str) -> Result<query_ast::UpdateQuery, ParseError> {
+    let tokens = lex(input).map_err(ParseError::from)?;
+    parse_update_tokens(&tokens)
+}
+
+fn parse_update_tokens(tokens: &[Token]) -> Result<query_ast::UpdateQuery, ParseError> {
+    Parser::new(tokens).parse_update_stmt()
+}
+
+impl Parser<'_> {
+    fn parse_update_stmt(&mut self) -> Result<UpdateQuery, ParseError> {
+        self.expect_keyword(Keyword::Update)?;
+        let root_type_name = self.expect_ident()?;
+        let filter = self.parse_filter_clause()?;
+        self.expect_keyword(Keyword::Set)?;
+        let assignments = self.parse_assignments()?;
+        self.ensure_eof()?;
+
+        Ok(UpdateQuery::new(root_type_name, filter, assignments))
     }
 }

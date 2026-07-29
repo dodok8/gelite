@@ -1,6 +1,9 @@
 use alloc::string::ToString;
 
-use crate::{Keyword, TokenKind, lex};
+use query_ast::{CompareOp, Literal};
+
+use super::fixtures::{assert_compare_expr, assert_literal_expr, assert_path_expr};
+use crate::{Keyword, ParseErrorKind, TokenKind, lex, parse_update};
 
 #[test]
 fn lexer_can_tokenize_update_statement() {
@@ -23,4 +26,94 @@ fn lexer_can_tokenize_update_statement() {
         &TokenKind::String("Closed Case".to_string())
     );
     assert_eq!(tokens[12].kind(), &TokenKind::RBrace);
+}
+
+#[test]
+fn parser_can_parse_filtered_update() {
+    let query = parse_update(
+        r#"update Post filter .id = "post-1" set { title := "Closed Case", author := "user-2" }"#,
+    )
+    .expect("update query should parse");
+
+    assert_eq!(query.root_type_name(), "Post");
+    let (left, right) = assert_compare_expr(
+        query.filter().expect("update should keep its filter"),
+        CompareOp::Eq,
+    );
+    assert_path_expr(left, &["id"]);
+    assert_literal_expr(right, &Literal::String("post-1".to_string()));
+    assert_eq!(query.assignments().len(), 2);
+    assert_eq!(query.assignments()[0].field_name(), "title");
+    assert_eq!(
+        query.assignments()[0].value(),
+        &Literal::String("Closed Case".to_string())
+    );
+    assert_eq!(query.assignments()[1].field_name(), "author");
+    assert_eq!(
+        query.assignments()[1].value(),
+        &Literal::String("user-2".to_string())
+    );
+}
+
+#[test]
+fn parser_can_parse_unfiltered_update() {
+    let query =
+        parse_update(r#"update Post set { title := "Archived" }"#).expect("query should parse");
+
+    assert_eq!(query.root_type_name(), "Post");
+    assert!(query.filter().is_none());
+    assert_eq!(query.assignments().len(), 1);
+}
+
+#[test]
+fn parser_preserves_empty_update_set_for_resolver() {
+    let query = parse_update("update Post set {}").expect("empty set is valid syntax");
+
+    assert!(query.assignments().is_empty());
+}
+
+#[test]
+fn parser_preserves_semantically_invalid_update_assignments_for_resolver() {
+    let query =
+        parse_update(r#"update Post set { id := "post-2", title := "First", title := "Second" }"#)
+            .expect("semantic assignment errors should parse");
+
+    assert_eq!(query.assignments().len(), 3);
+    assert_eq!(query.assignments()[0].field_name(), "id");
+    assert_eq!(query.assignments()[1].field_name(), "title");
+    assert_eq!(query.assignments()[2].field_name(), "title");
+}
+
+#[test]
+fn parser_rejects_update_without_set_keyword() {
+    let error = parse_update(r#"update Post { title := "Archived" }"#)
+        .expect_err("update without set should fail");
+
+    assert_eq!(
+        error.kind(),
+        &ParseErrorKind::UnexpectedToken { expected: "set" }
+    );
+}
+
+#[test]
+fn parser_rejects_update_without_set_block() {
+    let error = parse_update("update Post set").expect_err("update without set block should fail");
+
+    assert_eq!(
+        error.kind(),
+        &ParseErrorKind::UnexpectedEof { expected: "{" }
+    );
+}
+
+#[test]
+fn parser_rejects_update_filter_without_expression() {
+    let error = parse_update("update Post filter set {}")
+        .expect_err("update filter without expression should fail");
+
+    assert_eq!(
+        error.kind(),
+        &ParseErrorKind::UnexpectedToken {
+            expected: "expression"
+        }
+    );
 }
