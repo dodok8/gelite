@@ -5,7 +5,7 @@ use crate::{
     Expr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, ResolvedComputedField,
     ResolvedPath, ResolvedPathError, ResolvedPathStep, ResolvedPathStepKind, ResolvedShape,
     ResolvedShapeField, ResolvedShapeItem, SelectQuery, StringFunctionArg, StringFunctionExpr,
-    StringFunctionKind, UnaryArithmeticExpr, UnaryArithmeticOp, ValueExpr,
+    StringFunctionKind, UnaryArithmeticExpr, UnaryArithmeticOp, UpdateQuery, ValueExpr,
 };
 use alloc::boxed::Box;
 use alloc::string::ToString;
@@ -58,6 +58,34 @@ fn resolved_insert_query_preserves_assignment_order() {
     assert_eq!(assignments.len(), 2);
     assert_eq!(assignments[0].field().name(), "title");
     assert_eq!(assignments[1].field().name(), "author");
+}
+
+#[test]
+fn resolved_update_query_stores_target_filter_and_assignment_order() {
+    let filter = Expr::Compare(CompareExpr::new(
+        post_title_path_value(),
+        CompareOp::Eq,
+        ValueExpr::Literal(Literal::String("Draft".to_string())),
+    ));
+    let query = UpdateQuery::new(
+        post_type(),
+        Some(filter.clone()),
+        vec![
+            Assignment::new(
+                post_title_field(),
+                AssignmentValue::Scalar(Literal::String("Closed".to_string())),
+            ),
+            Assignment::new(
+                post_author_field(),
+                AssignmentValue::LinkId("user-2".to_string()),
+            ),
+        ],
+    );
+
+    assert_eq!(query.target_object_type().name(), "Post");
+    assert_eq!(query.filter(), Some(&filter));
+    assert_eq!(query.assignments()[0].field().name(), "title");
+    assert_eq!(query.assignments()[1].field().name(), "author");
 }
 
 #[test]

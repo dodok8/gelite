@@ -1023,12 +1023,12 @@ fn parse_update_tokens(tokens: &[Token]) -> Result<query_ast::UpdateQuery, Parse
 impl Parser<'_> {
     fn parse_update_stmt(&mut self) -> Result<UpdateQuery, ParseError> {
         self.expect_keyword(Keyword::Update)?;
-        let root_type_name = self.expect_ident()?;
+        let target_type_name = self.expect_ident()?;
         let filter = self.parse_filter_clause()?;
         self.expect_keyword(Keyword::Set)?;
         let assignments = self.parse_assignments()?;
         self.ensure_eof()?;
 
-        Ok(UpdateQuery::new(root_type_name, filter, assignments))
+        Ok(UpdateQuery::new(target_type_name, filter, assignments))
     }
 }

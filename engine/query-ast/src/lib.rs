@@ -30,7 +30,7 @@ pub struct InsertQuery {
 /// validation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateQuery {
-    root_type_name: String,
+    target_type_name: String,
     filter: Option<Expr>,
     assignments: Vec<Assignment>,
 }
@@ -60,19 +60,19 @@ impl InsertQuery {
 
 impl UpdateQuery {
     pub fn new(
-        root_type_name: impl Into<String>,
+        target_type_name: impl Into<String>,
         filter: Option<Expr>,
         assignments: Vec<Assignment>,
     ) -> Self {
         Self {
-            root_type_name: root_type_name.into(),
+            target_type_name: target_type_name.into(),
             filter,
             assignments,
         }
     }
 
-    pub fn root_type_name(&self) -> &str {
-        &self.root_type_name
+    pub fn target_type_name(&self) -> &str {
+        &self.target_type_name
     }
 
     pub fn filter(&self) -> Option<&Expr> {

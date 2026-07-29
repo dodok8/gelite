@@ -133,22 +133,7 @@ pub fn resolve_insert(
     // Resolve explicit assignments before checking omissions. This preserves a
     // more specific error for an unknown, implicit, or incompatible assignment
     // instead of masking it with a missing-required-field error.
-    let mut assigned_fields = BTreeSet::new();
-
-    let assignments = query
-        .assignments()
-        .iter()
-        .map(|assignment| {
-            if !assigned_fields.insert(assignment.field_name()) {
-                return Err(ResolveError::DuplicateAssignment {
-                    object_type: root_object_type.name().to_string(),
-                    field: assignment.field_name().to_string(),
-                });
-            }
-
-            resolve_insert_assignment(catalog, &root_object_type, assignment)
-        })
-        .collect::<Result<Vec<_>, ResolveError>>()?;
+    let assignments = resolve_assignments(catalog, &root_object_type, query.assignments())?;
 
     let object_type = catalog
         .find_type(query.root_type_name())
@@ -174,21 +159,77 @@ pub fn resolve_insert(
     Ok(query_ir::InsertQuery::new(root_object_type, assignments))
 }
 
-fn resolve_insert_assignment(
+/// Resolves a parsed update query against a validated schema catalog.
+///
+/// Update reuses filter and assignment semantics from the existing query
+/// pipeline. Unlike insert, it does not require assignments for every required
+/// field because omitted fields retain their stored values.
+pub fn resolve_update(
     catalog: &schema_model::SchemaCatalog,
-    root_object_type: &schema_model::ObjectTypeRef,
+    query: &query_ast::UpdateQuery,
+) -> Result<query_ir::UpdateQuery, ResolveError> {
+    let target_object_type = catalog
+        .find_type_ref(query.target_type_name())
+        .ok_or_else(|| ResolveError::UnknownObjectType {
+            name: query.target_type_name().to_string(),
+        })?;
+
+    if query.assignments().is_empty() {
+        return Err(ResolveError::EmptyUpdateSet {
+            object_type: target_object_type.name().to_string(),
+        });
+    }
+
+    let filter = query
+        .filter()
+        .map(|expr| resolve_expr(catalog, &target_object_type, expr))
+        .transpose()?;
+    let assignments = resolve_assignments(catalog, &target_object_type, query.assignments())?;
+
+    Ok(query_ir::UpdateQuery::new(
+        target_object_type,
+        filter,
+        assignments,
+    ))
+}
+
+fn resolve_assignments(
+    catalog: &schema_model::SchemaCatalog,
+    target_object_type: &schema_model::ObjectTypeRef,
+    assignments: &[query_ast::Assignment],
+) -> Result<Vec<query_ir::Assignment>, ResolveError> {
+    let mut assigned_fields = BTreeSet::new();
+
+    assignments
+        .iter()
+        .map(|assignment| {
+            if !assigned_fields.insert(assignment.field_name()) {
+                return Err(ResolveError::DuplicateAssignment {
+                    object_type: target_object_type.name().to_string(),
+                    field: assignment.field_name().to_string(),
+                });
+            }
+
+            resolve_assignment(catalog, target_object_type, assignment)
+        })
+        .collect()
+}
+
+fn resolve_assignment(
+    catalog: &schema_model::SchemaCatalog,
+    target_object_type: &schema_model::ObjectTypeRef,
     assignment: &query_ast::Assignment,
 ) -> Result<query_ir::Assignment, ResolveError> {
     let field = catalog
-        .find_field(root_object_type.name(), assignment.field_name())
+        .find_field(target_object_type.name(), assignment.field_name())
         .ok_or_else(|| ResolveError::UnknownField {
-            object_type: root_object_type.name().to_string(),
+            object_type: target_object_type.name().to_string(),
             field: assignment.field_name().to_string(),
         })?;
 
     if field.is_implicit() {
         return Err(ResolveError::AssignmentToImplicitField {
-            object_type: root_object_type.name().to_string(),
+            object_type: target_object_type.name().to_string(),
             field: assignment.field_name().to_string(),
         });
     }
@@ -196,31 +237,31 @@ fn resolve_insert_assignment(
     // Once semantic checks succeed, store the stable catalog reference rather
     // than carrying the source field name into backend planning.
     let field_ref = catalog
-        .find_field_ref(root_object_type.name(), assignment.field_name())
+        .find_field_ref(target_object_type.name(), assignment.field_name())
         .expect("field ref should exist for a field found in the catalog");
 
-    let value = resolve_insert_value(root_object_type, field, assignment.value())?;
+    let value = resolve_assignment_value(target_object_type, field, assignment.value())?;
 
     Ok(query_ir::Assignment::new(field_ref, value))
 }
 
-fn resolve_insert_value(
-    root_object_type: &schema_model::ObjectTypeRef,
+fn resolve_assignment_value(
+    target_object_type: &schema_model::ObjectTypeRef,
     field: &Field,
     literal: &query_ast::Literal,
 ) -> Result<query_ir::AssignmentValue, ResolveError> {
     match field {
         schema_model::Field::Scalar(scalar) => {
-            resolve_insert_scalar_value(root_object_type, field, scalar, literal)
+            resolve_scalar_assignment_value(target_object_type, field, scalar, literal)
         }
         schema_model::Field::Link(link) => {
-            resolve_insert_link_value(root_object_type, field, link, literal)
+            resolve_link_assignment_value(target_object_type, field, link, literal)
         }
     }
 }
 
-fn resolve_insert_scalar_value(
-    root_object_type: &schema_model::ObjectTypeRef,
+fn resolve_scalar_assignment_value(
+    target_object_type: &schema_model::ObjectTypeRef,
     field: &Field,
     scalar: &schema_model::ScalarField,
     literal: &query_ast::Literal,
@@ -233,7 +274,7 @@ fn resolve_insert_scalar_value(
             schema_model::Cardinality::Optional => Ok(query_ir::AssignmentValue::ScalarNull),
             schema_model::Cardinality::Required => {
                 Err(ResolveError::NullAssignmentToRequiredField {
-                    object_type: root_object_type.name().to_string(),
+                    object_type: target_object_type.name().to_string(),
                     field: field.name().to_string(),
                 })
             }
@@ -246,7 +287,7 @@ fn resolve_insert_scalar_value(
 
             if !literal_type_matches_scalar(expected, actual) {
                 return Err(ResolveError::IncompatibleAssignmentType {
-                    object_type: root_object_type.name().to_string(),
+                    object_type: target_object_type.name().to_string(),
                     field: field.name().to_string(),
                     expected: scalar_type_name(expected).to_string(),
                     actual: scalar_type_name(actual).to_string(),
@@ -262,8 +303,8 @@ fn resolve_insert_scalar_value(
     }
 }
 
-fn resolve_insert_link_value(
-    root_object_type: &schema_model::ObjectTypeRef,
+fn resolve_link_assignment_value(
+    target_object_type: &schema_model::ObjectTypeRef,
     field: &schema_model::Field,
     link: &schema_model::LinkField,
     literal: &query_ast::Literal,
@@ -273,7 +314,7 @@ fn resolve_insert_link_value(
     // the literal-only insert MVP, so reject it before inspecting the literal.
     if link.cardinality() == schema_model::Cardinality::Many {
         return Err(ResolveError::MultiLinkAssignmentUnsupported {
-            object_type: root_object_type.name().to_string(),
+            object_type: target_object_type.name().to_string(),
             field: field.name().to_string(),
         });
     }
@@ -289,7 +330,7 @@ fn resolve_insert_link_value(
             schema_model::Cardinality::Optional => Ok(query_ir::AssignmentValue::LinkNull),
             schema_model::Cardinality::Required => {
                 Err(ResolveError::NullAssignmentToRequiredField {
-                    object_type: root_object_type.name().to_string(),
+                    object_type: target_object_type.name().to_string(),
                     field: field.name().to_string(),
                 })
             }
@@ -300,7 +341,7 @@ fn resolve_insert_link_value(
             let actual = source_scalar_type(typed.source);
 
             Err(ResolveError::IncompatibleAssignmentType {
-                object_type: root_object_type.name().to_string(),
+                object_type: target_object_type.name().to_string(),
                 field: field.name().to_string(),
                 expected: "object id string".to_string(),
                 actual: scalar_type_name(actual).to_string(),
@@ -1625,6 +1666,9 @@ pub enum ResolveError {
     DuplicateAssignment {
         object_type: String,
         field: String,
+    },
+    EmptyUpdateSet {
+        object_type: String,
     },
 }
 

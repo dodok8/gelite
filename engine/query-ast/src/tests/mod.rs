@@ -54,7 +54,7 @@ fn update_query_can_store_unresolved_filter_and_assignments_in_definition_order(
         ],
     );
 
-    assert_eq!(query.root_type_name(), "Post");
+    assert_eq!(query.target_type_name(), "Post");
     assert_eq!(query.filter(), Some(&filter));
     assert_eq!(query.assignments().len(), 2);
     assert_eq!(query.assignments()[0].field_name(), "title");

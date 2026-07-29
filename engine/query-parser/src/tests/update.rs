@@ -35,7 +35,7 @@ fn parser_can_parse_filtered_update() {
     )
     .expect("update query should parse");
 
-    assert_eq!(query.root_type_name(), "Post");
+    assert_eq!(query.target_type_name(), "Post");
     let (left, right) = assert_compare_expr(
         query.filter().expect("update should keep its filter"),
         CompareOp::Eq,
@@ -60,7 +60,7 @@ fn parser_can_parse_unfiltered_update() {
     let query =
         parse_update(r#"update Post set { title := "Archived" }"#).expect("query should parse");
 
-    assert_eq!(query.root_type_name(), "Post");
+    assert_eq!(query.target_type_name(), "Post");
     assert!(query.filter().is_none());
     assert_eq!(query.assignments().len(), 1);
 }
