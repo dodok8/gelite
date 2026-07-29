@@ -58,29 +58,28 @@ Current implemented areas include:
   links, cardinality, deterministic references, and implicit `id` lookup.
 - `engine/schema-parser`: lexer and parser for the current `.geli` schema
   syntax.
-- `engine/query-ast`: unresolved syntax tree for the supported `select` query
-  subset.
+- `engine/query-ast`: unresolved syntax tree for select, insert, and update
+  queries.
 - `engine/query-parser`: lexer and parser for the current query syntax with
   source spans.
-- `engine/query-resolver`: AST-to-IR semantic analysis for explicit select
-  shapes, filters, ordering, and link traversal.
-- `engine/query-ir`: backend-independent Semantic IR for select queries.
-- `engine/sqlite-query-plan`: SQLite-specific structured select plan.
-- `engine/sqlite-query-sqlgen`: SQL renderer for select plans.
+- `engine/query-resolver`: AST-to-IR semantic analysis for select, insert, and
+  update queries.
+- `engine/query-ir`: backend-independent Semantic IR for supported queries.
+- `engine/sqlite-query-plan`: SQLite-specific structured query plans.
+- `engine/sqlite-query-sqlgen`: SQL renderer for query plans.
 - `engine/sqlite-schema-plan`: SQLite-specific initial schema plan.
 - `engine/sqlite-schema-sqlgen`: SQL renderer for initial schema DDL and
   metadata inserts.
-- `engine/sqlite-runner`: runner-facing SQLite schema execution contract.
+- `engine/sqlite-runner`: native SQLite schema and query execution.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: command orchestration shared by CLI-facing tools.
-- `tools/repl`: query pipeline inspection tool.
+- `tools/repl`: query pipeline inspection and execution tool.
 - `tests/query-pipeline`: cross-crate query pipeline tests.
 
 The project can parse schema and query sources, plan and apply an initial
-SQLite schema, and run the current select subset through CLI/REPL workflows.
-It does not yet provide insert/update/delete, migration diffing and migration
-history, a full query execution runtime with nested result shaping, an HTTP
-server, or a web UI.
+SQLite schema, and execute the current select, insert, and update subsets
+through CLI/REPL workflows. It does not yet provide delete, migration diffing
+and migration history, nested result shaping, an HTTP server, or a web UI.
 
 ## Issue workflow
 

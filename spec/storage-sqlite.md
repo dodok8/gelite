@@ -180,12 +180,12 @@ Every object row has:
 
 - `id TEXT PRIMARY KEY`
 
-For the current insert milestone, the caller supplies the object id to SQL
-rendering. The renderer binds it as the `id` column value in the same prepared
-`INSERT` statement as user-provided scalar and single-link values, and the
-runner reports only execution success or failure. Runtime UUID generation and
-returning the inserted id remain deferred. The schema language and query
-language do not expose user control over identity definition in the MVP.
+For the current insert milestone, the query runtime generates a UUID v4 and
+supplies it to SQL rendering. The renderer binds it as the `id` column value in
+the same prepared `INSERT` statement as user-provided scalar and single-link
+values. After successful execution, the CLI reports the generated id. The
+schema language and query language do not expose user control over identity
+definition in the MVP.
 
 SQLite constraint failures, including missing required values and invalid
 foreign-key targets when foreign keys are enabled, are execution errors;
