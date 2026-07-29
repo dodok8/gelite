@@ -3,7 +3,7 @@ use alloc::string::ToString;
 use query_ast::{CompareOp, Literal};
 
 use super::fixtures::{assert_compare_expr, assert_literal_expr, assert_path_expr};
-use crate::{Keyword, ParseErrorKind, TokenKind, lex, parse_update};
+use crate::{Keyword, ParseErrorKind, TokenKind, lex, parse_insert, parse_select, parse_update};
 
 #[test]
 fn lexer_can_tokenize_update_statement() {
@@ -26,6 +26,21 @@ fn lexer_can_tokenize_update_statement() {
         &TokenKind::String("Closed Case".to_string())
     );
     assert_eq!(tokens[12].kind(), &TokenKind::RBrace);
+}
+
+#[test]
+fn parser_preserves_update_and_set_as_schema_identifiers() {
+    let select = parse_select("select update { set }").expect("select query should parse");
+    let insert =
+        parse_insert(r#"insert update { set := "value" }"#).expect("insert query should parse");
+
+    assert_eq!(select.root_type_name(), "update");
+    assert_eq!(
+        select.shape().items()[0].path().steps()[0].field_name(),
+        "set"
+    );
+    assert_eq!(insert.root_type_name(), "update");
+    assert_eq!(insert.assignments()[0].field_name(), "set");
 }
 
 #[test]
