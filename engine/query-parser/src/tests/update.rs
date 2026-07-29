@@ -29,18 +29,17 @@ fn lexer_can_tokenize_update_statement() {
 }
 
 #[test]
-fn parser_preserves_update_and_set_as_schema_identifiers() {
-    let select = parse_select("select update { set }").expect("select query should parse");
-    let insert =
-        parse_insert(r#"insert update { set := "value" }"#).expect("insert query should parse");
-
-    assert_eq!(select.root_type_name(), "update");
-    assert_eq!(
-        select.shape().items()[0].path().steps()[0].field_name(),
-        "set"
-    );
-    assert_eq!(insert.root_type_name(), "update");
-    assert_eq!(insert.assignments()[0].field_name(), "set");
+fn parser_rejects_update_and_set_as_identifiers() {
+    for error in [
+        parse_select("select update { title }").expect_err("update should be reserved"),
+        parse_select("select Thing { set }").expect_err("set should be reserved"),
+        parse_insert(r#"insert Thing { set := "value" }"#).expect_err("set should be reserved"),
+    ] {
+        assert_eq!(
+            error.kind(),
+            &ParseErrorKind::UnexpectedToken { expected: "IDENT" }
+        );
+    }
 }
 
 #[test]
