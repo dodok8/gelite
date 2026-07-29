@@ -1,11 +1,13 @@
+use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::vec;
 
 use query_ir::{Assignment, AssignmentValue, CompareExpr, CompareOp, Expr, Literal, UpdateQuery};
 
 use super::fixtures::{
-    post_author_field, post_author_name_path_value, post_title_field, post_title_path_value,
-    post_type,
+    post_author_field, post_author_name_path_value, post_generated_join_name_path_value,
+    post_title_field, post_title_path_value, post_type, user_best_friend_field, user_name_field,
+    user_type,
 };
 use crate::{SQLiteJoinKind, SQLiteLiteral, SQLiteValueExpr, SQLiteWhereExpr, plan_update};
 
@@ -98,6 +100,63 @@ fn sqlite_update_plan_uses_join_only_for_related_filter_path() {
     };
     assert_eq!(column.source_alias(), "author");
     assert_eq!(column.column_name(), "name");
+}
+
+#[test]
+fn sqlite_update_plan_reserves_root_path_aliases_for_generated_join_aliases() {
+    let root_link_filter = Expr::Compare(CompareExpr::new(
+        post_generated_join_name_path_value(),
+        CompareOp::Eq,
+        query_ir::ValueExpr::Literal(Literal::String("Sheri".to_string())),
+    ));
+    let nested_link_filter = Expr::Compare(CompareExpr::new(
+        post_author_best_friend_name_path_value(),
+        CompareOp::Eq,
+        query_ir::ValueExpr::Literal(Literal::String("Carol".to_string())),
+    ));
+    let ir = UpdateQuery::new(
+        post_type(),
+        Some(Expr::And(
+            Box::new(root_link_filter),
+            Box::new(nested_link_filter),
+        )),
+        vec![title_assignment()],
+    );
+
+    let plan = plan_update(&ir);
+
+    assert_eq!(
+        plan.joins()
+            .iter()
+            .filter(|join| join.target_alias() == "__gelite_join_0")
+            .count(),
+        1
+    );
+}
+
+fn post_author_best_friend_name_path_value() -> query_ir::ValueExpr {
+    query_ir::ValueExpr::Path(
+        query_ir::ResolvedPath::try_new(
+            post_type(),
+            vec![
+                query_ir::ResolvedPathStep::link(
+                    post_author_field(),
+                    user_type(),
+                    schema_model::Cardinality::Required,
+                ),
+                query_ir::ResolvedPathStep::link(
+                    user_best_friend_field(),
+                    user_type(),
+                    schema_model::Cardinality::Required,
+                ),
+                query_ir::ResolvedPathStep::scalar(
+                    user_name_field(),
+                    schema_model::Cardinality::Required,
+                ),
+            ],
+        )
+        .expect("post author best_friend name path should be valid"),
+    )
 }
 
 fn title_assignment() -> Assignment {

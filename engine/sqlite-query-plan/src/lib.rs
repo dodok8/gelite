@@ -123,7 +123,11 @@ pub fn plan_insert(ir: &query_ir::InsertQuery) -> SQLiteInsertPlan {
 pub fn plan_update(ir: &query_ir::UpdateQuery) -> SQLiteUpdatePlan {
     let target_object_type = ir.target_object_type().clone();
     let assignments = ir.assignments().iter().map(plan_assignment).collect();
-    let mut join_aliases = SQLiteJoinAliasAllocator::new(vec![]);
+    let mut reserved_aliases = vec![];
+    if let Some(filter) = ir.filter() {
+        collect_root_path_aliases_from_expr(filter, &mut reserved_aliases);
+    }
+    let mut join_aliases = SQLiteJoinAliasAllocator::new(reserved_aliases);
     let (filter, joins) = match ir.filter() {
         Some(expr) => {
             let planned = plan_where_expr(expr, &mut join_aliases);
