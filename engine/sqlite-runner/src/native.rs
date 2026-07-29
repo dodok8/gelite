@@ -235,6 +235,24 @@ impl NativeSQLiteRunner {
         }
     }
 
+    pub fn execute_update(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+    ) -> Result<i64, SQLiteRunnerError> {
+        let prepared = self
+            .connection
+            .prepare_v2(statement.sql())
+            .map_err(|_| self.connection_error("prepare UPDATE"))?;
+
+        self.bind_query_values(&prepared, statement.bind_values())?;
+
+        match prepared.step() {
+            Ok(ResultCode::DONE) => Ok(self.connection.changes64()),
+            Ok(result) => Err(self.result_error("step UPDATE", result)),
+            Err(result) => Err(self.result_error("step UPDATE", result)),
+        }
+    }
+
     fn bind_query_values(
         &self,
         prepared: &ManagedStmt,
