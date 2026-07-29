@@ -276,9 +276,7 @@ select Post {
 Update posts selected through a linked object:
 
 ```text
-update Post
-filter .author.email = "alice@example.com"
-set {
+update Post filter .author.email = "alice@example.com" set {
   title := "Reviewed"
 }
 ```

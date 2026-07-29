@@ -270,9 +270,7 @@ select Post {
 Link된 object를 기준으로 Post update:
 
 ```text
-update Post
-filter .author.email = "alice@example.com"
-set {
+update Post filter .author.email = "alice@example.com" set {
   title := "Reviewed"
 }
 ```
