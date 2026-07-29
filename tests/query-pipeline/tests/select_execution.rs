@@ -2,7 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement, render_insert, render_select};
+use sqlite_query_sqlgen::{
+    SQLiteBindValue, SQLiteStatement, render_insert, render_select, render_update,
+};
 use sqlite_runner::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteRunner, apply_schema_statements,
     native::NativeSQLiteRunner,
@@ -193,6 +195,20 @@ fn execute_query(source: &str) -> SQLiteQueryResult {
     runner
         .execute_select(&statement)
         .expect("select statement should execute")
+}
+
+fn execute_update(runner: &mut NativeSQLiteRunner, source: &str) -> i64 {
+    let catalog = runner
+        .load_schema_catalog()
+        .expect("catalog should load from metadata");
+    let ast = query_parser::parse_update(source).expect("update should parse");
+    let ir = query_resolver::resolve_update(&catalog, &ast).expect("update should resolve");
+    let plan = sqlite_query_plan::plan_update(&ir);
+    let statement = render_update(&plan);
+
+    runner
+        .execute_update(&statement)
+        .expect("update statement should execute")
 }
 
 #[test]
@@ -599,6 +615,65 @@ fn query_pipeline_executes_multi_link_schema_storage_setup() {
                 SQLiteCellValue::Text("user-1".to_string()),
                 SQLiteCellValue::Text("post-2".to_string()),
                 SQLiteCellValue::Integer(1),
+            ],
+        ]
+    );
+}
+
+#[test]
+fn update_pipeline_executes_root_filter_from_query_text() {
+    let mut runner = setup_blog_database();
+
+    let affected_rows = execute_update(
+        &mut runner,
+        r#"update Post filter .id = "post-1" set { title := "Reviewed" }"#,
+    );
+
+    assert_eq!(affected_rows, 1);
+
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT title FROM post WHERE id = 'post-1'",
+            vec![],
+        ))
+        .expect("updated post should be readable");
+    assert_eq!(
+        result.rows(),
+        &[vec![SQLiteCellValue::Text("Reviewed".to_string())]]
+    );
+}
+
+#[test]
+fn update_pipeline_executes_related_filter_from_query_text() {
+    let mut runner = setup_blog_database();
+
+    let affected_rows = execute_update(
+        &mut runner,
+        r#"update Post filter .author.email = "alice@example.com" set { title := "Reviewed" }"#,
+    );
+
+    assert_eq!(affected_rows, 2);
+
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT id, title FROM post ORDER BY id",
+            vec![],
+        ))
+        .expect("updated posts should be readable");
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![
+                SQLiteCellValue::Text("post-1".to_string()),
+                SQLiteCellValue::Text("Reviewed".to_string()),
+            ],
+            vec![
+                SQLiteCellValue::Text("post-2".to_string()),
+                SQLiteCellValue::Text("Reviewed".to_string()),
+            ],
+            vec![
+                SQLiteCellValue::Text("post-3".to_string()),
+                SQLiteCellValue::Text("Archived".to_string()),
             ],
         ]
     );
