@@ -54,16 +54,18 @@ query text
 
 ## Current scope
 
-Gelite currently focuses on two narrow compiler paths:
+Gelite's current scope includes:
 
-- query compilation: `select` parsing, semantic resolution, SQLite query
-  planning, and SQL rendering
+- query compilation: `select`, `insert`, and `update` parsing, semantic
+  resolution, SQLite query planning, and SQL rendering
+- native query execution for the current `select`, `insert`, and `update`
+  subsets
 - initial schema planning: `.geli` parsing, SQLite schema planning, and DDL SQL
   rendering
 
 It can apply the initial schema to a SQLite database and execute the current
-select subset through the CLI REPL. It does not yet provide migration diffing,
-insert/update/delete commands, a server, or a web UI.
+query subset through the CLI REPL. It does not yet provide migration diffing,
+`delete`, a server, or a web UI.
 
 That is intentional for this stage. The first useful milestone is to make the
 language and schema pipelines correct and understandable before building
@@ -138,19 +140,17 @@ compiler step can be inspected independently.
 - `schema-model`: semantic schema catalog with object types, scalar fields,
   links, cardinality, deterministic references, and implicit `id` lookup.
 - `schema-parser`: lexer and parser for the current `.geli` schema syntax.
-- `query-ast`: unresolved syntax tree for select queries.
-- `query-parser`: lexer and parser for the current select syntax, with source
+- `query-ast`: unresolved syntax tree for select, insert, and update queries.
+- `query-parser`: lexer and parser for the current query syntax, with source
   spans.
-- `query-resolver`: AST-to-IR semantic analysis for explicit select shapes,
-  filters, ordering, and link traversal.
-- `query-ir`: backend-independent Semantic IR for select queries.
-- `sqlite-query-plan`: SQLite-specific structured select plan.
-- `sqlite-query-sqlgen`: SQL renderer for select plans that emits bind
-  placeholders.
+- `query-resolver`: AST-to-IR semantic analysis for select, insert, and update.
+- `query-ir`: backend-independent Semantic IR for supported queries.
+- `sqlite-query-plan`: SQLite-specific structured query plans.
+- `sqlite-query-sqlgen`: SQL renderer that emits bind placeholders.
 - `sqlite-schema-plan`: SQLite-specific initial schema plan.
 - `sqlite-schema-sqlgen`: SQL renderer for initial schema DDL and metadata
   inserts.
-- `sqlite-runner`: runner-facing schema statement execution contract.
+- `sqlite-runner`: native schema and query statement execution.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: command orchestration shared by CLI-facing tools.
 - `tools/repl`: inspection tool for running the current pipeline on a query.
@@ -158,9 +158,8 @@ compiler step can be inspected independently.
 ## What is not implemented yet
 
 - `gelite query plan` and `gelite query run`.
-- Insert, update, and delete.
+- Delete.
 - Migration diffing and migration history.
-- Query execution runtime.
 - Runtime nested result shaping.
 - HTTP API.
 - Web playground.
@@ -228,14 +227,72 @@ starts the interactive REPL. With a query argument, it parses and renders that
 one query.
 
 `gelite repl --database <app.db>` loads the catalog from Gelite metadata tables
-inside the SQLite database and executes select queries against that database.
-Without `--debug`, it prints result rows. With `--debug`, it prints the rendered
-SQL and bind values before the result rows.
+inside the SQLite database and executes select, insert, and update queries
+against that database. Without `--debug`, it prints result rows, a generated
+insert ID, or the number of updated rows. With `--debug`, it prints the rendered
+SQL and bind values before the result.
 
 Open the CLI REPL:
 
 ```sh
 cargo run -p gelite-cli -- repl --database app.db
+```
+
+The following queries can be entered into the interactive REPL after applying
+`examples/blog.geli`.
+
+Insert a user:
+
+```text
+insert User {
+  email := "alice@example.com"
+}
+```
+
+The REPL prints the generated UUID. Use that value when inserting a linked
+post:
+
+```text
+insert Post {
+  title := "Draft",
+  view_count := 5,
+  author := "<generated-user-id>"
+}
+```
+
+Read the inserted post and its author:
+
+```text
+select Post {
+  id,
+  title,
+  view_count,
+  author: {
+    email
+  }
+}
+```
+
+Update posts selected through a linked object:
+
+```text
+update Post
+filter .author.email = "alice@example.com"
+set {
+  title := "Reviewed"
+}
+```
+
+Confirm the update:
+
+```text
+select Post {
+  title,
+  author: {
+    email
+  }
+}
+filter .title = "Reviewed"
 ```
 
 Run one query through the CLI:
@@ -297,5 +354,5 @@ standard expected from production foundations:
 - no direct AST-to-SQL shortcuts
 - documentation that says what exists now and what is still missing
 
-The next technical goal is to keep extending the select pipeline until the
-generated SQLite SQL can be executed and shaped back into nested query results.
+The next technical goals are to add the delete pipeline and shape nested SQLite
+results back into logical objects.
