@@ -9,11 +9,10 @@
 //! physical decisions before `sqlite-query-sqlgen` serializes them. It also keeps
 //! SQLite naming and join rules out of the backend-independent IR.
 //!
-//! The current planner handles select queries and literal-only insert queries.
-//! Select planning supports one object table per object type, direct scalar
-//! columns, single-link joins, path traversal through single links, equality
-//! predicates, `IS NULL`, ordering, limit, and offset. Multi-link planning and
-//! follow-up fetch plans are specified but not implemented yet.
+//! The current planner handles select queries and literal-only insert and update
+//! queries. Select and update filters support direct scalar columns and path
+//! traversal through single links. Multi-link planning and follow-up fetch plans
+//! are specified but not implemented yet.
 
 extern crate alloc;
 
@@ -108,11 +107,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
 /// Lowers a resolved insert query to a structured SQLite insert plan.
 pub fn plan_insert(ir: &query_ir::InsertQuery) -> SQLiteInsertPlan {
     let root_object_type = ir.root_object_type().clone();
-    let assignments = ir
-        .assignments()
-        .iter()
-        .map(plan_insert_assignment)
-        .collect();
+    let assignments = ir.assignments().iter().map(plan_assignment).collect();
 
     SQLiteInsertPlan {
         root_target: SQLiteInsertTarget {
@@ -124,11 +119,37 @@ pub fn plan_insert(ir: &query_ir::InsertQuery) -> SQLiteInsertPlan {
     }
 }
 
+/// Lowers a resolved update query to a structured SQLite update plan.
+pub fn plan_update(ir: &query_ir::UpdateQuery) -> SQLiteUpdatePlan {
+    let target_object_type = ir.target_object_type().clone();
+    let assignments = ir.assignments().iter().map(plan_assignment).collect();
+    let mut join_aliases = SQLiteJoinAliasAllocator::new(vec![]);
+    let (filter, joins) = match ir.filter() {
+        Some(expr) => {
+            let planned = plan_where_expr(expr, &mut join_aliases);
+            (Some(planned.expr), dedup_joins(planned.joins))
+        }
+        None => (None, vec![]),
+    };
+
+    SQLiteUpdatePlan {
+        target: SQLiteObjectSource {
+            table_name: sqlite_table_name(&target_object_type),
+            alias: "root".to_string(),
+            id_column: "id".to_string(),
+            object_type: target_object_type,
+        },
+        assignments,
+        filter,
+        joins,
+    }
+}
+
 fn sqlite_table_name(object_type: &ObjectTypeRef) -> String {
     object_type.name().to_ascii_lowercase()
 }
 
-fn plan_insert_assignment(assignment: &query_ir::Assignment) -> SQLiteInsertAssignment {
+fn plan_assignment(assignment: &query_ir::Assignment) -> SQLiteAssignment {
     let field = assignment.field();
     let (column_name, value) = match assignment.value() {
         query_ir::AssignmentValue::Scalar(value) => {
@@ -144,14 +165,14 @@ fn plan_insert_assignment(assignment: &query_ir::Assignment) -> SQLiteInsertAssi
         }
     };
 
-    SQLiteInsertAssignment { column_name, value }
+    SQLiteAssignment { column_name, value }
 }
 
 /// Structured SQLite plan for inserting one resolved object.
 pub struct SQLiteInsertPlan {
     root_target: SQLiteInsertTarget,
     generated_id_strategy: SQLiteGeneratedIdStrategy,
-    assignments: Vec<SQLiteInsertAssignment>,
+    assignments: Vec<SQLiteAssignment>,
 }
 
 impl SQLiteInsertPlan {
@@ -163,7 +184,7 @@ impl SQLiteInsertPlan {
         self.generated_id_strategy
     }
 
-    pub fn assignments(&self) -> &[SQLiteInsertAssignment] {
+    pub fn assignments(&self) -> &[SQLiteAssignment] {
         &self.assignments
     }
 }
@@ -190,19 +211,45 @@ pub enum SQLiteGeneratedIdStrategy {
     RuntimeUuid,
 }
 
-/// One physical SQLite column assignment in an insert plan.
-pub struct SQLiteInsertAssignment {
+/// One physical SQLite column assignment in a mutation plan.
+pub struct SQLiteAssignment {
     column_name: String,
     value: SQLiteLiteral,
 }
 
-impl SQLiteInsertAssignment {
+impl SQLiteAssignment {
     pub fn column_name(&self) -> &str {
         &self.column_name
     }
 
     pub fn value(&self) -> &SQLiteLiteral {
         &self.value
+    }
+}
+
+/// Structured SQLite plan for updating resolved objects.
+pub struct SQLiteUpdatePlan {
+    target: SQLiteObjectSource,
+    assignments: Vec<SQLiteAssignment>,
+    filter: Option<SQLiteWhereExpr>,
+    joins: Vec<SQLiteJoin>,
+}
+
+impl SQLiteUpdatePlan {
+    pub fn target(&self) -> &SQLiteObjectSource {
+        &self.target
+    }
+
+    pub fn assignments(&self) -> &[SQLiteAssignment] {
+        &self.assignments
+    }
+
+    pub fn filter(&self) -> Option<&SQLiteWhereExpr> {
+        self.filter.as_ref()
+    }
+
+    pub fn joins(&self) -> &[SQLiteJoin] {
+        &self.joins
     }
 }
 
