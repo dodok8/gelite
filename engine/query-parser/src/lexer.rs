@@ -28,7 +28,9 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
         let kind = match raw {
             RawTokenKind::Select => TokenKind::Keyword(Keyword::Select),
             RawTokenKind::Insert => TokenKind::Keyword(Keyword::Insert),
+            RawTokenKind::Update => TokenKind::Keyword(Keyword::Update),
             RawTokenKind::Filter => TokenKind::Keyword(Keyword::Filter),
+            RawTokenKind::Set => TokenKind::Keyword(Keyword::Set),
             RawTokenKind::Order => TokenKind::Keyword(Keyword::Order),
             RawTokenKind::By => TokenKind::Keyword(Keyword::By),
             RawTokenKind::Limit => TokenKind::Keyword(Keyword::Limit),
@@ -112,8 +114,14 @@ enum RawTokenKind {
     #[token("insert")]
     Insert,
 
+    #[token("update")]
+    Update,
+
     #[token("filter")]
     Filter,
+
+    #[token("set")]
+    Set,
 
     #[token("order")]
     Order,
@@ -278,7 +286,9 @@ pub enum TokenKind {
 pub enum Keyword {
     Select,
     Insert,
+    Update,
     Filter,
+    Set,
     Order,
     By,
     Limit,
@@ -295,7 +305,9 @@ impl Keyword {
         match self {
             Keyword::Select => "select",
             Keyword::Insert => "insert",
+            Keyword::Update => "update",
             Keyword::Filter => "filter",
+            Keyword::Set => "set",
             Keyword::Order => "order",
             Keyword::By => "by",
             Keyword::Limit => "limit",
