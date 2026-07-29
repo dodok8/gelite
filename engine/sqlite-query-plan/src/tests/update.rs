@@ -3,6 +3,7 @@ use alloc::string::ToString;
 use alloc::vec;
 
 use query_ir::{Assignment, AssignmentValue, CompareExpr, CompareOp, Expr, Literal, UpdateQuery};
+use schema_model::{Cardinality, FieldId, FieldRef};
 
 use super::fixtures::{
     post_author_field, post_author_name_path_value, post_generated_join_name_path_value,
@@ -132,6 +133,31 @@ fn sqlite_update_plan_reserves_root_path_aliases_for_generated_join_aliases() {
             .count(),
         1
     );
+}
+
+#[test]
+fn sqlite_update_plan_does_not_reuse_root_alias_for_a_link() {
+    let root_link = FieldRef::new(FieldId::new(8), post_type(), "root");
+    let path = query_ir::ValueExpr::Path(
+        query_ir::ResolvedPath::try_new(
+            post_type(),
+            vec![
+                query_ir::ResolvedPathStep::link(root_link, user_type(), Cardinality::Required),
+                query_ir::ResolvedPathStep::scalar(user_name_field(), Cardinality::Required),
+            ],
+        )
+        .expect("post root name path should be valid"),
+    );
+    let filter = Expr::Compare(CompareExpr::new(
+        path,
+        CompareOp::Eq,
+        query_ir::ValueExpr::Literal(Literal::String("Sheri".to_string())),
+    ));
+    let ir = UpdateQuery::new(post_type(), Some(filter), vec![title_assignment()]);
+
+    let plan = plan_update(&ir);
+
+    assert_ne!(plan.joins()[0].target_alias(), plan.target().alias());
 }
 
 fn post_author_best_friend_name_path_value() -> query_ir::ValueExpr {

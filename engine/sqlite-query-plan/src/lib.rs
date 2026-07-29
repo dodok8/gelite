@@ -1445,7 +1445,12 @@ fn path_step_target_alias(
     join_aliases: &mut SQLiteJoinAliasAllocator,
 ) -> String {
     if source_alias == "root" {
-        state.alias_parts.join("_")
+        let alias = state.alias_parts.join("_");
+        if alias == source_alias {
+            join_aliases.alias_for_path(source_alias, &state.path_parts)
+        } else {
+            alias
+        }
     } else {
         join_aliases.alias_for_path(source_alias, &state.path_parts)
     }
