@@ -152,6 +152,16 @@ fn run_repl_command(command: ReplCommand) -> Result<(), String> {
                     repl::QueryKind::Select => runner
                         .execute_select(statement)
                         .map_err(|error| error.message().to_string()),
+                    repl::QueryKind::Insert { generated_id } => {
+                        runner
+                            .execute_insert(statement)
+                            .map_err(|error| error.message().to_string())?;
+
+                        Ok(sqlite_runner::SQLiteQueryResult::new(
+                            vec!["id".to_string()],
+                            vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
+                        ))
+                    }
                     repl::QueryKind::Update => {
                         let affected_rows = runner
                             .execute_update(statement)

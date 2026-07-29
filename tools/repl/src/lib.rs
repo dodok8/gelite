@@ -15,9 +15,10 @@ pub struct ReplOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReplError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryKind {
     Select,
+    Insert { generated_id: String },
     Update,
 }
 
@@ -98,7 +99,7 @@ fn run_repl(
     runtime: &mut ReplRuntime<'_>,
 ) -> Result<(), ReplError> {
     println!("gelite repl");
-    println!("Type a select or update query, or :quit / :exit to leave.");
+    println!("Type a select, insert, or update query, or :quit / :exit to leave.");
     println!("Use balanced braces for multiline input.");
     println!("Press Ctrl-C twice in a row to leave.");
     if debug {
@@ -246,17 +247,8 @@ fn compile_query(
     query_text: &str,
     debug: bool,
 ) -> Result<(QueryKind, SQLiteStatement), ReplError> {
-    let kind = match query_text.split_whitespace().next() {
-        Some("select") => QueryKind::Select,
-        Some("update") => QueryKind::Update,
-        _ => {
-            eprintln!("query must start with `select` or `update`");
-            return Err(ReplError);
-        }
-    };
-
-    let statement = match kind {
-        QueryKind::Select => {
+    let (kind, statement) = match query_text.split_whitespace().next() {
+        Some("select") => {
             let query = parse_select(query_text).map_err(|error| {
                 eprintln!("failed to parse query: {error:#?}");
                 ReplError
@@ -267,9 +259,24 @@ fn compile_query(
             })?;
             let plan = sqlite_query_plan::plan_select(&resolved);
 
-            sqlite_query_sqlgen::render_select(&plan)
+            (QueryKind::Select, sqlite_query_sqlgen::render_select(&plan))
         }
-        QueryKind::Update => {
+        Some("insert") => {
+            let query = query_parser::parse_insert(query_text).map_err(|error| {
+                eprintln!("failed to parse query: {error:#?}");
+                ReplError
+            })?;
+            let resolved = query_resolver::resolve_insert(catalog, &query).map_err(|error| {
+                eprintln!("failed to resolve query: {error:#?}");
+                ReplError
+            })?;
+            let plan = sqlite_query_plan::plan_insert(&resolved);
+            let generated_id = uuid::Uuid::new_v4().to_string();
+            let statement = sqlite_query_sqlgen::render_insert(&plan, &generated_id);
+
+            (QueryKind::Insert { generated_id }, statement)
+        }
+        Some("update") => {
             let query = parse_update(query_text).map_err(|error| {
                 eprintln!("failed to parse query: {error:#?}");
                 ReplError
@@ -280,7 +287,11 @@ fn compile_query(
             })?;
             let plan = sqlite_query_plan::plan_update(&resolved);
 
-            sqlite_query_sqlgen::render_update(&plan)
+            (QueryKind::Update, sqlite_query_sqlgen::render_update(&plan))
+        }
+        _ => {
+            eprintln!("query must start with `select`, `insert`, or `update`");
+            return Err(ReplError);
         }
     };
 
@@ -378,6 +389,29 @@ mod tests {
         assert_eq!(
             statement.sql(),
             "UPDATE \"post\" AS \"root\" SET \"title\" = ? WHERE \"root\".\"title\" = ?"
+        );
+    }
+
+    #[test]
+    fn compile_query_dispatches_insert_pipeline_with_generated_id() {
+        let catalog = build_development_schema();
+
+        let (kind, statement) =
+            compile_query(&catalog, r#"insert User { name := "Sheri" }"#, false)
+                .expect("insert should compile");
+
+        let QueryKind::Insert { generated_id } = kind else {
+            panic!("expected insert query kind");
+        };
+        assert_eq!(
+            uuid::Uuid::parse_str(&generated_id)
+                .expect("generated id should be a UUID")
+                .get_version(),
+            Some(uuid::Version::Random)
+        );
+        assert_eq!(
+            statement.sql(),
+            "INSERT INTO \"user\" (\"id\", \"name\") VALUES (?, ?)"
         );
     }
 }

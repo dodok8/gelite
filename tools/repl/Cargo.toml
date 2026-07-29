@@ -13,3 +13,4 @@ sqlite-query-plan = { path = "../../engine/sqlite-query-plan" }
 sqlite-query-sqlgen = { path = "../../engine/sqlite-query-sqlgen" }
 sqlite-runner = { path = "../../engine/sqlite-runner" }
 rustyline = "18"
+uuid = { version = "1.24.0", features = ["v4"] }
