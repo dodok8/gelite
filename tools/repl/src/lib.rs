@@ -100,7 +100,7 @@ fn run_repl(
     runtime: &mut ReplRuntime<'_>,
 ) -> Result<(), ReplError> {
     println!("gelite repl");
-    println!("Type a select, insert, or update query, or :quit / :exit to leave.");
+    println!("Type a select, insert, update, or delete query, or :quit / :exit to leave.");
     println!("Use balanced braces for multiline input.");
     println!("Press Ctrl-C twice in a row to leave.");
     if debug {

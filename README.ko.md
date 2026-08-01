@@ -355,5 +355,4 @@ foundation에 기대하는 기준을 유지해야 합니다.
 - direct AST-to-SQL shortcut 금지
 - 현재 있는 것과 아직 없는 것을 정확히 말하는 documentation
 
-다음 기술 목표는 delete pipeline을 추가하고, SQLite 결과를 logical nested
-object로 shape하는 것입니다.
+다음 기술 목표는 SQLite 결과를 logical nested object로 shape하는 것입니다.

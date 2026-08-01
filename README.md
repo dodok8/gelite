@@ -362,5 +362,5 @@ standard expected from production foundations:
 - no direct AST-to-SQL shortcuts
 - documentation that says what exists now and what is still missing
 
-The next technical goals are to add the delete pipeline and shape nested SQLite
-results back into logical objects.
+The next technical goal is to shape nested SQLite results back into logical
+objects.

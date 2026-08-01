@@ -946,7 +946,7 @@ fn resolve_typed_path_expr(
                 terminal_scalar_type = Some(scalar.scalar_type());
             }
             schema_model::Field::Link(link) => {
-                if is_last {
+                if is_last || link.cardinality() == schema_model::Cardinality::Many {
                     return Err(ResolveError::UnsupportedPath);
                 }
 

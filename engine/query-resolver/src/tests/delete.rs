@@ -3,7 +3,7 @@ use alloc::vec;
 
 use query_ast::{CompareExpr, CompareOp, DeleteQuery, Expr, Literal, Path, PathStep};
 
-use crate::tests::fixtures::{post_with_title_catalog, user_only_catalog};
+use crate::tests::fixtures::{post_with_title_catalog, user_only_catalog, user_with_posts_catalog};
 use crate::{ResolveError, resolve_delete};
 
 fn equality_filter(field: &str, literal: Literal) -> Expr {
@@ -76,5 +76,26 @@ fn rejects_delete_unknown_filter_field() {
             object_type: "Post".to_string(),
             field: "missing".to_string(),
         }
+    );
+}
+
+#[test]
+fn rejects_delete_filter_through_multi_link() {
+    let catalog = user_with_posts_catalog();
+    let query = DeleteQuery::new(
+        "User",
+        Some(Expr::Compare(CompareExpr::new(
+            Expr::Path(Path::new(vec![
+                PathStep::new("posts"),
+                PathStep::new("view_count"),
+            ])),
+            CompareOp::Eq,
+            Expr::Literal(Literal::Int64(1)),
+        ))),
+    );
+
+    assert_eq!(
+        resolve_delete(&catalog, &query),
+        Err(ResolveError::UnsupportedPath)
     );
 }
