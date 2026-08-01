@@ -185,25 +185,27 @@ fn handle_repl_line(
 ) -> Result<ReplLoopAction, ReplError> {
     *interrupt_count = 0;
 
-    if pending.is_empty() && is_exit_command(line.trim()) {
-        return Ok(ReplLoopAction::Break);
-    }
-
-    append_pending_line(pending, &line);
-
-    if needs_more_input(pending) {
-        return Ok(ReplLoopAction::Continue);
-    }
-
-    let query_text = pending.trim().to_string();
-    pending.clear();
-
-    if !query_text.is_empty() {
+    for query_text in complete_repl_inputs(pending, &line) {
+        if is_exit_command(&query_text) {
+            return Ok(ReplLoopAction::Break);
+        }
         let _ = editor.add_history_entry(query_text.as_str());
         let _ = runtime.inspect_query(catalog, &query_text, debug, true);
     }
 
     Ok(ReplLoopAction::Continue)
+}
+
+fn complete_repl_inputs(pending: &mut String, input: &str) -> Vec<String> {
+    input
+        .lines()
+        .filter_map(|line| {
+            append_pending_line(pending, line);
+            (!needs_more_input(pending))
+                .then(|| core::mem::take(pending).trim().to_string())
+                .filter(|query| !query.is_empty())
+        })
+        .collect()
 }
 
 fn append_pending_line(pending: &mut String, line: &str) {
@@ -419,8 +421,28 @@ mod tests {
 
     use super::{
         ExecutionRequest, QueryKind, ReplError, ReplOptions, ReplRuntime, build_development_schema,
-        compile_query, needs_more_input, run_with_catalog, run_with_executor,
+        compile_query, complete_repl_inputs, needs_more_input, run_with_catalog, run_with_executor,
     };
+
+    #[test]
+    fn pasted_lines_are_split_at_complete_queries() {
+        let mut pending = String::new();
+
+        let queries = complete_repl_inputs(
+            &mut pending,
+            "start transaction\ninsert User {\n  name := \"Sheri\"\n}\ncommit",
+        );
+
+        assert_eq!(
+            queries,
+            [
+                "start transaction",
+                "insert User {\n  name := \"Sheri\"\n}",
+                "commit",
+            ]
+        );
+        assert!(pending.is_empty());
+    }
 
     #[test]
     fn multiline_input_continues_until_braces_are_balanced() {
