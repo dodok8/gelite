@@ -16,6 +16,14 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Parsed transaction-control command before session-level execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionCommand {
+    Start,
+    Commit,
+    Rollback,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct InsertQuery {
     root_type_name: String,

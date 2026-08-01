@@ -5,7 +5,7 @@ use alloc::{string::String, vec};
 use query_ast::{
     ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, DeleteQuery, Expr, InExpr,
     InOp, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem,
-    UpdateQuery,
+    TransactionCommand, UpdateQuery,
 };
 
 /// Parses one MVP `select` statement from source text.
@@ -19,6 +19,12 @@ pub fn parse_select(input: &str) -> Result<query_ast::SelectQuery, ParseError> {
 
 fn parse_select_tokens(tokens: &[Token]) -> Result<query_ast::SelectQuery, ParseError> {
     Parser::new(tokens).parse_select_stmt()
+}
+
+/// Parses one transaction-control command from source text.
+pub fn parse_transaction_command(input: &str) -> Result<TransactionCommand, ParseError> {
+    let tokens = lex(input).map_err(ParseError::from)?;
+    Parser::new(&tokens).parse_transaction_command()
 }
 
 /// Parser error with an optional source span.
@@ -140,6 +146,43 @@ impl<'a> Parser<'a> {
             limit,
             offset,
         ))
+    }
+
+    fn parse_transaction_command(&mut self) -> Result<TransactionCommand, ParseError> {
+        let command = match self.peek() {
+            Some(token) if token.kind() == &TokenKind::Keyword(Keyword::Start) => {
+                self.advance();
+                self.expect_keyword(Keyword::Transaction)?;
+                TransactionCommand::Start
+            }
+            Some(token) if token.kind() == &TokenKind::Keyword(Keyword::Commit) => {
+                self.advance();
+                TransactionCommand::Commit
+            }
+            Some(token) if token.kind() == &TokenKind::Keyword(Keyword::Rollback) => {
+                self.advance();
+                TransactionCommand::Rollback
+            }
+            Some(token) => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedToken {
+                        expected: "transaction command",
+                    },
+                    Some(token.span()),
+                ));
+            }
+            None => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof {
+                        expected: "transaction command",
+                    },
+                    None,
+                ));
+            }
+        };
+
+        self.ensure_eof()?;
+        Ok(command)
     }
 
     fn parse_shape(&mut self) -> Result<query_ast::Shape, ParseError> {
