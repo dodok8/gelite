@@ -172,6 +172,16 @@ fn run_repl_command(command: ReplCommand) -> Result<(), String> {
                             vec![vec![sqlite_runner::SQLiteCellValue::Integer(affected_rows)]],
                         ))
                     }
+                    repl::QueryKind::Delete => {
+                        let affected_rows = runner
+                            .execute_delete(statement)
+                            .map_err(|error| error.message().to_string())?;
+
+                        Ok(sqlite_runner::SQLiteQueryResult::new(
+                            vec!["affected_rows".to_string()],
+                            vec![vec![sqlite_runner::SQLiteCellValue::Integer(affected_rows)]],
+                        ))
+                    }
                 };
 
             repl::run_with_executor(&catalog, options, &mut executor)
