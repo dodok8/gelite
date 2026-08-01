@@ -372,7 +372,12 @@ fn build_development_schema() -> SchemaCatalog {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryKind, build_development_schema, compile_query, needs_more_input};
+    use query_ast::TransactionCommand;
+
+    use super::{
+        ExecutionRequest, QueryKind, ReplError, ReplOptions, ReplRuntime, build_development_schema,
+        compile_query, needs_more_input, run_with_catalog, run_with_executor,
+    };
 
     #[test]
     fn multiline_input_continues_until_braces_are_balanced() {
@@ -442,5 +447,70 @@ mod tests {
             statement.sql(),
             "INSERT INTO \"user\" (\"id\", \"name\") VALUES (?, ?)"
         );
+    }
+
+    #[test]
+    fn interactive_database_repl_dispatches_transaction_commands() {
+        let catalog = build_development_schema();
+        let mut commands = Vec::new();
+        let mut executor = |request| {
+            let ExecutionRequest::Transaction(command) = request else {
+                panic!("expected transaction command");
+            };
+            commands.push(command);
+            Ok(None)
+        };
+        let mut runtime = ReplRuntime {
+            executor: Some(&mut executor),
+        };
+
+        for source in ["start transaction", "commit", "rollback"] {
+            runtime
+                .inspect_query(&catalog, source, false, true)
+                .expect("interactive transaction command should execute");
+        }
+        drop(runtime);
+
+        assert_eq!(
+            commands,
+            vec![
+                TransactionCommand::Start,
+                TransactionCommand::Commit,
+                TransactionCommand::Rollback,
+            ]
+        );
+    }
+
+    #[test]
+    fn compile_only_repl_rejects_transaction_commands() {
+        let result = run_with_catalog(
+            &build_development_schema(),
+            ReplOptions {
+                debug: false,
+                query: Some("commit".to_string()),
+            },
+        );
+
+        assert_eq!(result, Err(ReplError));
+    }
+
+    #[test]
+    fn one_shot_database_repl_rejects_transaction_commands_without_executing() {
+        let mut executed = false;
+        let mut executor = |_request| {
+            executed = true;
+            Ok(None)
+        };
+        let result = run_with_executor(
+            &build_development_schema(),
+            ReplOptions {
+                debug: false,
+                query: Some("rollback".to_string()),
+            },
+            &mut executor,
+        );
+
+        assert_eq!(result, Err(ReplError));
+        assert!(!executed);
     }
 }
