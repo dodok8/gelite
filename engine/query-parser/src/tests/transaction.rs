@@ -1,8 +1,8 @@
-use alloc::string::ToString;
+use alloc::{string::ToString, vec::Vec};
 
 use query_ast::TransactionCommand;
 
-use crate::{Keyword, ParseErrorKind, TokenKind, lex, parse_transaction_command};
+use crate::{Keyword, ParseErrorKind, TokenKind, lex, parse_select, parse_transaction_command};
 
 #[test]
 fn lexer_can_tokenize_transaction_commands() {
@@ -31,6 +31,23 @@ fn lexer_keeps_transaction_keyword_prefix_identifiers() {
     assert_eq!(
         tokens[3].kind(),
         &TokenKind::Ident("rollbackReason".to_string())
+    );
+}
+
+#[test]
+fn parser_treats_transaction_words_as_data_query_identifiers() {
+    let query = parse_select("select transaction { start, commit, rollback }")
+        .expect("transaction words should remain valid identifiers in data queries");
+
+    assert_eq!(query.root_type_name(), "transaction");
+    assert_eq!(
+        query
+            .shape()
+            .items()
+            .iter()
+            .map(|item| item.path().steps()[0].field_name())
+            .collect::<Vec<_>>(),
+        ["start", "commit", "rollback"]
     );
 }
 

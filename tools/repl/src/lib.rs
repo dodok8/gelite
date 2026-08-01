@@ -200,15 +200,34 @@ fn handle_repl_line(
 }
 
 fn complete_repl_inputs(pending: &mut String, input: &str) -> Vec<String> {
-    input
-        .lines()
-        .filter_map(|line| {
+    let mut queries = Vec::new();
+
+    for line in input.lines() {
+        if is_transaction_command_line(line) && !needs_more_input(pending) {
+            if let Some(query) = take_complete_repl_input(pending) {
+                queries.push(query);
+            }
+            queries.push(line.trim().to_string());
+        } else {
             append_pending_line(pending, line);
-            (!needs_more_input(pending))
-                .then(|| core::mem::take(pending).trim().to_string())
-                .filter(|query| !query.is_empty())
-        })
-        .collect()
+        }
+    }
+
+    if let Some(query) = take_complete_repl_input(pending) {
+        queries.push(query);
+    }
+
+    queries
+}
+
+fn is_transaction_command_line(line: &str) -> bool {
+    matches!(line.trim(), "start transaction" | "commit" | "rollback")
+}
+
+fn take_complete_repl_input(pending: &mut String) -> Option<String> {
+    (!needs_more_input(pending))
+        .then(|| core::mem::take(pending).trim().to_string())
+        .filter(|query| !query.is_empty())
 }
 
 fn append_pending_line(pending: &mut String, line: &str) {
@@ -443,6 +462,38 @@ mod tests {
                 "insert User {\n  name := \"Sheri\"\n}",
                 "commit",
             ]
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn multiline_update_is_kept_as_one_query() {
+        let mut pending = String::new();
+
+        let queries = complete_repl_inputs(
+            &mut pending,
+            "update User\nfilter .name = \"Sheri\"\nset {\n  name := \"Alice\"\n}",
+        );
+
+        assert_eq!(
+            queries,
+            ["update User\nfilter .name = \"Sheri\"\nset {\n  name := \"Alice\"\n}"]
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn multiline_select_clauses_are_kept_with_the_shape() {
+        let mut pending = String::new();
+
+        let queries = complete_repl_inputs(
+            &mut pending,
+            "select Post {\n  title\n}\nfilter .title = \"Draft\"\norder by .title",
+        );
+
+        assert_eq!(
+            queries,
+            ["select Post {\n  title\n}\nfilter .title = \"Draft\"\norder by .title"]
         );
         assert!(pending.is_empty());
     }

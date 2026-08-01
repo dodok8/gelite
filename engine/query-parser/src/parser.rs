@@ -690,6 +690,16 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Ok(value)
                 }
+                TokenKind::Keyword(
+                    keyword @ (Keyword::Start
+                    | Keyword::Transaction
+                    | Keyword::Commit
+                    | Keyword::Rollback),
+                ) => {
+                    let value = String::from(keyword.as_str());
+                    self.advance();
+                    Ok(value)
+                }
                 _ => Err(ParseError::new(
                     ParseErrorKind::UnexpectedToken { expected: "IDENT" },
                     Some(token.span()),
