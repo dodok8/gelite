@@ -1,3 +1,4 @@
+mod delete;
 mod fixtures;
 mod insert;
 mod select;

@@ -29,6 +29,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
             RawTokenKind::Select => TokenKind::Keyword(Keyword::Select),
             RawTokenKind::Insert => TokenKind::Keyword(Keyword::Insert),
             RawTokenKind::Update => TokenKind::Keyword(Keyword::Update),
+            RawTokenKind::Delete => TokenKind::Keyword(Keyword::Delete),
             RawTokenKind::Filter => TokenKind::Keyword(Keyword::Filter),
             RawTokenKind::Set => TokenKind::Keyword(Keyword::Set),
             RawTokenKind::Order => TokenKind::Keyword(Keyword::Order),
@@ -116,6 +117,9 @@ enum RawTokenKind {
 
     #[token("update")]
     Update,
+
+    #[token("delete")]
+    Delete,
 
     #[token("filter")]
     Filter,
@@ -287,6 +291,7 @@ pub enum Keyword {
     Select,
     Insert,
     Update,
+    Delete,
     Filter,
     Set,
     Order,
@@ -306,6 +311,7 @@ impl Keyword {
             Keyword::Select => "select",
             Keyword::Insert => "insert",
             Keyword::Update => "update",
+            Keyword::Delete => "delete",
             Keyword::Filter => "filter",
             Keyword::Set => "set",
             Keyword::Order => "order",
