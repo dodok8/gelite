@@ -414,6 +414,8 @@ fn build_development_schema() -> SchemaCatalog {
 #[cfg(test)]
 mod tests {
     use query_ast::TransactionCommand;
+    use sqlite_query_sqlgen::SQLiteStatement;
+    use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
     use super::{
         ExecutionRequest, QueryKind, ReplError, ReplOptions, ReplRuntime, build_development_schema,
@@ -553,5 +555,60 @@ mod tests {
 
         assert_eq!(result, Err(ReplError));
         assert!(!executed);
+    }
+
+    #[test]
+    fn interactive_database_repl_commits_and_rolls_back_on_one_connection() {
+        let catalog = build_development_schema();
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+        runner
+            .execute("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+            .expect("user table should be created");
+        let mut executor = |request| match request {
+            ExecutionRequest::Query {
+                kind: QueryKind::Insert { .. },
+                statement,
+            } => runner
+                .execute_insert(&statement)
+                .map(|()| None)
+                .map_err(|error| error.message().to_string()),
+            ExecutionRequest::Transaction(command) => match command {
+                TransactionCommand::Start => runner.begin_transaction(),
+                TransactionCommand::Commit => runner.commit_transaction(),
+                TransactionCommand::Rollback => runner.rollback_transaction(),
+            }
+            .map(|()| None)
+            .map_err(|error| error.message().to_string()),
+            ExecutionRequest::Query { .. } => panic!("expected insert query"),
+        };
+        let mut runtime = ReplRuntime {
+            executor: Some(&mut executor),
+        };
+
+        for source in [
+            "start transaction",
+            r#"insert User { name := "Sheri" }"#,
+            "commit",
+            "start transaction",
+            r#"insert User { name := "Alice" }"#,
+            "rollback",
+        ] {
+            runtime
+                .inspect_query(&catalog, source, false, true)
+                .expect("interactive input should execute");
+        }
+        drop(runtime);
+        drop(executor);
+
+        let result = runner
+            .execute_select(&SQLiteStatement::new(
+                "SELECT name FROM user ORDER BY name",
+                vec![],
+            ))
+            .expect("committed users should be readable");
+        assert_eq!(
+            result.rows(),
+            &[vec![SQLiteCellValue::Text("Sheri".to_string())]]
+        );
     }
 }
