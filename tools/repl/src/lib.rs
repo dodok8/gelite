@@ -124,9 +124,9 @@ fn run_repl(
     runtime: &mut ReplRuntime<'_>,
 ) -> Result<(), ReplError> {
     println!("gelite repl");
-    println!("Type a query, start transaction, commit, rollback, or :quit / :exit to leave.");
+    println!("Type a query, start transaction, commit, rollback, or quit / exit to leave.");
     println!(
-        "Press Alt+Enter (Opt+Enter on macOS) to insert a newline; balanced braces continue automatically."
+        "Press Alt+Enter to insert a newline. See https://github.com/gelite-dev/gelite/blob/main/README.md#multiline-repl-input."
     );
     println!("Press Ctrl-C twice in a row to leave.");
     if debug {

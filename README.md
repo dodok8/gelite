@@ -239,6 +239,18 @@ Open the CLI REPL:
 cargo run -p gelite-cli -- repl --database app.db
 ```
 
+### Multiline REPL input
+
+Press `Alt+Enter` to insert a newline without submitting the current input.
+On macOS, use `Opt+Enter` after configuring the terminal to send Option as
+Alt/Meta:
+
+- Terminal: enable **Settings > Profiles > Keyboard > Use Option as Meta key**.
+- iTerm2: set **Settings > Profiles > Keys > Left/Right Option Key** to
+  **Esc+**.
+
+Regular Enter continues automatically while braces are unbalanced.
+
 The following queries can be entered into the interactive REPL after applying
 `examples/blog.geli`.
 
