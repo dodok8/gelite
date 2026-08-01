@@ -7,9 +7,8 @@
 //! parser tests can focus on source syntax, while the resolver owns type,
 //! field, relation, and cardinality checks.
 //!
-//! The implemented AST currently covers `select`, `insert`, and `update`
-//! queries. Delete is specified in `spec/query.md` but is not represented here
-//! yet.
+//! The implemented AST covers `select`, `insert`, `update`, and `delete`
+//! queries.
 
 extern crate alloc;
 
@@ -33,6 +32,13 @@ pub struct UpdateQuery {
     target_type_name: String,
     filter: Option<Expr>,
     assignments: Vec<Assignment>,
+}
+
+/// Parsed `delete` query before schema resolution.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeleteQuery {
+    target_type_name: String,
+    filter: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +87,23 @@ impl UpdateQuery {
 
     pub fn assignments(&self) -> &[Assignment] {
         &self.assignments
+    }
+}
+
+impl DeleteQuery {
+    pub fn new(target_type_name: impl Into<String>, filter: Option<Expr>) -> Self {
+        Self {
+            target_type_name: target_type_name.into(),
+            filter,
+        }
+    }
+
+    pub fn target_type_name(&self) -> &str {
+        &self.target_type_name
+    }
+
+    pub fn filter(&self) -> Option<&Expr> {
+        self.filter.as_ref()
     }
 }
 

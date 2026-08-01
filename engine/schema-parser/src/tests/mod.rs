@@ -73,8 +73,18 @@ fn lexer_reserves_update_and_set_keywords() {
 }
 
 #[test]
+fn lexer_reserves_delete_keyword() {
+    let tokens = lex("delete").expect("schema should lex");
+
+    let TokenKind::Keyword(keyword) = tokens[0].kind() else {
+        panic!("delete should be a keyword");
+    };
+    assert_eq!(keyword.as_str(), "delete");
+}
+
+#[test]
 fn lexer_distinguishes_keyword_prefix_identifiers() {
-    let tokens = lex("typeName requiredField linkTarget").expect("schema should lex");
+    let tokens = lex("typeName requiredField linkTarget deleteArchive").expect("schema should lex");
 
     assert_eq!(tokens[0].kind(), &TokenKind::Ident("typeName".to_string()));
     assert_eq!(
@@ -84,6 +94,10 @@ fn lexer_distinguishes_keyword_prefix_identifiers() {
     assert_eq!(
         tokens[2].kind(),
         &TokenKind::Ident("linkTarget".to_string())
+    );
+    assert_eq!(
+        tokens[3].kind(),
+        &TokenKind::Ident("deleteArchive".to_string())
     );
 }
 
@@ -111,8 +125,12 @@ fn parser_can_parse_empty_object_type() {
 }
 
 #[test]
-fn parser_rejects_update_and_set_as_identifiers() {
-    for schema in ["type update {}", "type Thing { set: str }"] {
+fn parser_rejects_mutation_keywords_as_identifiers() {
+    for schema in [
+        "type update {}",
+        "type delete {}",
+        "type Thing { set: str }",
+    ] {
         let error = parse_schema(schema).expect_err("reserved identifier should fail");
 
         assert_eq!(

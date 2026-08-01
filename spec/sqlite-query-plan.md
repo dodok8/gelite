@@ -467,6 +467,11 @@ Minimum fields:
 
 - root table
 - optional predicate
+- predicate joins
+
+- root-only predicates render directly against the target
+- joined predicates select target identities as filtered updates do
+- filter binds follow expression order
 
 Delete-side cleanup for `multi link` rows is handled by SQLite foreign key
 rules, not by extra logical mutation nodes in the MVP.

@@ -1,8 +1,8 @@
 extern crate alloc;
 
 use crate::{
-    SQLiteAffinity, SQLiteCatalogFieldKind, SQLiteValuePlan, plan_catalog_field_inserts,
-    plan_catalog_object_inserts, plan_initial_schema,
+    SQLiteAffinity, SQLiteCatalogFieldKind, SQLiteForeignKeyAction, SQLiteValuePlan,
+    plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
 };
 use alloc::vec;
 use alloc::vec::Vec;
@@ -334,6 +334,7 @@ fn initial_schema_plan_creates_required_single_link_foreign_key_column() {
     assert_eq!(foreign_key.column_name(), "author_id");
     assert_eq!(foreign_key.target_table(), "user");
     assert_eq!(foreign_key.target_column(), "id");
+    assert_eq!(foreign_key.on_delete(), SQLiteForeignKeyAction::Restrict);
 }
 
 #[test]
@@ -582,10 +583,12 @@ fn initial_schema_plan_creates_multi_link_join_table() {
     assert_eq!(foreign_keys[0].column_name(), "source_id");
     assert_eq!(foreign_keys[0].target_table(), "user");
     assert_eq!(foreign_keys[0].target_column(), "id");
+    assert_eq!(foreign_keys[0].on_delete(), SQLiteForeignKeyAction::Cascade);
 
     assert_eq!(foreign_keys[1].column_name(), "target_id");
     assert_eq!(foreign_keys[1].target_table(), "post");
     assert_eq!(foreign_keys[1].target_column(), "id");
+    assert_eq!(foreign_keys[1].on_delete(), SQLiteForeignKeyAction::Cascade);
 }
 
 #[test]

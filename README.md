@@ -56,16 +56,16 @@ query text
 
 Gelite's current scope includes:
 
-- query compilation: `select`, `insert`, and `update` parsing, semantic
+- query compilation: `select`, `insert`, `update`, and `delete` parsing, semantic
   resolution, SQLite query planning, and SQL rendering
-- native query execution for the current `select`, `insert`, and `update`
+- native query execution for the current `select`, `insert`, `update`, and `delete`
   subsets
 - initial schema planning: `.geli` parsing, SQLite schema planning, and DDL SQL
   rendering
 
 It can apply the initial schema to a SQLite database and execute the current
-query subset through the CLI REPL. It does not yet provide migration diffing,
-`delete`, a server, or a web UI.
+query subset through the CLI REPL. It does not yet provide migration diffing, a
+server, or a web UI.
 
 That is intentional for this stage. The first useful milestone is to make the
 language and schema pipelines correct and understandable before building
@@ -140,10 +140,10 @@ compiler step can be inspected independently.
 - `schema-model`: semantic schema catalog with object types, scalar fields,
   links, cardinality, deterministic references, and implicit `id` lookup.
 - `schema-parser`: lexer and parser for the current `.geli` schema syntax.
-- `query-ast`: unresolved syntax tree for select, insert, and update queries.
+- `query-ast`: unresolved syntax tree for select, insert, update, and delete queries.
 - `query-parser`: lexer and parser for the current query syntax, with source
   spans.
-- `query-resolver`: AST-to-IR semantic analysis for select, insert, and update.
+- `query-resolver`: AST-to-IR semantic analysis for select, insert, update, and delete.
 - `query-ir`: backend-independent Semantic IR for supported queries.
 - `sqlite-query-plan`: SQLite-specific structured query plans.
 - `sqlite-query-sqlgen`: SQL renderer that emits bind placeholders.
@@ -158,7 +158,6 @@ compiler step can be inspected independently.
 ## What is not implemented yet
 
 - `gelite query plan` and `gelite query run`.
-- Delete.
 - Migration diffing and migration history.
 - Runtime nested result shaping.
 - HTTP API.
@@ -227,10 +226,10 @@ starts the interactive REPL. With a query argument, it parses and renders that
 one query.
 
 `gelite repl --database <app.db>` loads the catalog from Gelite metadata tables
-inside the SQLite database and executes select, insert, and update queries
+inside the SQLite database and executes select, insert, update, and delete queries
 against that database. Without `--debug`, it prints result rows, a generated
-insert ID, or the number of updated rows. With `--debug`, it prints the rendered
-SQL and bind values before the result.
+insert ID, or an `affected_rows` count for update and delete. With `--debug`, it
+prints the rendered SQL and bind values before the result.
 
 Open the CLI REPL:
 
@@ -293,6 +292,17 @@ select Post {
 filter .title = "Reviewed"
 ```
 
+Delete posts selected through a linked object:
+
+```text
+delete Post
+filter .author.email = "alice@example.com"
+```
+
+Successful execution prints an `affected_rows` count. The filter is optional;
+`delete Post` without a filter deletes every `Post` row and does not prompt for
+confirmation.
+
 Run one query through the CLI:
 
 ```sh
@@ -352,5 +362,5 @@ standard expected from production foundations:
 - no direct AST-to-SQL shortcuts
 - documentation that says what exists now and what is still missing
 
-The next technical goals are to add the delete pipeline and shape nested SQLite
-results back into logical objects.
+The next technical goal is to shape nested SQLite results back into logical
+objects.

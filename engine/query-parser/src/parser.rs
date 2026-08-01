@@ -3,8 +3,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::{string::String, vec};
 use query_ast::{
-    ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, Expr, InExpr, InOp,
-    InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
+    ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, DeleteQuery, Expr, InExpr,
+    InOp, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem,
+    UpdateQuery,
 };
 
 /// Parses one MVP `select` statement from source text.
@@ -1030,5 +1031,22 @@ impl Parser<'_> {
         self.ensure_eof()?;
 
         Ok(UpdateQuery::new(target_type_name, filter, assignments))
+    }
+}
+
+/// Parses one MVP `delete` statement from source text.
+pub fn parse_delete(input: &str) -> Result<query_ast::DeleteQuery, ParseError> {
+    let tokens = lex(input).map_err(ParseError::from)?;
+    Parser::new(&tokens).parse_delete_stmt()
+}
+
+impl Parser<'_> {
+    fn parse_delete_stmt(&mut self) -> Result<DeleteQuery, ParseError> {
+        self.expect_keyword(Keyword::Delete)?;
+        let target_type_name = self.expect_ident()?;
+        let filter = self.parse_filter_clause()?;
+        self.ensure_eof()?;
+
+        Ok(DeleteQuery::new(target_type_name, filter))
     }
 }

@@ -164,8 +164,8 @@ Minimum fields:
 
 Minimum fields:
 
-- root object type
-- optional filter expression
+- resolved root object type
+- optional resolved filter; absence selects every object of the target type
 
 ## Shape Model
 

@@ -123,18 +123,7 @@ pub fn plan_insert(ir: &query_ir::InsertQuery) -> SQLiteInsertPlan {
 pub fn plan_update(ir: &query_ir::UpdateQuery) -> SQLiteUpdatePlan {
     let target_object_type = ir.target_object_type().clone();
     let assignments = ir.assignments().iter().map(plan_assignment).collect();
-    let mut reserved_aliases = vec![];
-    if let Some(filter) = ir.filter() {
-        collect_root_path_aliases_from_expr(filter, &mut reserved_aliases);
-    }
-    let mut join_aliases = SQLiteJoinAliasAllocator::new(reserved_aliases);
-    let (filter, joins) = match ir.filter() {
-        Some(expr) => {
-            let planned = plan_where_expr(expr, &mut join_aliases);
-            (Some(planned.expr), dedup_joins(planned.joins))
-        }
-        None => (None, vec![]),
-    };
+    let (filter, joins) = plan_mutation_filter(ir.filter());
 
     SQLiteUpdatePlan {
         target: SQLiteObjectSource {
@@ -146,6 +135,41 @@ pub fn plan_update(ir: &query_ir::UpdateQuery) -> SQLiteUpdatePlan {
         assignments,
         filter,
         joins,
+    }
+}
+
+/// Lowers a resolved delete query to a structured SQLite delete plan.
+pub fn plan_delete(ir: &query_ir::DeleteQuery) -> SQLiteDeletePlan {
+    let target_object_type = ir.target_object_type().clone();
+    let (filter, joins) = plan_mutation_filter(ir.filter());
+
+    SQLiteDeletePlan {
+        target: SQLiteObjectSource {
+            table_name: sqlite_table_name(&target_object_type),
+            alias: "root".to_string(),
+            id_column: "id".to_string(),
+            object_type: target_object_type,
+        },
+        filter,
+        joins,
+    }
+}
+
+fn plan_mutation_filter(
+    filter: Option<&query_ir::Expr>,
+) -> (Option<SQLiteWhereExpr>, Vec<SQLiteJoin>) {
+    let mut reserved_aliases = vec![];
+    if let Some(filter) = filter {
+        collect_root_path_aliases_from_expr(filter, &mut reserved_aliases);
+    }
+    let mut join_aliases = SQLiteJoinAliasAllocator::new(reserved_aliases);
+
+    match filter {
+        Some(expr) => {
+            let planned = plan_where_expr(expr, &mut join_aliases);
+            (Some(planned.expr), dedup_joins(planned.joins))
+        }
+        None => (None, vec![]),
     }
 }
 
@@ -246,6 +270,27 @@ impl SQLiteUpdatePlan {
 
     pub fn assignments(&self) -> &[SQLiteAssignment] {
         &self.assignments
+    }
+
+    pub fn filter(&self) -> Option<&SQLiteWhereExpr> {
+        self.filter.as_ref()
+    }
+
+    pub fn joins(&self) -> &[SQLiteJoin] {
+        &self.joins
+    }
+}
+
+/// Structured SQLite plan for deleting resolved objects.
+pub struct SQLiteDeletePlan {
+    target: SQLiteObjectSource,
+    filter: Option<SQLiteWhereExpr>,
+    joins: Vec<SQLiteJoin>,
+}
+
+impl SQLiteDeletePlan {
+    pub fn target(&self) -> &SQLiteObjectSource {
+        &self.target
     }
 
     pub fn filter(&self) -> Option<&SQLiteWhereExpr> {

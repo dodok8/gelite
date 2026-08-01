@@ -1,4 +1,4 @@
-use query_parser::{parse_select, parse_update};
+use query_parser::{parse_delete, parse_select, parse_update};
 use rustyline::{DefaultEditor, error::ReadlineError};
 use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
@@ -20,6 +20,7 @@ pub enum QueryKind {
     Select,
     Insert { generated_id: String },
     Update,
+    Delete,
 }
 
 type QueryExecutor<'a> =
@@ -99,7 +100,7 @@ fn run_repl(
     runtime: &mut ReplRuntime<'_>,
 ) -> Result<(), ReplError> {
     println!("gelite repl");
-    println!("Type a select, insert, or update query, or :quit / :exit to leave.");
+    println!("Type a select, insert, update, or delete query, or :quit / :exit to leave.");
     println!("Use balanced braces for multiline input.");
     println!("Press Ctrl-C twice in a row to leave.");
     if debug {
@@ -289,8 +290,21 @@ fn compile_query(
 
             (QueryKind::Update, sqlite_query_sqlgen::render_update(&plan))
         }
+        Some("delete") => {
+            let query = parse_delete(query_text).map_err(|error| {
+                eprintln!("failed to parse query: {error:#?}");
+                ReplError
+            })?;
+            let resolved = query_resolver::resolve_delete(catalog, &query).map_err(|error| {
+                eprintln!("failed to resolve query: {error:#?}");
+                ReplError
+            })?;
+            let plan = sqlite_query_plan::plan_delete(&resolved);
+
+            (QueryKind::Delete, sqlite_query_sqlgen::render_delete(&plan))
+        }
         _ => {
-            eprintln!("query must start with `select`, `insert`, or `update`");
+            eprintln!("query must start with `select`, `insert`, `update`, or `delete`");
             return Err(ReplError);
         }
     };
@@ -389,6 +403,21 @@ mod tests {
         assert_eq!(
             statement.sql(),
             "UPDATE \"post\" AS \"root\" SET \"title\" = ? WHERE \"root\".\"title\" = ?"
+        );
+    }
+
+    #[test]
+    fn compile_query_dispatches_delete_pipeline() {
+        let catalog = build_development_schema();
+
+        let (kind, statement) =
+            compile_query(&catalog, r#"delete Post filter .title = "Draft""#, false)
+                .expect("delete should compile");
+
+        assert_eq!(kind, QueryKind::Delete);
+        assert_eq!(
+            statement.sql(),
+            "DELETE FROM \"post\" AS \"root\" WHERE \"root\".\"title\" = ?"
         );
     }
 

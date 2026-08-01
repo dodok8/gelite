@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sqlite_query_sqlgen::{
-    SQLiteBindValue, SQLiteStatement, render_insert, render_select, render_update,
+    SQLiteBindValue, SQLiteStatement, render_delete, render_insert, render_select, render_update,
 };
 use sqlite_runner::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteRunner, apply_schema_statements,
@@ -209,6 +209,20 @@ fn execute_update(runner: &mut NativeSQLiteRunner, source: &str) -> i64 {
     runner
         .execute_update(&statement)
         .expect("update statement should execute")
+}
+
+fn execute_delete(runner: &mut NativeSQLiteRunner, source: &str) -> i64 {
+    let catalog = runner
+        .load_schema_catalog()
+        .expect("catalog should load from metadata");
+    let ast = query_parser::parse_delete(source).expect("delete should parse");
+    let ir = query_resolver::resolve_delete(&catalog, &ast).expect("delete should resolve");
+    let plan = sqlite_query_plan::plan_delete(&ir);
+    let statement = render_delete(&plan);
+
+    runner
+        .execute_delete(&statement)
+        .expect("delete statement should execute")
 }
 
 #[test]
@@ -676,5 +690,67 @@ fn update_pipeline_executes_related_filter_from_query_text() {
                 SQLiteCellValue::Text("Archived".to_string()),
             ],
         ]
+    );
+}
+
+#[test]
+fn delete_pipeline_executes_root_filter_from_query_text() {
+    let mut runner = setup_blog_database();
+
+    let affected_rows = execute_delete(&mut runner, r#"delete Post filter .id = "post-1""#);
+
+    assert_eq!(affected_rows, 1);
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT id FROM post ORDER BY id",
+            vec![],
+        ))
+        .expect("remaining posts should be readable");
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![SQLiteCellValue::Text("post-2".to_string())],
+            vec![SQLiteCellValue::Text("post-3".to_string())],
+        ]
+    );
+}
+
+#[test]
+fn delete_pipeline_executes_related_filter_from_query_text() {
+    let mut runner = setup_blog_database();
+
+    let affected_rows = execute_delete(
+        &mut runner,
+        r#"delete Post filter .author.email = "alice@example.com""#,
+    );
+
+    assert_eq!(affected_rows, 2);
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT id FROM post ORDER BY id",
+            vec![],
+        ))
+        .expect("remaining posts should be readable");
+    assert_eq!(
+        result.rows(),
+        &[vec![SQLiteCellValue::Text("post-3".to_string())]]
+    );
+}
+
+#[test]
+fn delete_pipeline_cascades_multi_link_rows() {
+    let mut runner = setup_blog_database();
+
+    execute_delete(&mut runner, r#"delete Post filter .id = "post-1""#);
+
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT target_id FROM user__posts ORDER BY target_id",
+            vec![],
+        ))
+        .expect("remaining join rows should be readable");
+    assert_eq!(
+        result.rows(),
+        &[vec![SQLiteCellValue::Text("post-2".to_string())]]
     );
 }

@@ -1,7 +1,7 @@
 use crate::{
-    ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, Expr, FunctionCallExpr,
-    InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, Path, PathStep, SelectQuery,
-    Shape, ShapeItem, UpdateQuery,
+    ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, DeleteQuery, Expr,
+    FunctionCallExpr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, Path,
+    PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
 };
 use alloc::string::ToString;
 use alloc::vec;
@@ -59,6 +59,19 @@ fn update_query_can_store_unresolved_filter_and_assignments_in_definition_order(
     assert_eq!(query.assignments().len(), 2);
     assert_eq!(query.assignments()[0].field_name(), "title");
     assert_eq!(query.assignments()[1].field_name(), "author");
+}
+
+#[test]
+fn delete_query_can_store_unresolved_target_and_filter() {
+    let filter = Expr::Compare(CompareExpr::new(
+        Expr::Path(Path::new(vec![PathStep::new("id")])),
+        CompareOp::Eq,
+        Expr::Literal(Literal::String("post-1".to_string())),
+    ));
+    let query = DeleteQuery::new("Post", Some(filter.clone()));
+
+    assert_eq!(query.target_type_name(), "Post");
+    assert_eq!(query.filter(), Some(&filter));
 }
 
 #[test]

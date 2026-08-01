@@ -162,16 +162,14 @@ fn run_repl_command(command: ReplCommand) -> Result<(), String> {
                             vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
                         ))
                     }
-                    repl::QueryKind::Update => {
-                        let affected_rows = runner
-                            .execute_update(statement)
-                            .map_err(|error| error.message().to_string())?;
-
-                        Ok(sqlite_runner::SQLiteQueryResult::new(
-                            vec!["affected_rows".to_string()],
-                            vec![vec![sqlite_runner::SQLiteCellValue::Integer(affected_rows)]],
-                        ))
-                    }
+                    repl::QueryKind::Update => runner
+                        .execute_update(statement)
+                        .map(affected_rows_result)
+                        .map_err(|error| error.message().to_string()),
+                    repl::QueryKind::Delete => runner
+                        .execute_delete(statement)
+                        .map(affected_rows_result)
+                        .map_err(|error| error.message().to_string()),
                 };
 
             repl::run_with_executor(&catalog, options, &mut executor)
@@ -179,6 +177,13 @@ fn run_repl_command(command: ReplCommand) -> Result<(), String> {
         None => repl::run_with_catalog(&catalog, options),
     }
     .map_err(|_| "gelite repl failed".to_string())
+}
+
+fn affected_rows_result(affected_rows: i64) -> sqlite_runner::SQLiteQueryResult {
+    sqlite_runner::SQLiteQueryResult::new(
+        vec!["affected_rows".to_string()],
+        vec![vec![sqlite_runner::SQLiteCellValue::Integer(affected_rows)]],
+    )
 }
 
 fn path_to_str(path: &Path) -> Result<&str, String> {

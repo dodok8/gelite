@@ -17,8 +17,9 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_query_plan::{
-    SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteGeneratedIdStrategy, SQLiteInOp,
-    SQLiteInsertPlan, SQLiteJoinKind, SQLiteLiteral, SQLiteOrderDirection, SQLiteSelectPlan,
+    SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
+    SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInsertPlan, SQLiteJoin, SQLiteJoinKind,
+    SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteSelectPlan,
     SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr,
     SQLiteWhereExpr,
 };
@@ -120,24 +121,66 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         )
     };
 
-    if let Some(filter) = plan.filter() {
-        let filter_sql = render_where_expr(filter, &mut bind_values);
-
-        if plan.joins().is_empty() {
-            sql.push_str(&format!(" WHERE {filter_sql}"));
-        } else {
-            let joins = render_joins(plan.joins()).join(" ");
-            sql.push_str(&format!(
-                " WHERE {} IN (SELECT {} FROM {} AS {} {joins} WHERE {filter_sql})",
-                quote_identifier(target.id_column()),
-                render_qualified_identifier(target.alias(), target.id_column()),
-                quote_identifier(target.table_name()),
-                quote_identifier(target.alias()),
-            ));
-        }
-    }
+    append_mutation_filter(
+        &mut sql,
+        target,
+        plan.filter(),
+        plan.joins(),
+        &mut bind_values,
+    );
 
     SQLiteStatement { sql, bind_values }
+}
+
+/// Renders a structured SQLite delete plan into SQL text and bind values.
+pub fn render_delete(plan: &SQLiteDeletePlan) -> SQLiteStatement {
+    let target = plan.target();
+    let mut sql = if plan.filter().is_some() && plan.joins().is_empty() {
+        format!(
+            "DELETE FROM {} AS {}",
+            quote_identifier(target.table_name()),
+            quote_identifier(target.alias())
+        )
+    } else {
+        format!("DELETE FROM {}", quote_identifier(target.table_name()))
+    };
+    let mut bind_values = Vec::new();
+
+    append_mutation_filter(
+        &mut sql,
+        target,
+        plan.filter(),
+        plan.joins(),
+        &mut bind_values,
+    );
+
+    SQLiteStatement { sql, bind_values }
+}
+
+fn append_mutation_filter(
+    sql: &mut String,
+    target: &SQLiteObjectSource,
+    filter: Option<&SQLiteWhereExpr>,
+    joins: &[SQLiteJoin],
+    bind_values: &mut Vec<SQLiteBindValue>,
+) {
+    let Some(filter) = filter else {
+        return;
+    };
+    let filter_sql = render_where_expr(filter, bind_values);
+
+    if joins.is_empty() {
+        sql.push_str(&format!(" WHERE {filter_sql}"));
+    } else {
+        let joins = render_joins(joins).join(" ");
+        sql.push_str(&format!(
+            " WHERE {} IN (SELECT {} FROM {} AS {} {joins} WHERE {filter_sql})",
+            quote_identifier(target.id_column()),
+            render_qualified_identifier(target.alias(), target.id_column()),
+            quote_identifier(target.table_name()),
+            quote_identifier(target.alias()),
+        ));
+    }
 }
 
 fn render_select_clause(plan: &SQLiteSelectPlan) -> (String, Vec<SQLiteBindValue>) {

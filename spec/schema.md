@@ -140,8 +140,8 @@ enums are explicitly out of scope for the first milestone.
 Built-in scalar type names are reserved and may not be reused as object type
 names.
 
-`update` and `set` are also reserved because SQLite recognizes both as
-keywords and the MVP schema language does not support quoted identifiers.
+`update`, `set`, and `delete` are also reserved because SQLite recognizes them
+as keywords and the MVP schema language does not support quoted identifiers.
 
 ## Relation Rules
 

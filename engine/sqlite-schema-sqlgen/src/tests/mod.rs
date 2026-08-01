@@ -11,9 +11,9 @@ use schema_model::{
     SingleCardinality,
 };
 use sqlite_schema_plan::{
-    SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyPlan, SQLiteIndexPlan, SQLitePrimaryKeyPlan,
-    SQLiteTablePlan, SQLiteValuePlan, plan_catalog_field_inserts, plan_catalog_object_inserts,
-    plan_initial_schema,
+    SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyAction, SQLiteForeignKeyPlan,
+    SQLiteIndexPlan, SQLitePrimaryKeyPlan, SQLiteTablePlan, SQLiteValuePlan,
+    plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
 };
 
 #[test]
@@ -26,7 +26,7 @@ fn render_create_table_for_catalog_fields_uses_composite_primary_key() {
 
     assert_eq!(
         sql,
-        "CREATE TABLE \"_engine_catalog_fields\" (\"object_id\" INTEGER NOT NULL, \"field_id\" INTEGER NOT NULL, \"name\" TEXT NOT NULL, \"field_kind\" TEXT NOT NULL, \"cardinality\" TEXT NOT NULL, \"scalar_type\" TEXT NULL, \"target_object_id\" INTEGER NULL, \"is_implicit\" INTEGER NOT NULL, \"is_unique\" INTEGER NOT NULL, PRIMARY KEY (\"object_id\", \"field_id\"), FOREIGN KEY (\"object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\"), FOREIGN KEY (\"target_object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\"))"
+        "CREATE TABLE \"_engine_catalog_fields\" (\"object_id\" INTEGER NOT NULL, \"field_id\" INTEGER NOT NULL, \"name\" TEXT NOT NULL, \"field_kind\" TEXT NOT NULL, \"cardinality\" TEXT NOT NULL, \"scalar_type\" TEXT NULL, \"target_object_id\" INTEGER NULL, \"is_implicit\" INTEGER NOT NULL, \"is_unique\" INTEGER NOT NULL, PRIMARY KEY (\"object_id\", \"field_id\"), FOREIGN KEY (\"object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\") ON DELETE RESTRICT, FOREIGN KEY (\"target_object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\") ON DELETE RESTRICT)"
     );
 }
 
@@ -53,7 +53,32 @@ fn render_create_table_quotes_identifiers() {
 
     assert_eq!(
         sql,
-        "CREATE TABLE \"group\" (\"select\" TEXT NOT NULL, \"quote\"\"field\" INTEGER NULL, PRIMARY KEY (\"select\", \"quote\"\"field\"), FOREIGN KEY (\"quote\"\"field\") REFERENCES \"target\"\"table\"(\"id\"))"
+        "CREATE TABLE \"group\" (\"select\" TEXT NOT NULL, \"quote\"\"field\" INTEGER NULL, PRIMARY KEY (\"select\", \"quote\"\"field\"), FOREIGN KEY (\"quote\"\"field\") REFERENCES \"target\"\"table\"(\"id\") ON DELETE RESTRICT)"
+    );
+}
+
+#[test]
+fn render_create_table_renders_foreign_key_delete_action() {
+    let table = SQLiteTablePlan::new_with_foreign_keys(
+        "user__posts",
+        vec![SQLiteColumnPlan::new(
+            "target_id",
+            SQLiteAffinity::Text,
+            false,
+            false,
+            false,
+        )],
+        vec![SQLiteForeignKeyPlan::new_with_on_delete(
+            "target_id",
+            "post",
+            "id",
+            SQLiteForeignKeyAction::Cascade,
+        )],
+    );
+
+    assert_eq!(
+        render_create_table(&table),
+        "CREATE TABLE \"user__posts\" (\"target_id\" TEXT NOT NULL, FOREIGN KEY (\"target_id\") REFERENCES \"post\"(\"id\") ON DELETE CASCADE)"
     );
 }
 

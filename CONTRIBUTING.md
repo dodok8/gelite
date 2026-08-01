@@ -58,12 +58,12 @@ Current implemented areas include:
   links, cardinality, deterministic references, and implicit `id` lookup.
 - `engine/schema-parser`: lexer and parser for the current `.geli` schema
   syntax.
-- `engine/query-ast`: unresolved syntax tree for select, insert, and update
+- `engine/query-ast`: unresolved syntax tree for select, insert, update, and delete
   queries.
 - `engine/query-parser`: lexer and parser for the current query syntax with
   source spans.
-- `engine/query-resolver`: AST-to-IR semantic analysis for select, insert, and
-  update queries.
+- `engine/query-resolver`: AST-to-IR semantic analysis for select, insert,
+  update, and delete queries.
 - `engine/query-ir`: backend-independent Semantic IR for supported queries.
 - `engine/sqlite-query-plan`: SQLite-specific structured query plans.
 - `engine/sqlite-query-sqlgen`: SQL renderer for query plans.
@@ -77,8 +77,8 @@ Current implemented areas include:
 - `tests/query-pipeline`: cross-crate query pipeline tests.
 
 The project can parse schema and query sources, plan and apply an initial
-SQLite schema, and execute the current select, insert, and update subsets
-through CLI/REPL workflows. It does not yet provide delete, migration diffing
+SQLite schema, and execute the current select, insert, update, and delete
+subsets through CLI/REPL workflows. It does not yet provide migration diffing
 and migration history, nested result shaping, an HTTP server, or a web UI.
 
 ## Issue workflow
@@ -163,11 +163,7 @@ request.
 2. Use AI output as a draft, not as authority.
 3. Verify the change against the relevant spec, plan, tests, and code.
 4. Disclose AI usage in the pull request template.
-5. Add the required commit trailer:
-
-   ```text
-   Assisted-by: Codex:gpt-5.5
-   ```
+5. Add the commit trailer required by [AI_POLICY.md](AI_POLICY.md).
 
 ## Document changes
 
@@ -473,13 +469,6 @@ explain why code tests were not needed.
 
 AI tools are allowed in this repository, but AI output is not a substitute for
 understanding, testing, or maintainership. Follow [AI_POLICY.md](AI_POLICY.md).
-
-Commits that include Codex-assisted design, implementation, review, or
-documentation must include this trailer:
-
-```text
-Assisted-by: Codex:gpt-5.5
-```
 
 Use professional commit messages. Do not use conversational or character voice
 in commits, code, comments, docs, JSON, YAML, SQL, or other artifacts.
