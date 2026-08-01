@@ -89,3 +89,31 @@ fn parser_rejects_trailing_transaction_command_tokens() {
         );
     }
 }
+
+#[test]
+fn parser_rejects_empty_transaction_command() {
+    let error = parse_transaction_command("").expect_err("empty command should fail");
+
+    assert_eq!(
+        error.kind(),
+        &ParseErrorKind::UnexpectedEof {
+            expected: "transaction command"
+        }
+    );
+    assert_eq!(error.span(), None);
+}
+
+#[test]
+fn parser_rejects_non_transaction_command() {
+    let tokens = lex("transaction").expect("input should lex");
+    let error = parse_transaction_command("transaction")
+        .expect_err("non-command transaction keyword should fail");
+
+    assert_eq!(
+        error.kind(),
+        &ParseErrorKind::UnexpectedToken {
+            expected: "transaction command"
+        }
+    );
+    assert_eq!(error.span(), Some(tokens[0].span()));
+}
