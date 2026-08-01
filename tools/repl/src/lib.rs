@@ -1,4 +1,5 @@
-use query_parser::{parse_delete, parse_select, parse_update};
+pub use query_ast::TransactionCommand;
+use query_parser::{parse_delete, parse_select, parse_transaction_command, parse_update};
 use rustyline::{DefaultEditor, error::ReadlineError};
 use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
@@ -23,8 +24,16 @@ pub enum QueryKind {
     Delete,
 }
 
+pub enum ExecutionRequest {
+    Query {
+        kind: QueryKind,
+        statement: SQLiteStatement,
+    },
+    Transaction(TransactionCommand),
+}
+
 type QueryExecutor<'a> =
-    dyn FnMut(QueryKind, &SQLiteStatement) -> Result<SQLiteQueryResult, String> + 'a;
+    dyn FnMut(ExecutionRequest) -> Result<Option<SQLiteQueryResult>, String> + 'a;
 
 pub fn run(options: ReplOptions) -> Result<(), ReplError> {
     let catalog = build_development_schema();
@@ -62,7 +71,7 @@ enum ReplLoopAction {
 impl ReplRuntime<'_> {
     fn run(&mut self, catalog: &SchemaCatalog, options: ReplOptions) -> Result<(), ReplError> {
         match options.query {
-            Some(query_text) => self.inspect_query(catalog, &query_text, options.debug),
+            Some(query_text) => self.inspect_query(catalog, &query_text, options.debug, false),
             None => self.run_repl(catalog, options.debug),
         }
     }
@@ -76,18 +85,33 @@ impl ReplRuntime<'_> {
         catalog: &SchemaCatalog,
         query_text: &str,
         debug: bool,
+        interactive: bool,
     ) -> Result<(), ReplError> {
-        let (kind, statement) = compile_query(catalog, query_text, debug)?;
+        let request = compile_input(catalog, query_text, debug)?;
+
+        if matches!(&request, ExecutionRequest::Transaction(_))
+            && (!interactive || self.executor.is_none())
+        {
+            eprintln!("transaction commands require a database-backed interactive REPL");
+            return Err(ReplError);
+        }
 
         match self.executor.as_deref_mut() {
             Some(executor) => {
-                let result = executor(kind, &statement).map_err(|error| {
+                let result = executor(request).map_err(|error| {
                     eprintln!("failed to execute query: {error}");
                     ReplError
                 })?;
-                print_query_result(&result);
+                if let Some(result) = result {
+                    print_query_result(&result);
+                }
             }
-            None => println!("{}", statement.sql()),
+            None => {
+                let ExecutionRequest::Query { statement, .. } = request else {
+                    unreachable!("transaction commands are rejected without an executor")
+                };
+                println!("{}", statement.sql());
+            }
         }
 
         Ok(())
@@ -176,7 +200,7 @@ fn handle_repl_line(
 
     if !query_text.is_empty() {
         let _ = editor.add_history_entry(query_text.as_str());
-        let _ = runtime.inspect_query(catalog, &query_text, debug);
+        let _ = runtime.inspect_query(catalog, &query_text, debug, true);
     }
 
     Ok(ReplLoopAction::Continue)
@@ -315,6 +339,23 @@ fn compile_query(
     }
 
     Ok((kind, statement))
+}
+
+fn compile_input(
+    catalog: &SchemaCatalog,
+    input: &str,
+    debug: bool,
+) -> Result<ExecutionRequest, ReplError> {
+    match input.split_whitespace().next() {
+        Some("start" | "commit" | "rollback") => parse_transaction_command(input)
+            .map(ExecutionRequest::Transaction)
+            .map_err(|error| {
+                eprintln!("failed to parse transaction command: {error:#?}");
+                ReplError
+            }),
+        _ => compile_query(catalog, input, debug)
+            .map(|(kind, statement)| ExecutionRequest::Query { kind, statement }),
+    }
 }
 
 fn print_query_result(result: &SQLiteQueryResult) {

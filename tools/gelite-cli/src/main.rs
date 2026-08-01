@@ -146,31 +146,41 @@ fn run_repl_command(command: ReplCommand) -> Result<(), String> {
 
     match runner.as_mut() {
         Some(runner) => {
-            let mut executor =
-                |kind: repl::QueryKind, statement: &sqlite_query_sqlgen::SQLiteStatement| match kind
-                {
+            let mut executor = |request: repl::ExecutionRequest| match request {
+                repl::ExecutionRequest::Query { kind, statement } => match kind {
                     repl::QueryKind::Select => runner
-                        .execute_select(statement)
+                        .execute_select(&statement)
+                        .map(Some)
                         .map_err(|error| error.message().to_string()),
                     repl::QueryKind::Insert { generated_id } => {
                         runner
-                            .execute_insert(statement)
+                            .execute_insert(&statement)
                             .map_err(|error| error.message().to_string())?;
 
-                        Ok(sqlite_runner::SQLiteQueryResult::new(
+                        Ok(Some(sqlite_runner::SQLiteQueryResult::new(
                             vec!["id".to_string()],
                             vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
-                        ))
+                        )))
                     }
                     repl::QueryKind::Update => runner
-                        .execute_update(statement)
+                        .execute_update(&statement)
                         .map(affected_rows_result)
+                        .map(Some)
                         .map_err(|error| error.message().to_string()),
                     repl::QueryKind::Delete => runner
-                        .execute_delete(statement)
+                        .execute_delete(&statement)
                         .map(affected_rows_result)
+                        .map(Some)
                         .map_err(|error| error.message().to_string()),
-                };
+                },
+                repl::ExecutionRequest::Transaction(command) => match command {
+                    repl::TransactionCommand::Start => runner.begin_transaction(),
+                    repl::TransactionCommand::Commit => runner.commit_transaction(),
+                    repl::TransactionCommand::Rollback => runner.rollback_transaction(),
+                }
+                .map(|()| None)
+                .map_err(|error| error.message().to_string()),
+            };
 
             repl::run_with_executor(&catalog, options, &mut executor)
         }
