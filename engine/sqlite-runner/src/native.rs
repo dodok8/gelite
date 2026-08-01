@@ -44,6 +44,18 @@ impl NativeSQLiteRunner {
         Ok(runner)
     }
 
+    pub fn begin_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("BEGIN")
+    }
+
+    pub fn commit_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("COMMIT")
+    }
+
+    pub fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("ROLLBACK")
+    }
+
     pub fn table_exists(&self, table_name: &str) -> Result<bool, SQLiteRunnerError> {
         let statement = self
             .connection
