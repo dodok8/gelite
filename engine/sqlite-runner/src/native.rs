@@ -239,17 +239,32 @@ impl NativeSQLiteRunner {
         &mut self,
         statement: &sqlite_query_sqlgen::SQLiteStatement,
     ) -> Result<i64, SQLiteRunnerError> {
+        self.execute_mutation(statement, "UPDATE")
+    }
+
+    pub fn execute_delete(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+    ) -> Result<i64, SQLiteRunnerError> {
+        self.execute_mutation(statement, "DELETE")
+    }
+
+    fn execute_mutation(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+        operation: &str,
+    ) -> Result<i64, SQLiteRunnerError> {
         let prepared = self
             .connection
             .prepare_v2(statement.sql())
-            .map_err(|_| self.connection_error("prepare UPDATE"))?;
+            .map_err(|_| self.connection_error(&format!("prepare {operation}")))?;
 
         self.bind_query_values(&prepared, statement.bind_values())?;
 
         match prepared.step() {
             Ok(ResultCode::DONE) => Ok(self.connection.changes64()),
-            Ok(result) => Err(self.result_error("step UPDATE", result)),
-            Err(result) => Err(self.result_error("step UPDATE", result)),
+            Ok(result) => Err(self.result_error(&format!("step {operation}"), result)),
+            Err(result) => Err(self.result_error(&format!("step {operation}"), result)),
         }
     }
 

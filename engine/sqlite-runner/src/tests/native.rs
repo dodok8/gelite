@@ -187,6 +187,113 @@ fn native_runner_executes_update_and_returns_affected_rows() {
 }
 
 #[test]
+fn native_runner_executes_delete_and_returns_affected_rows() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+
+    runner
+        .execute("CREATE TABLE post (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
+        .expect("post table should be created");
+    runner
+        .execute("INSERT INTO post VALUES ('post-1', 'Draft'), ('post-2', 'Published')")
+        .expect("posts should be inserted");
+    let statement = sqlite_query_sqlgen::SQLiteStatement::new(
+        "DELETE FROM post WHERE title = ?",
+        vec![sqlite_query_sqlgen::SQLiteBindValue::String(
+            "Draft".to_string(),
+        )],
+    );
+
+    let affected_rows = runner
+        .execute_delete(&statement)
+        .expect("delete should execute");
+
+    assert_eq!(affected_rows, 1);
+}
+
+#[test]
+fn native_runner_preserves_delete_restrict_errors() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+
+    runner
+        .execute("CREATE TABLE user (id TEXT PRIMARY KEY)")
+        .expect("user table should be created");
+    runner
+        .execute(
+            "CREATE TABLE post (
+                id TEXT PRIMARY KEY,
+                author_id TEXT NOT NULL,
+                FOREIGN KEY (author_id) REFERENCES user(id) ON DELETE RESTRICT
+            )",
+        )
+        .expect("post table should be created");
+    runner
+        .execute("INSERT INTO user VALUES ('user-1')")
+        .expect("user should be inserted");
+    runner
+        .execute("INSERT INTO post VALUES ('post-1', 'user-1')")
+        .expect("post should be inserted");
+    let statement = sqlite_query_sqlgen::SQLiteStatement::new(
+        "DELETE FROM user WHERE id = ?",
+        vec![sqlite_query_sqlgen::SQLiteBindValue::String(
+            "user-1".to_string(),
+        )],
+    );
+
+    runner
+        .execute_delete(&statement)
+        .expect_err("referenced user delete should fail");
+}
+
+#[test]
+fn native_runner_delete_cascades_join_table_rows() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+
+    runner
+        .execute("CREATE TABLE user (id TEXT PRIMARY KEY)")
+        .expect("user table should be created");
+    runner
+        .execute("CREATE TABLE post (id TEXT PRIMARY KEY)")
+        .expect("post table should be created");
+    runner
+        .execute(
+            "CREATE TABLE user__posts (
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES user(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_id) REFERENCES post(id) ON DELETE CASCADE
+            )",
+        )
+        .expect("join table should be created");
+    runner
+        .execute("INSERT INTO user VALUES ('user-1')")
+        .expect("user should be inserted");
+    runner
+        .execute("INSERT INTO post VALUES ('post-1')")
+        .expect("post should be inserted");
+    runner
+        .execute("INSERT INTO user__posts VALUES ('user-1', 'post-1')")
+        .expect("join row should be inserted");
+    let statement = sqlite_query_sqlgen::SQLiteStatement::new(
+        "DELETE FROM post WHERE id = ?",
+        vec![sqlite_query_sqlgen::SQLiteBindValue::String(
+            "post-1".to_string(),
+        )],
+    );
+
+    runner
+        .execute_delete(&statement)
+        .expect("post delete should execute");
+    let result = runner
+        .execute_select(&sqlite_query_sqlgen::SQLiteStatement::new(
+            "SELECT source_id FROM user__posts",
+            vec![],
+        ))
+        .expect("join table should remain readable");
+
+    assert!(result.rows().is_empty());
+}
+
+#[test]
 fn native_runner_can_apply_rendered_initial_schema() {
     let statements = rendered_post_schema_statements();
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
