@@ -327,14 +327,15 @@ Optional future indexes can be introduced later by schema directives.
 
 ## Deletes and Referential Behavior
 
-The MVP should choose one explicit policy and document it consistently.
-
-Recommended first policy:
+The MVP uses one explicit policy:
 
 - single relations use SQLite foreign keys with `ON DELETE RESTRICT`
 - join tables delete rows with `ON DELETE CASCADE` from either side
 
-This is conservative and avoids hidden object removal.
+This is conservative and avoids hidden object removal. The native runner
+returns restrictive constraint failures to the caller and reports the affected
+object-row count after a successful delete. Join-table cascade cleanup does not
+increase that count.
 
 ## Canonical Example
 

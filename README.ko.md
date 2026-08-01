@@ -55,15 +55,15 @@ query text
 
 Gelite의 현재 범위는 다음과 같습니다.
 
-- query compilation: `select`, `insert`, `update` parsing, semantic
+- query compilation: `select`, `insert`, `update`, `delete` parsing, semantic
   resolution, SQLite query planning, SQL rendering
-- 현재 `select`, `insert`, `update` subset의 native query execution
+- 현재 `select`, `insert`, `update`, `delete` subset의 native query execution
 - initial schema planning: `.geli` parsing, SQLite schema planning, DDL SQL
   rendering
 
 Initial schema를 SQLite database에 적용할 수 있고, 현재 query subset은 CLI
-REPL을 통해 실행할 수 있습니다. 아직 migration diffing, `delete`, server,
-web UI는 없습니다.
+REPL을 통해 실행할 수 있습니다. 아직 migration diffing, server, web UI는
+없습니다.
 
 이건 현재 단계의 의도입니다. runtime feature를 올리기 전에 language pipeline과
 schema pipeline이 정확하고 이해 가능한지 먼저 검증하는 것이 첫 번째 유효한
@@ -137,9 +137,9 @@ LIMIT 10
 - `schema-model`: object type, scalar field, link, cardinality, deterministic
   reference, implicit `id` lookup을 가진 semantic schema catalog.
 - `schema-parser`: 현재 `.geli` schema syntax용 lexer/parser.
-- `query-ast`: select, insert, update query용 unresolved syntax tree.
+- `query-ast`: select, insert, update, delete query용 unresolved syntax tree.
 - `query-parser`: 현재 query syntax용 lexer/parser와 source span.
-- `query-resolver`: select, insert, update용 AST-to-IR semantic analysis.
+- `query-resolver`: select, insert, update, delete용 AST-to-IR semantic analysis.
 - `query-ir`: 지원되는 query용 backend-independent Semantic IR.
 - `sqlite-query-plan`: SQLite-specific structured query plan.
 - `sqlite-query-sqlgen`: bind placeholder 기반 SQL renderer.
@@ -154,7 +154,6 @@ LIMIT 10
 ## 아직 구현되지 않은 것
 
 - `gelite query plan`, `gelite query run`.
-- Delete.
 - Migration diffing과 migration history.
 - Runtime nested result shaping.
 - HTTP API.
@@ -223,9 +222,10 @@ interactive REPL을 시작하고, query 인자가 있으면 그 query 하나를 
 렌더링합니다.
 
 `gelite repl --database <app.db>`는 SQLite database 안의 Gelite metadata table에서
-catalog를 읽고, select, insert, update query를 실제 database에 실행합니다.
-`--debug`가 없으면 result row, 생성된 insert ID 또는 update된 row 수를 출력하고,
-`--debug`가 있으면 rendered SQL과 bind value를 먼저 출력합니다.
+catalog를 읽고, select, insert, update, delete query를 실제 database에 실행합니다.
+`--debug`가 없으면 result row, 생성된 insert ID 또는 update/delete의
+`affected_rows`를 출력하고, `--debug`가 있으면 rendered SQL과 bind value를 먼저
+출력합니다.
 
 CLI REPL 실행:
 
@@ -286,6 +286,16 @@ select Post {
 }
 filter .title = "Reviewed"
 ```
+
+Link된 object를 기준으로 Post delete:
+
+```text
+delete Post
+filter .author.email = "alice@example.com"
+```
+
+성공하면 `affected_rows`가 출력됩니다. Filter는 선택 사항이므로 filter 없는
+`delete Post`는 확인 질문 없이 모든 `Post` row를 삭제합니다.
 
 query 하나 실행:
 
