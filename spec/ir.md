@@ -164,12 +164,8 @@ Minimum fields:
 
 Minimum fields:
 
-- root object type
-- optional filter expression
-
-The root object type is a stable schema reference, not a source-level name.
-The optional filter has already been resolved and type-checked against that
-object type. An absent filter means every object of the target type.
+- resolved root object type
+- optional resolved filter; absence selects every object of the target type
 
 ## Shape Model
 

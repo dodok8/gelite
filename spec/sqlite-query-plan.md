@@ -469,10 +469,9 @@ Minimum fields:
 - optional predicate
 - predicate joins
 
-Root-only predicates are rendered directly against the delete target. A
-predicate that traverses declared single links selects target identities in a
-subquery using the same strategy as joined updates. Filter bind order follows
-the planned expression order.
+- root-only predicates render directly against the target
+- joined predicates select target identities as filtered updates do
+- filter binds follow expression order
 
 Delete-side cleanup for `multi link` rows is handled by SQLite foreign key
 rules, not by extra logical mutation nodes in the MVP.

@@ -577,12 +577,11 @@ delete_stmt     := "delete" type_ref filter_clause?
 ### Delete Semantics
 
 - The target must be an object type.
-- `filter` is optional, but omitting it deletes every row.
+- `filter` uses the `select` and `update` expression surface; omitting it deletes
+  every row.
 - Relation cleanup behavior is defined by the storage model, not query syntax.
-- The implemented MVP accepts the same filter expression surface as `select`
-  and `update`, but does not accept `order by`, `offset`, or `limit`.
-- Native CLI and REPL execution reports the number of deleted rows as
-  `affected_rows`; deleted-object result shaping is not implemented.
+- The MVP omits `order by`, `offset`, `limit`, and deleted-object results;
+  CLI/REPL execution reports `affected_rows`.
 
 ## Values
 

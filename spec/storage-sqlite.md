@@ -332,10 +332,7 @@ The MVP uses one explicit policy:
 - single relations use SQLite foreign keys with `ON DELETE RESTRICT`
 - join tables delete rows with `ON DELETE CASCADE` from either side
 
-This is conservative and avoids hidden object removal. The native runner
-returns restrictive constraint failures to the caller and reports the affected
-object-row count after a successful delete. Join-table cascade cleanup does not
-increase that count.
+Constraint failures are returned to the caller.
 
 ## Canonical Example
 
