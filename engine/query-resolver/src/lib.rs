@@ -193,6 +193,24 @@ pub fn resolve_update(
     ))
 }
 
+/// Resolves a parsed delete query against a validated schema catalog.
+pub fn resolve_delete(
+    catalog: &schema_model::SchemaCatalog,
+    query: &query_ast::DeleteQuery,
+) -> Result<query_ir::DeleteQuery, ResolveError> {
+    let target_object_type = catalog
+        .find_type_ref(query.target_type_name())
+        .ok_or_else(|| ResolveError::UnknownObjectType {
+            name: query.target_type_name().to_string(),
+        })?;
+    let filter = query
+        .filter()
+        .map(|expr| resolve_expr(catalog, &target_object_type, expr))
+        .transpose()?;
+
+    Ok(query_ir::DeleteQuery::new(target_object_type, filter))
+}
+
 fn resolve_assignments(
     catalog: &schema_model::SchemaCatalog,
     target_object_type: &schema_model::ObjectTypeRef,
