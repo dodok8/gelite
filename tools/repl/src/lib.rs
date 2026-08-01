@@ -1,6 +1,6 @@
 pub use query_ast::TransactionCommand;
 use query_parser::{parse_delete, parse_select, parse_transaction_command, parse_update};
-use rustyline::{DefaultEditor, error::ReadlineError};
+use rustyline::{Cmd, DefaultEditor, KeyCode, KeyEvent, Modifiers, error::ReadlineError};
 use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
     SingleCardinality,
@@ -125,7 +125,9 @@ fn run_repl(
 ) -> Result<(), ReplError> {
     println!("gelite repl");
     println!("Type a query, start transaction, commit, rollback, or :quit / :exit to leave.");
-    println!("Use balanced braces for multiline input.");
+    println!(
+        "Press Alt+Enter (Opt+Enter on macOS) to insert a newline; balanced braces continue automatically."
+    );
     println!("Press Ctrl-C twice in a row to leave.");
     if debug {
         println!("Debug output is enabled.");
@@ -135,6 +137,7 @@ fn run_repl(
         eprintln!("failed to initialize line editor: {error}");
         ReplError
     })?;
+    editor.bind_sequence(KeyEvent(KeyCode::Enter, Modifiers::ALT), Cmd::Newline);
     let mut pending = String::new();
     let mut interrupt_count = 0;
 
