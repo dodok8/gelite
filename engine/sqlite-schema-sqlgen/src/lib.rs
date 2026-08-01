@@ -14,9 +14,9 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_schema_plan::{
-    SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyPlan, SQLiteIndexPlan, SQLiteInsertPlan,
-    SQLitePrimaryKeyPlan, SQLiteSchemaPlan, SQLiteTablePlan, SQLiteValuePlan,
-    plan_catalog_field_inserts, plan_catalog_object_inserts,
+    SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyAction, SQLiteForeignKeyPlan,
+    SQLiteIndexPlan, SQLiteInsertPlan, SQLitePrimaryKeyPlan, SQLiteSchemaPlan, SQLiteTablePlan,
+    SQLiteValuePlan, plan_catalog_field_inserts, plan_catalog_object_inserts,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -89,10 +89,14 @@ fn render_primary_key(primary_key: &SQLitePrimaryKeyPlan) -> String {
 
 fn render_foreign_key(foreign_key: &SQLiteForeignKeyPlan) -> String {
     format!(
-        "FOREIGN KEY ({}) REFERENCES {}({})",
+        "FOREIGN KEY ({}) REFERENCES {}({}) ON DELETE {}",
         quote_identifier(foreign_key.column_name()),
         quote_identifier(foreign_key.target_table()),
         quote_identifier(foreign_key.target_column()),
+        match foreign_key.on_delete() {
+            SQLiteForeignKeyAction::Restrict => "RESTRICT",
+            SQLiteForeignKeyAction::Cascade => "CASCADE",
+        }
     )
 }
 

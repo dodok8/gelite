@@ -453,8 +453,18 @@ fn plan_relation_tables(catalog: &SchemaCatalog) -> Vec<SQLiteTablePlan> {
                                 "target_id".to_string(),
                             ])),
                             vec![
-                                SQLiteForeignKeyPlan::new("source_id", source_table, "id"),
-                                SQLiteForeignKeyPlan::new("target_id", target_table, "id"),
+                                SQLiteForeignKeyPlan::new_with_on_delete(
+                                    "source_id",
+                                    source_table,
+                                    "id",
+                                    SQLiteForeignKeyAction::Cascade,
+                                ),
+                                SQLiteForeignKeyPlan::new_with_on_delete(
+                                    "target_id",
+                                    target_table,
+                                    "id",
+                                    SQLiteForeignKeyAction::Cascade,
+                                ),
                             ],
                         ))
                     }
@@ -655,11 +665,19 @@ impl SQLiteColumnPlan {
     }
 }
 
+/// Action applied when a referenced row is deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SQLiteForeignKeyAction {
+    Restrict,
+    Cascade,
+}
+
 /// Planned table-level foreign key before DDL rendering.
 pub struct SQLiteForeignKeyPlan {
     column_name: String,
     target_table: String,
     target_column: String,
+    on_delete: SQLiteForeignKeyAction,
 }
 
 impl SQLiteForeignKeyPlan {
@@ -668,10 +686,25 @@ impl SQLiteForeignKeyPlan {
         target_table: impl Into<String>,
         target_column: impl Into<String>,
     ) -> Self {
+        Self::new_with_on_delete(
+            column_name,
+            target_table,
+            target_column,
+            SQLiteForeignKeyAction::Restrict,
+        )
+    }
+
+    pub fn new_with_on_delete(
+        column_name: impl Into<String>,
+        target_table: impl Into<String>,
+        target_column: impl Into<String>,
+        on_delete: SQLiteForeignKeyAction,
+    ) -> Self {
         Self {
             column_name: column_name.into(),
             target_table: target_table.into(),
             target_column: target_column.into(),
+            on_delete,
         }
     }
 
@@ -685,6 +718,10 @@ impl SQLiteForeignKeyPlan {
 
     pub fn target_column(&self) -> &str {
         &self.target_column
+    }
+
+    pub fn on_delete(&self) -> SQLiteForeignKeyAction {
+        self.on_delete
     }
 }
 
