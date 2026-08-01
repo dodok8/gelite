@@ -41,13 +41,14 @@ When AI tools assisted a commit, add one trailer per tool:
 Assisted-by: AGENT_NAME:MODEL_VERSION
 ```
 
-For Codex-assisted work in this repository, use:
+Use the actual tool and model identifiers for the commit. For example, work
+assisted by Codex running `gpt-5.6-sol` uses:
 
 ```text
-Assisted-by: Codex:gpt-5.5
+Assisted-by: Codex:gpt-5.6-sol
 ```
 
-Example:
+Example commit message:
 
 ```text
 Document select pipeline boundaries
@@ -55,7 +56,7 @@ Document select pipeline boundaries
 Add crate-level documentation for the schema, resolver, IR, and SQLite
 planning stages.
 
-Assisted-by: Codex:gpt-5.5
+Assisted-by: Codex:gpt-5.6-sol
 ```
 
 ## Human responsibility

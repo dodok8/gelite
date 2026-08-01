@@ -16,7 +16,7 @@
 - Return `affected_rows` instead of deleted objects or identities.
 - Preserve SQLite `ON DELETE RESTRICT` errors and `ON DELETE CASCADE` cleanup.
 - Add no dependencies and no general top-level query enum.
-- Add `Assisted-by: Codex:gpt-5.5` to every commit.
+- Add `Assisted-by: Codex:gpt-5.6-sol` to every commit.
 
 ---
 
@@ -199,7 +199,7 @@ Expected: all commands pass.
 
 ```bash
 git add engine/sqlite-runner/src/native.rs engine/sqlite-runner/src/tests/native.rs
-git commit -m "Execute delete mutations" -m "Assisted-by: Codex:gpt-5.5"
+git commit -m "Execute delete mutations" -m "Assisted-by: Codex:gpt-5.6-sol"
 ```
 
 ---
@@ -393,7 +393,7 @@ Expected: all commands pass.
 
 ```bash
 git add tests/query-pipeline/tests/select_execution.rs tools/repl/src/lib.rs tools/gelite-cli/src/main.rs
-git commit -m "Integrate delete query execution" -m "Assisted-by: Codex:gpt-5.5"
+git commit -m "Integrate delete query execution" -m "Assisted-by: Codex:gpt-5.6-sol"
 ```
 
 ---
@@ -453,7 +453,7 @@ Expected: all commands pass with no warnings.
 
 ```bash
 git add spec/query.md spec/sqlite-query-plan.md spec/storage-sqlite.md README.md README.ko.md
-git commit -m "Document delete mutation workflow" -m "Assisted-by: Codex:gpt-5.5"
+git commit -m "Document delete mutation workflow" -m "Assisted-by: Codex:gpt-5.6-sol"
 ```
 
 - [ ] **Step 6: Report branch state**

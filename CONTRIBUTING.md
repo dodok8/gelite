@@ -163,10 +163,11 @@ request.
 2. Use AI output as a draft, not as authority.
 3. Verify the change against the relevant spec, plan, tests, and code.
 4. Disclose AI usage in the pull request template.
-5. Add the required commit trailer:
+5. Add the required commit trailer using the actual assistant and model
+   identifiers. For example:
 
    ```text
-   Assisted-by: Codex:gpt-5.5
+   Assisted-by: Codex:gpt-5.6-sol
    ```
 
 ## Document changes
@@ -474,11 +475,17 @@ explain why code tests were not needed.
 AI tools are allowed in this repository, but AI output is not a substitute for
 understanding, testing, or maintainership. Follow [AI_POLICY.md](AI_POLICY.md).
 
-Commits that include Codex-assisted design, implementation, review, or
-documentation must include this trailer:
+Commits that include AI-assisted design, implementation, review, or
+documentation must include a trailer in this format:
 
 ```text
-Assisted-by: Codex:gpt-5.5
+Assisted-by: AGENT_NAME:MODEL_VERSION
+```
+
+For example, work assisted by Codex running `gpt-5.6-sol` uses:
+
+```text
+Assisted-by: Codex:gpt-5.6-sol
 ```
 
 Use professional commit messages. Do not use conversational or character voice

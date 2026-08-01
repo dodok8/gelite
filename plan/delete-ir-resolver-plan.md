@@ -106,7 +106,7 @@ Expected: one matching test passes.
 
 ```sh
 git add spec/ir.md engine/query-ir/src/lib.rs engine/query-ir/src/tests/mod.rs
-git commit -m "Add delete query IR" -m "Assisted-by: Codex:gpt-5.5"
+git commit -m "Add delete query IR" -m "Assisted-by: Codex:gpt-5.6-sol"
 ```
 
 ---
@@ -282,5 +282,5 @@ Expected: every command exits successfully with no failed tests, formatting diff
 
 ```sh
 git add engine/query-resolver/src/lib.rs engine/query-resolver/src/tests/mod.rs engine/query-resolver/src/tests/delete.rs
-git commit -m "Add delete query resolver" -m "Assisted-by: Codex:gpt-5.5"
+git commit -m "Add delete query resolver" -m "Assisted-by: Codex:gpt-5.6-sol"
 ```

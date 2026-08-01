@@ -15,7 +15,7 @@
 - Add no dependencies and no delete-specific expression representation.
 - Omitted filters delete all target rows; command-layer safety prompts are out of scope.
 - Let SQLite foreign keys enforce `ON DELETE CASCADE` and `ON DELETE RESTRICT` behavior.
-- Add `Assisted-by: Codex:gpt-5.5` to every commit.
+- Add `Assisted-by: Codex:gpt-5.6-sol` to every commit.
 
 ---
 
@@ -207,7 +207,7 @@ Expected: all commands pass.
 
 ```bash
 git add engine/sqlite-query-plan/src/lib.rs engine/sqlite-query-plan/src/tests/mod.rs engine/sqlite-query-plan/src/tests/delete.rs
-git commit -m "Add SQLite delete planning" -m "Assisted-by: Codex:gpt-5.5"
+git commit -m "Add SQLite delete planning" -m "Assisted-by: Codex:gpt-5.6-sol"
 ```
 
 ---
@@ -399,7 +399,7 @@ Expected: all commands pass with no warnings.
 
 ```bash
 git add engine/sqlite-query-sqlgen/src/lib.rs engine/sqlite-query-sqlgen/src/tests/mod.rs engine/sqlite-query-sqlgen/src/tests/delete.rs
-git commit -m "Render SQLite delete statements" -m "Assisted-by: Codex:gpt-5.5"
+git commit -m "Render SQLite delete statements" -m "Assisted-by: Codex:gpt-5.6-sol"
 ```
 
 ---
