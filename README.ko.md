@@ -58,6 +58,8 @@ Gelite의 현재 범위는 다음과 같습니다.
 - query compilation: `select`, `insert`, `update`, `delete` parsing, semantic
   resolution, SQLite query planning, SQL rendering
 - 현재 `select`, `insert`, `update`, `delete` subset의 native query execution
+- database-backed interactive REPL의 explicit `start transaction`, `commit`,
+  `rollback` command
 - initial schema planning: `.geli` parsing, SQLite schema planning, DDL SQL
   rendering
 
@@ -137,7 +139,7 @@ LIMIT 10
 - `schema-model`: object type, scalar field, link, cardinality, deterministic
   reference, implicit `id` lookup을 가진 semantic schema catalog.
 - `schema-parser`: 현재 `.geli` schema syntax용 lexer/parser.
-- `query-ast`: select, insert, update, delete query용 unresolved syntax tree.
+- `query-ast`: data query와 transaction command용 unresolved syntax tree.
 - `query-parser`: 현재 query syntax용 lexer/parser와 source span.
 - `query-resolver`: select, insert, update, delete용 AST-to-IR semantic analysis.
 - `query-ir`: 지원되는 query용 backend-independent Semantic IR.
@@ -146,7 +148,7 @@ LIMIT 10
 - `sqlite-schema-plan`: SQLite-specific initial schema plan.
 - `sqlite-schema-sqlgen`: initial schema DDL과 metadata insert를 렌더링하는 SQL
   renderer.
-- `sqlite-runner`: native schema와 query statement execution.
+- `sqlite-runner`: native schema, query, transaction execution.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: CLI-facing tool들이 공유하는 command orchestration.
 - `tools/repl`: 현재 pipeline을 query 하나로 확인하는 inspection tool.
@@ -296,6 +298,26 @@ filter .author.email = "alice@example.com"
 
 성공하면 `affected_rows`가 출력됩니다. Filter는 선택 사항이므로 filter 없는
 `delete Post`는 확인 질문 없이 모든 `Post` row를 삭제합니다.
+
+Database-backed interactive REPL에서 여러 변경을 하나로 commit:
+
+```text
+start transaction
+insert User { email := "sheri@example.com" }
+insert User { email := "alice@example.com" }
+commit
+```
+
+`rollback`으로 변경 취소:
+
+```text
+start transaction
+delete Post filter .title = "Draft"
+rollback
+```
+
+각 command는 semicolon 없이 따로 입력합니다. Transaction command는 `--schema`
+compile-only session과 one-shot query argument에서는 지원하지 않습니다.
 
 query 하나 실행:
 

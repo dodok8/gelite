@@ -124,7 +124,7 @@ fn run_repl(
     runtime: &mut ReplRuntime<'_>,
 ) -> Result<(), ReplError> {
     println!("gelite repl");
-    println!("Type a select, insert, update, or delete query, or :quit / :exit to leave.");
+    println!("Type a query, start transaction, commit, rollback, or :quit / :exit to leave.");
     println!("Use balanced braces for multiline input.");
     println!("Press Ctrl-C twice in a row to leave.");
     if debug {
@@ -496,23 +496,24 @@ mod tests {
     fn interactive_database_repl_dispatches_transaction_commands() {
         let catalog = build_development_schema();
         let mut commands = Vec::new();
-        let mut executor = |request| {
-            let ExecutionRequest::Transaction(command) = request else {
-                panic!("expected transaction command");
+        {
+            let mut executor = |request| {
+                let ExecutionRequest::Transaction(command) = request else {
+                    panic!("expected transaction command");
+                };
+                commands.push(command);
+                Ok(None)
             };
-            commands.push(command);
-            Ok(None)
-        };
-        let mut runtime = ReplRuntime {
-            executor: Some(&mut executor),
-        };
+            let mut runtime = ReplRuntime {
+                executor: Some(&mut executor),
+            };
 
-        for source in ["start transaction", "commit", "rollback"] {
-            runtime
-                .inspect_query(&catalog, source, false, true)
-                .expect("interactive transaction command should execute");
+            for source in ["start transaction", "commit", "rollback"] {
+                runtime
+                    .inspect_query(&catalog, source, false, true)
+                    .expect("interactive transaction command should execute");
+            }
         }
-        drop(runtime);
 
         assert_eq!(
             commands,
@@ -564,41 +565,41 @@ mod tests {
         runner
             .execute("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
             .expect("user table should be created");
-        let mut executor = |request| match request {
-            ExecutionRequest::Query {
-                kind: QueryKind::Insert { .. },
-                statement,
-            } => runner
-                .execute_insert(&statement)
+        {
+            let mut executor = |request| match request {
+                ExecutionRequest::Query {
+                    kind: QueryKind::Insert { .. },
+                    statement,
+                } => runner
+                    .execute_insert(&statement)
+                    .map(|()| None)
+                    .map_err(|error| error.message().to_string()),
+                ExecutionRequest::Transaction(command) => match command {
+                    TransactionCommand::Start => runner.begin_transaction(),
+                    TransactionCommand::Commit => runner.commit_transaction(),
+                    TransactionCommand::Rollback => runner.rollback_transaction(),
+                }
                 .map(|()| None)
                 .map_err(|error| error.message().to_string()),
-            ExecutionRequest::Transaction(command) => match command {
-                TransactionCommand::Start => runner.begin_transaction(),
-                TransactionCommand::Commit => runner.commit_transaction(),
-                TransactionCommand::Rollback => runner.rollback_transaction(),
-            }
-            .map(|()| None)
-            .map_err(|error| error.message().to_string()),
-            ExecutionRequest::Query { .. } => panic!("expected insert query"),
-        };
-        let mut runtime = ReplRuntime {
-            executor: Some(&mut executor),
-        };
+                ExecutionRequest::Query { .. } => panic!("expected insert query"),
+            };
+            let mut runtime = ReplRuntime {
+                executor: Some(&mut executor),
+            };
 
-        for source in [
-            "start transaction",
-            r#"insert User { name := "Sheri" }"#,
-            "commit",
-            "start transaction",
-            r#"insert User { name := "Alice" }"#,
-            "rollback",
-        ] {
-            runtime
-                .inspect_query(&catalog, source, false, true)
-                .expect("interactive input should execute");
+            for source in [
+                "start transaction",
+                r#"insert User { name := "Sheri" }"#,
+                "commit",
+                "start transaction",
+                r#"insert User { name := "Alice" }"#,
+                "rollback",
+            ] {
+                runtime
+                    .inspect_query(&catalog, source, false, true)
+                    .expect("interactive input should execute");
+            }
         }
-        drop(runtime);
-        drop(executor);
 
         let result = runner
             .execute_select(&SQLiteStatement::new(

@@ -8,7 +8,7 @@
 //! field, relation, and cardinality checks.
 //!
 //! The implemented AST covers `select`, `insert`, `update`, and `delete`
-//! queries.
+//! queries plus session-level transaction-control commands.
 
 extern crate alloc;
 
