@@ -167,6 +167,10 @@ Minimum fields:
 - root object type
 - optional filter expression
 
+The root object type is a stable schema reference, not a source-level name.
+The optional filter has already been resolved and type-checked against that
+object type. An absent filter means every object of the target type.
+
 ## Shape Model
 
 Nested result shaping is a primary responsibility of Semantic IR.

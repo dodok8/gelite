@@ -143,6 +143,30 @@ impl UpdateQuery {
     }
 }
 
+/// Resolved delete query.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeleteQuery {
+    target_object_type: ObjectTypeRef,
+    filter: Option<Expr>,
+}
+
+impl DeleteQuery {
+    pub fn new(target_object_type: ObjectTypeRef, filter: Option<Expr>) -> Self {
+        Self {
+            target_object_type,
+            filter,
+        }
+    }
+
+    pub fn target_object_type(&self) -> &ObjectTypeRef {
+        &self.target_object_type
+    }
+
+    pub fn filter(&self) -> Option<&Expr> {
+        self.filter.as_ref()
+    }
+}
+
 /// Resolved result shape for one object source.
 ///
 /// Fields are ordered in the same order requested by the query. Nested shapes

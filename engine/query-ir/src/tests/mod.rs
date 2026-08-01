@@ -2,10 +2,11 @@ mod fixtures;
 
 use crate::{
     ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CastExpr, CompareExpr, CompareOp,
-    Expr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, ResolvedComputedField,
-    ResolvedPath, ResolvedPathError, ResolvedPathStep, ResolvedPathStepKind, ResolvedShape,
-    ResolvedShapeField, ResolvedShapeItem, SelectQuery, StringFunctionArg, StringFunctionExpr,
-    StringFunctionKind, UnaryArithmeticExpr, UnaryArithmeticOp, UpdateQuery, ValueExpr,
+    DeleteQuery, Expr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr,
+    ResolvedComputedField, ResolvedPath, ResolvedPathError, ResolvedPathStep, ResolvedPathStepKind,
+    ResolvedShape, ResolvedShapeField, ResolvedShapeItem, SelectQuery, StringFunctionArg,
+    StringFunctionExpr, StringFunctionKind, UnaryArithmeticExpr, UnaryArithmeticOp, UpdateQuery,
+    ValueExpr,
 };
 use alloc::boxed::Box;
 use alloc::string::ToString;
@@ -86,6 +87,19 @@ fn resolved_update_query_stores_target_filter_and_assignment_order() {
     assert_eq!(query.filter(), Some(&filter));
     assert_eq!(query.assignments()[0].field().name(), "title");
     assert_eq!(query.assignments()[1].field().name(), "author");
+}
+
+#[test]
+fn resolved_delete_query_stores_target_and_filter() {
+    let filter = Expr::Compare(CompareExpr::new(
+        post_title_path_value(),
+        CompareOp::Eq,
+        ValueExpr::Literal(Literal::String("Draft".to_string())),
+    ));
+    let query = DeleteQuery::new(post_type(), Some(filter.clone()));
+
+    assert_eq!(query.target_object_type().name(), "Post");
+    assert_eq!(query.filter(), Some(&filter));
 }
 
 #[test]
