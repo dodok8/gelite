@@ -60,6 +60,8 @@ Gelite's current scope includes:
   resolution, SQLite query planning, and SQL rendering
 - native query execution for the current `select`, `insert`, `update`, and `delete`
   subsets
+- explicit `start transaction`, `commit`, and `rollback` commands in the
+  database-backed interactive REPL
 - initial schema planning: `.geli` parsing, SQLite schema planning, and DDL SQL
   rendering
 
@@ -140,7 +142,7 @@ compiler step can be inspected independently.
 - `schema-model`: semantic schema catalog with object types, scalar fields,
   links, cardinality, deterministic references, and implicit `id` lookup.
 - `schema-parser`: lexer and parser for the current `.geli` schema syntax.
-- `query-ast`: unresolved syntax tree for select, insert, update, and delete queries.
+- `query-ast`: unresolved syntax tree for data queries and transaction commands.
 - `query-parser`: lexer and parser for the current query syntax, with source
   spans.
 - `query-resolver`: AST-to-IR semantic analysis for select, insert, update, and delete.
@@ -150,7 +152,7 @@ compiler step can be inspected independently.
 - `sqlite-schema-plan`: SQLite-specific initial schema plan.
 - `sqlite-schema-sqlgen`: SQL renderer for initial schema DDL and metadata
   inserts.
-- `sqlite-runner`: native schema and query statement execution.
+- `sqlite-runner`: native schema, query, and transaction execution.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: command orchestration shared by CLI-facing tools.
 - `tools/repl`: inspection tool for running the current pipeline on a query.
@@ -237,6 +239,18 @@ Open the CLI REPL:
 cargo run -p gelite-cli -- repl --database app.db
 ```
 
+### Multiline REPL input
+
+Press `Alt+Enter` to insert a newline without submitting the current input.
+On macOS, use `Opt+Enter` after configuring the terminal to send Option as
+Alt/Meta:
+
+- Terminal: enable **Settings > Profiles > Keyboard > Use Option as Meta key**.
+- iTerm2: set **Settings > Profiles > Keys > Left/Right Option Key** to
+  **Esc+**.
+
+Regular Enter continues automatically while braces are unbalanced.
+
 The following queries can be entered into the interactive REPL after applying
 `examples/blog.geli`.
 
@@ -302,6 +316,26 @@ filter .author.email = "alice@example.com"
 Successful execution prints an `affected_rows` count. The filter is optional;
 `delete Post` without a filter deletes every `Post` row and does not prompt for
 confirmation.
+
+Commit several changes as one unit in the database-backed interactive REPL:
+
+```text
+start transaction
+insert User { email := "sheri@example.com" }
+insert User { email := "alice@example.com" }
+commit
+```
+
+Discard changes with `rollback`:
+
+```text
+start transaction
+delete Post filter .title = "Draft"
+rollback
+```
+
+Enter each command separately without semicolons. Transaction commands are not
+supported by `--schema` compile-only sessions or by one-shot query arguments.
 
 Run one query through the CLI:
 

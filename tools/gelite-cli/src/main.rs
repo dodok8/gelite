@@ -146,37 +146,54 @@ fn run_repl_command(command: ReplCommand) -> Result<(), String> {
 
     match runner.as_mut() {
         Some(runner) => {
-            let mut executor =
-                |kind: repl::QueryKind, statement: &sqlite_query_sqlgen::SQLiteStatement| match kind
-                {
-                    repl::QueryKind::Select => runner
-                        .execute_select(statement)
-                        .map_err(|error| error.message().to_string()),
-                    repl::QueryKind::Insert { generated_id } => {
-                        runner
-                            .execute_insert(statement)
-                            .map_err(|error| error.message().to_string())?;
-
-                        Ok(sqlite_runner::SQLiteQueryResult::new(
-                            vec!["id".to_string()],
-                            vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
-                        ))
-                    }
-                    repl::QueryKind::Update => runner
-                        .execute_update(statement)
-                        .map(affected_rows_result)
-                        .map_err(|error| error.message().to_string()),
-                    repl::QueryKind::Delete => runner
-                        .execute_delete(statement)
-                        .map(affected_rows_result)
-                        .map_err(|error| error.message().to_string()),
-                };
+            let mut executor = |request| execute_request(runner, request);
 
             repl::run_with_executor(&catalog, options, &mut executor)
         }
         None => repl::run_with_catalog(&catalog, options),
     }
     .map_err(|_| "gelite repl failed".to_string())
+}
+
+fn execute_request(
+    runner: &mut NativeSQLiteRunner,
+    request: repl::ExecutionRequest,
+) -> Result<Option<sqlite_runner::SQLiteQueryResult>, String> {
+    match request {
+        repl::ExecutionRequest::Query { kind, statement } => match kind {
+            repl::QueryKind::Select => runner
+                .execute_select(&statement)
+                .map(Some)
+                .map_err(|error| error.message().to_string()),
+            repl::QueryKind::Insert { generated_id } => {
+                runner
+                    .execute_insert(&statement)
+                    .map_err(|error| error.message().to_string())?;
+
+                Ok(Some(sqlite_runner::SQLiteQueryResult::new(
+                    vec!["id".to_string()],
+                    vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
+                )))
+            }
+            repl::QueryKind::Update => runner
+                .execute_update(&statement)
+                .map(affected_rows_result)
+                .map(Some)
+                .map_err(|error| error.message().to_string()),
+            repl::QueryKind::Delete => runner
+                .execute_delete(&statement)
+                .map(affected_rows_result)
+                .map(Some)
+                .map_err(|error| error.message().to_string()),
+        },
+        repl::ExecutionRequest::Transaction(command) => match command {
+            repl::TransactionCommand::Start => runner.begin_transaction(),
+            repl::TransactionCommand::Commit => runner.commit_transaction(),
+            repl::TransactionCommand::Rollback => runner.rollback_transaction(),
+        }
+        .map(|()| None)
+        .map_err(|error| error.message().to_string()),
+    }
 }
 
 fn affected_rows_result(affected_rows: i64) -> sqlite_runner::SQLiteQueryResult {
@@ -189,4 +206,138 @@ fn affected_rows_result(affected_rows: i64) -> sqlite_runner::SQLiteQueryResult 
 fn path_to_str(path: &Path) -> Result<&str, String> {
     path.to_str()
         .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use repl::{ExecutionRequest, QueryKind, TransactionCommand};
+    use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
+    use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
+
+    use super::execute_request;
+
+    #[test]
+    fn native_repl_executor_maps_query_results() {
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+        runner
+            .execute("CREATE TABLE entry (id TEXT PRIMARY KEY, value INTEGER NOT NULL)")
+            .expect("table should be created");
+
+        let insert = execute_request(
+            &mut runner,
+            ExecutionRequest::Query {
+                kind: QueryKind::Insert {
+                    generated_id: "entry-1".to_string(),
+                },
+                statement: SQLiteStatement::new(
+                    "INSERT INTO entry (id, value) VALUES (?, ?)",
+                    vec![
+                        SQLiteBindValue::String("entry-1".to_string()),
+                        SQLiteBindValue::Int64(1),
+                    ],
+                ),
+            },
+        )
+        .expect("insert should execute")
+        .expect("insert should return the generated id");
+        assert_eq!(
+            insert.rows(),
+            &[vec![SQLiteCellValue::Text("entry-1".to_string())]]
+        );
+
+        let select = execute_request(
+            &mut runner,
+            ExecutionRequest::Query {
+                kind: QueryKind::Select,
+                statement: SQLiteStatement::new("SELECT value FROM entry", vec![]),
+            },
+        )
+        .expect("select should execute")
+        .expect("select should return rows");
+        assert_eq!(select.rows(), &[vec![SQLiteCellValue::Integer(1)]]);
+
+        for (kind, sql) in [
+            (
+                QueryKind::Update,
+                "UPDATE entry SET value = 2 WHERE id = 'entry-1'",
+            ),
+            (QueryKind::Delete, "DELETE FROM entry WHERE id = 'entry-1'"),
+        ] {
+            let result = execute_request(
+                &mut runner,
+                ExecutionRequest::Query {
+                    kind,
+                    statement: SQLiteStatement::new(sql, vec![]),
+                },
+            )
+            .expect("mutation should execute")
+            .expect("mutation should return affected rows");
+            assert_eq!(result.rows(), &[vec![SQLiteCellValue::Integer(1)]]);
+        }
+    }
+
+    #[test]
+    fn native_repl_executor_uses_one_connection_for_transactions() {
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+        runner
+            .execute("CREATE TABLE entry (id TEXT PRIMARY KEY)")
+            .expect("table should be created");
+
+        assert_eq!(
+            execute_request(
+                &mut runner,
+                ExecutionRequest::Transaction(TransactionCommand::Start)
+            ),
+            Ok(None)
+        );
+        runner
+            .execute("INSERT INTO entry VALUES ('rolled-back')")
+            .expect("insert should execute");
+        assert_eq!(
+            execute_request(
+                &mut runner,
+                ExecutionRequest::Transaction(TransactionCommand::Rollback)
+            ),
+            Ok(None)
+        );
+
+        assert_eq!(
+            execute_request(
+                &mut runner,
+                ExecutionRequest::Transaction(TransactionCommand::Start)
+            ),
+            Ok(None)
+        );
+        runner
+            .execute("INSERT INTO entry VALUES ('committed')")
+            .expect("insert should execute");
+        assert_eq!(
+            execute_request(
+                &mut runner,
+                ExecutionRequest::Transaction(TransactionCommand::Commit)
+            ),
+            Ok(None)
+        );
+
+        let result = execute_request(
+            &mut runner,
+            ExecutionRequest::Query {
+                kind: QueryKind::Select,
+                statement: SQLiteStatement::new("SELECT id FROM entry", vec![]),
+            },
+        )
+        .expect("select should execute")
+        .expect("select should return rows");
+        assert_eq!(
+            result.rows(),
+            &[vec![SQLiteCellValue::Text("committed".to_string())]]
+        );
+
+        let error = execute_request(
+            &mut runner,
+            ExecutionRequest::Transaction(TransactionCommand::Commit),
+        )
+        .expect_err("commit without an active transaction should fail");
+        assert!(error.contains("no transaction is active"));
+    }
 }

@@ -8,13 +8,21 @@
 //! field, relation, and cardinality checks.
 //!
 //! The implemented AST covers `select`, `insert`, `update`, and `delete`
-//! queries.
+//! queries plus session-level transaction-control commands.
 
 extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+
+/// Parsed transaction-control command before session-level execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionCommand {
+    Start,
+    Commit,
+    Rollback,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InsertQuery {

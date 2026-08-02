@@ -1,8 +1,13 @@
 extern crate alloc;
+extern crate std;
 
-use alloc::string::ToString;
+use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::vec;
+use alloc::vec::Vec;
 use sqlite_schema_plan::SQLiteValuePlan;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     SQLiteRunner, apply_schema_statements, native::NativeSQLiteRunner,
@@ -14,6 +19,124 @@ fn native_runner_can_open_in_memory_database() {
     let runner = NativeSQLiteRunner::open_in_memory();
 
     assert!(runner.is_ok());
+}
+
+#[test]
+fn native_runner_commits_explicit_transaction() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    runner
+        .execute("CREATE TABLE entry (id TEXT PRIMARY KEY)")
+        .expect("table should be created");
+
+    runner
+        .begin_transaction()
+        .expect("transaction should begin");
+    runner
+        .execute("INSERT INTO entry VALUES ('entry-1')")
+        .expect("insert should execute");
+    runner
+        .commit_transaction()
+        .expect("transaction should commit");
+
+    assert_eq!(entry_ids(&mut runner), vec!["entry-1".to_string()]);
+}
+
+#[test]
+fn native_runner_rolls_back_explicit_transaction() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    runner
+        .execute("CREATE TABLE entry (id TEXT PRIMARY KEY)")
+        .expect("table should be created");
+
+    runner
+        .begin_transaction()
+        .expect("transaction should begin");
+    runner
+        .execute("INSERT INTO entry VALUES ('entry-1')")
+        .expect("insert should execute");
+    runner
+        .rollback_transaction()
+        .expect("transaction should roll back");
+
+    assert!(entry_ids(&mut runner).is_empty());
+}
+
+#[test]
+fn native_runner_rejects_invalid_transaction_transitions() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+
+    let commit_error = runner
+        .commit_transaction()
+        .expect_err("commit without transaction should fail");
+    assert!(commit_error.message().contains("no transaction is active"));
+
+    let rollback_error = runner
+        .rollback_transaction()
+        .expect_err("rollback without transaction should fail");
+    assert!(
+        rollback_error
+            .message()
+            .contains("no transaction is active")
+    );
+
+    runner
+        .begin_transaction()
+        .expect("transaction should begin");
+    let nested_error = runner
+        .begin_transaction()
+        .expect_err("nested transaction should fail");
+    assert!(
+        nested_error
+            .message()
+            .contains("cannot start a transaction within a transaction")
+    );
+}
+
+#[test]
+fn native_runner_rolls_back_transaction_when_connection_closes() {
+    let path = temporary_database_path("uncommitted-transaction");
+    let path_str = path.to_str().expect("temporary path should be UTF-8");
+    let mut runner = NativeSQLiteRunner::open(path_str).expect("database should open");
+    runner
+        .execute("CREATE TABLE entry (id TEXT PRIMARY KEY)")
+        .expect("table should be created");
+    runner
+        .begin_transaction()
+        .expect("transaction should begin");
+    runner
+        .execute("INSERT INTO entry VALUES ('entry-1')")
+        .expect("insert should execute");
+    drop(runner);
+
+    let mut reopened = NativeSQLiteRunner::open(path_str).expect("database should reopen");
+    assert!(entry_ids(&mut reopened).is_empty());
+    drop(reopened);
+    std::fs::remove_file(path).expect("temporary database should be removed");
+}
+
+fn entry_ids(runner: &mut NativeSQLiteRunner) -> Vec<String> {
+    runner
+        .execute_select(&sqlite_query_sqlgen::SQLiteStatement::new(
+            "SELECT id FROM entry ORDER BY id",
+            vec![],
+        ))
+        .expect("entries should be readable")
+        .rows()
+        .iter()
+        .map(|row| match &row[0] {
+            crate::SQLiteCellValue::Text(value) => value.clone(),
+            value => panic!("expected text id, got {value:?}"),
+        })
+        .collect()
+}
+
+fn temporary_database_path(name: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should follow Unix epoch")
+        .as_nanos();
+
+    std::env::temp_dir().join(format!("gelite-{name}-{}-{nonce}.db", std::process::id()))
 }
 
 #[test]

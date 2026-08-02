@@ -13,16 +13,24 @@ Define a small query language that is expressive enough to prove the pipeline:
 The language is intentionally smaller than Gel and should stay small until the
 typed IR and lowering model are stable.
 
-## Supported Statements
+## Supported Top-Level Inputs
 
-The MVP supports exactly four top-level statements:
+The MVP supports four data statements:
 
 - `select`
 - `insert`
 - `update`
 - `delete`
 
-Only one statement is executed per request in the first version.
+The database-backed interactive REPL also supports three transaction-control
+commands:
+
+- `start transaction`
+- `commit`
+- `rollback`
+
+Only one statement or transaction command is executed per input in the first
+version.
 
 ## Shared Conventions
 
@@ -582,6 +590,39 @@ delete_stmt     := "delete" type_ref filter_clause?
 - Relation cleanup behavior is defined by the storage model, not query syntax.
 - The MVP omits `order by`, `offset`, `limit`, and deleted-object results;
   CLI/REPL execution reports `affected_rows`.
+
+## Transaction Control
+
+### Grammar
+
+```text
+transaction_command := "start" "transaction"
+                     | "commit"
+                     | "rollback"
+```
+
+Transaction commands are session-level syntax. They are represented in the
+syntax tree and dispatched directly by the REPL; they do not enter Semantic IR,
+SQLite query planning, or SQL generation.
+
+### Session Semantics
+
+- Transaction commands are supported only by a database-backed interactive
+  REPL, where every input uses the same native SQLite connection.
+- `start transaction` begins an explicit SQLite transaction on that connection.
+- `commit` persists successful changes made since `start transaction`.
+- `rollback` discards changes made since `start transaction`.
+- Data statements outside an explicit transaction retain SQLite autocommit
+  behavior.
+- Starting a transaction while one is active, or committing or rolling back
+  without an active transaction, returns an execution error.
+- Closing the REPL or database connection rolls back an active transaction.
+- Compile-only REPL input and one-shot CLI input reject transaction commands.
+
+The MVP does not support transaction modes, savepoints, nested transactions,
+automatic retries, client callback APIs, multi-command scripts, transactions
+across CLI process invocations, WASM transaction execution, or schema-apply
+transaction changes.
 
 ## Values
 

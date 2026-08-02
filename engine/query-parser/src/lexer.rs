@@ -30,6 +30,10 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
             RawTokenKind::Insert => TokenKind::Keyword(Keyword::Insert),
             RawTokenKind::Update => TokenKind::Keyword(Keyword::Update),
             RawTokenKind::Delete => TokenKind::Keyword(Keyword::Delete),
+            RawTokenKind::Start => TokenKind::Keyword(Keyword::Start),
+            RawTokenKind::Transaction => TokenKind::Keyword(Keyword::Transaction),
+            RawTokenKind::Commit => TokenKind::Keyword(Keyword::Commit),
+            RawTokenKind::Rollback => TokenKind::Keyword(Keyword::Rollback),
             RawTokenKind::Filter => TokenKind::Keyword(Keyword::Filter),
             RawTokenKind::Set => TokenKind::Keyword(Keyword::Set),
             RawTokenKind::Order => TokenKind::Keyword(Keyword::Order),
@@ -120,6 +124,18 @@ enum RawTokenKind {
 
     #[token("delete")]
     Delete,
+
+    #[token("start")]
+    Start,
+
+    #[token("transaction")]
+    Transaction,
+
+    #[token("commit")]
+    Commit,
+
+    #[token("rollback")]
+    Rollback,
 
     #[token("filter")]
     Filter,
@@ -292,6 +308,10 @@ pub enum Keyword {
     Insert,
     Update,
     Delete,
+    Start,
+    Transaction,
+    Commit,
+    Rollback,
     Filter,
     Set,
     Order,
@@ -312,6 +332,10 @@ impl Keyword {
             Keyword::Insert => "insert",
             Keyword::Update => "update",
             Keyword::Delete => "delete",
+            Keyword::Start => "start",
+            Keyword::Transaction => "transaction",
+            Keyword::Commit => "commit",
+            Keyword::Rollback => "rollback",
             Keyword::Filter => "filter",
             Keyword::Set => "set",
             Keyword::Order => "order",

@@ -5,7 +5,7 @@ use alloc::{string::String, vec};
 use query_ast::{
     ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, DeleteQuery, Expr, InExpr,
     InOp, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem,
-    UpdateQuery,
+    TransactionCommand, UpdateQuery,
 };
 
 /// Parses one MVP `select` statement from source text.
@@ -19,6 +19,12 @@ pub fn parse_select(input: &str) -> Result<query_ast::SelectQuery, ParseError> {
 
 fn parse_select_tokens(tokens: &[Token]) -> Result<query_ast::SelectQuery, ParseError> {
     Parser::new(tokens).parse_select_stmt()
+}
+
+/// Parses one transaction-control command from source text.
+pub fn parse_transaction_command(input: &str) -> Result<TransactionCommand, ParseError> {
+    let tokens = lex(input).map_err(ParseError::from)?;
+    Parser::new(&tokens).parse_transaction_command()
 }
 
 /// Parser error with an optional source span.
@@ -140,6 +146,43 @@ impl<'a> Parser<'a> {
             limit,
             offset,
         ))
+    }
+
+    fn parse_transaction_command(&mut self) -> Result<TransactionCommand, ParseError> {
+        let command = match self.peek() {
+            Some(token) if token.kind() == &TokenKind::Keyword(Keyword::Start) => {
+                self.advance();
+                self.expect_keyword(Keyword::Transaction)?;
+                TransactionCommand::Start
+            }
+            Some(token) if token.kind() == &TokenKind::Keyword(Keyword::Commit) => {
+                self.advance();
+                TransactionCommand::Commit
+            }
+            Some(token) if token.kind() == &TokenKind::Keyword(Keyword::Rollback) => {
+                self.advance();
+                TransactionCommand::Rollback
+            }
+            Some(token) => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedToken {
+                        expected: "transaction command",
+                    },
+                    Some(token.span()),
+                ));
+            }
+            None => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof {
+                        expected: "transaction command",
+                    },
+                    None,
+                ));
+            }
+        };
+
+        self.ensure_eof()?;
+        Ok(command)
     }
 
     fn parse_shape(&mut self) -> Result<query_ast::Shape, ParseError> {
@@ -386,10 +429,10 @@ impl<'a> Parser<'a> {
                 Ok(Expr::Path(self.parse_path(true)?))
             }
             Some(token) => match token.kind() {
-                TokenKind::Ident(_) if self.next_token_is_lparen() => {
+                kind if token_kind_is_ident(kind) && self.next_token_is_lparen() => {
                     self.parse_function_call_expr()
                 }
-                TokenKind::Ident(_) => Ok(Expr::Path(self.parse_path(false)?)),
+                kind if token_kind_is_ident(kind) => Ok(Expr::Path(self.parse_path(false)?)),
                 TokenKind::Int(_)
                 | TokenKind::Float(_)
                 | TokenKind::String(_)
@@ -644,6 +687,16 @@ impl<'a> Parser<'a> {
             Some(token) => match token.kind() {
                 TokenKind::Ident(value) => {
                     let value = value.clone();
+                    self.advance();
+                    Ok(value)
+                }
+                TokenKind::Keyword(
+                    keyword @ (Keyword::Start
+                    | Keyword::Transaction
+                    | Keyword::Commit
+                    | Keyword::Rollback),
+                ) => {
+                    let value = String::from(keyword.as_str());
                     self.advance();
                     Ok(value)
                 }
@@ -925,6 +978,16 @@ fn token_kind_description(token_kind: &TokenKind) -> &'static str {
 
 fn token_is_ident(token: &Token, expected: &str) -> bool {
     matches!(token.kind(), TokenKind::Ident(value) if value == expected)
+}
+
+fn token_kind_is_ident(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Ident(_)
+            | TokenKind::Keyword(
+                Keyword::Start | Keyword::Transaction | Keyword::Commit | Keyword::Rollback
+            )
+    )
 }
 
 /// Parses one MVP `insert` statement from source text.
