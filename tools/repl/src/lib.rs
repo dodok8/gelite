@@ -193,7 +193,12 @@ fn handle_repl_line(
             return Ok(ReplLoopAction::Break);
         }
         let _ = editor.add_history_entry(query_text.as_str());
-        let _ = runtime.inspect_query(catalog, &query_text, debug, true);
+        if runtime
+            .inspect_query(catalog, &query_text, debug, true)
+            .is_err()
+        {
+            break;
+        }
     }
 
     Ok(ReplLoopAction::Continue)
@@ -456,8 +461,9 @@ mod tests {
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
     use super::{
-        ExecutionRequest, QueryKind, ReplError, ReplOptions, ReplRuntime, build_development_schema,
-        compile_query, complete_repl_inputs, needs_more_input, run_with_catalog, run_with_executor,
+        DefaultEditor, ExecutionRequest, QueryKind, ReplError, ReplLoopAction, ReplOptions,
+        ReplRuntime, build_development_schema, compile_query, complete_repl_inputs,
+        handle_repl_line, needs_more_input, run_with_catalog, run_with_executor,
     };
 
     #[test]
@@ -479,6 +485,53 @@ mod tests {
             ]
         );
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn pasted_input_stops_after_an_execution_error() {
+        let catalog = build_development_schema();
+        let mut query_count = 0;
+        let mut commands = Vec::new();
+
+        {
+            let mut executor = |request| match request {
+                ExecutionRequest::Transaction(command) => {
+                    commands.push(command);
+                    Ok(None)
+                }
+                ExecutionRequest::Query { .. } => {
+                    query_count += 1;
+                    if query_count == 2 {
+                        Err("forced execution error".to_string())
+                    } else {
+                        Ok(None)
+                    }
+                }
+            };
+            let mut runtime = ReplRuntime {
+                executor: Some(&mut executor),
+            };
+            let mut editor = DefaultEditor::new().expect("editor should initialize");
+            let mut pending = String::new();
+            let mut interrupt_count = 0;
+
+            let action = handle_repl_line(
+                &catalog,
+                false,
+                &mut runtime,
+                &mut editor,
+                &mut pending,
+                &mut interrupt_count,
+                "start transaction\ninsert User { name := \"Sheri\" }\ninsert User { name := \"Alice\" }\ncommit"
+                    .to_string(),
+            )
+            .expect("interactive errors should return control to the REPL");
+
+            assert!(matches!(action, ReplLoopAction::Continue));
+        }
+
+        assert_eq!(query_count, 2);
+        assert_eq!(commands, [TransactionCommand::Start]);
     }
 
     #[test]

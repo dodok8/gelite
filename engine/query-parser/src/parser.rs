@@ -429,10 +429,10 @@ impl<'a> Parser<'a> {
                 Ok(Expr::Path(self.parse_path(true)?))
             }
             Some(token) => match token.kind() {
-                TokenKind::Ident(_) if self.next_token_is_lparen() => {
+                kind if token_kind_is_ident(kind) && self.next_token_is_lparen() => {
                     self.parse_function_call_expr()
                 }
-                TokenKind::Ident(_) => Ok(Expr::Path(self.parse_path(false)?)),
+                kind if token_kind_is_ident(kind) => Ok(Expr::Path(self.parse_path(false)?)),
                 TokenKind::Int(_)
                 | TokenKind::Float(_)
                 | TokenKind::String(_)
@@ -978,6 +978,16 @@ fn token_kind_description(token_kind: &TokenKind) -> &'static str {
 
 fn token_is_ident(token: &Token, expected: &str) -> bool {
     matches!(token.kind(), TokenKind::Ident(value) if value == expected)
+}
+
+fn token_kind_is_ident(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Ident(_)
+            | TokenKind::Keyword(
+                Keyword::Start | Keyword::Transaction | Keyword::Commit | Keyword::Rollback
+            )
+    )
 }
 
 /// Parses one MVP `insert` statement from source text.
