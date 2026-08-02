@@ -291,10 +291,6 @@ fn is_exit_command(input: &str) -> bool {
 }
 
 fn needs_more_input(input: &str) -> bool {
-    brace_balance(input) > 0
-}
-
-fn brace_balance(input: &str) -> i32 {
     let mut balance = 0;
     let mut in_string = false;
 
@@ -307,7 +303,7 @@ fn brace_balance(input: &str) -> i32 {
         }
     }
 
-    balance
+    in_string || balance > 0
 }
 
 fn compile_query(
@@ -562,6 +558,22 @@ mod tests {
         assert_eq!(
             queries,
             ["select Post {\n  title\n}\nfilter .title = \"Draft\"\norder by .title"]
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn multiline_strings_do_not_create_input_boundaries() {
+        let mut pending = String::new();
+
+        let queries = complete_repl_inputs(
+            &mut pending,
+            "select Post { title } filter .title = \"first\ncommit\nselect second\"",
+        );
+
+        assert_eq!(
+            queries,
+            ["select Post { title } filter .title = \"first\ncommit\nselect second\""]
         );
         assert!(pending.is_empty());
     }
