@@ -203,10 +203,17 @@ fn complete_repl_inputs(pending: &mut String, input: &str) -> Vec<String> {
     let mut queries = Vec::new();
 
     for line in input.lines() {
-        if is_transaction_command_line(line) && !needs_more_input(pending) {
-            if let Some(query) = take_complete_repl_input(pending) {
-                queries.push(query);
-            }
+        let is_transaction_command = is_transaction_command_line(line);
+        let can_start_new_input = !needs_more_input(pending);
+
+        if (is_transaction_command || starts_data_statement(line))
+            && can_start_new_input
+            && let Some(query) = take_complete_repl_input(pending)
+        {
+            queries.push(query);
+        }
+
+        if is_transaction_command && can_start_new_input {
             queries.push(line.trim().to_string());
         } else {
             append_pending_line(pending, line);
@@ -222,6 +229,13 @@ fn complete_repl_inputs(pending: &mut String, input: &str) -> Vec<String> {
 
 fn is_transaction_command_line(line: &str) -> bool {
     matches!(line.trim(), "start transaction" | "commit" | "rollback")
+}
+
+fn starts_data_statement(line: &str) -> bool {
+    matches!(
+        line.split_whitespace().next(),
+        Some("select" | "insert" | "update" | "delete")
+    )
 }
 
 fn take_complete_repl_input(pending: &mut String) -> Option<String> {
@@ -452,7 +466,7 @@ mod tests {
 
         let queries = complete_repl_inputs(
             &mut pending,
-            "start transaction\ninsert User {\n  name := \"Sheri\"\n}\ncommit",
+            "start transaction\ninsert User {\n  name := \"Sheri\"\n}\ninsert User {\n  name := \"Alice\"\n}\ncommit",
         );
 
         assert_eq!(
@@ -460,6 +474,7 @@ mod tests {
             [
                 "start transaction",
                 "insert User {\n  name := \"Sheri\"\n}",
+                "insert User {\n  name := \"Alice\"\n}",
                 "commit",
             ]
         );
