@@ -89,16 +89,15 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
         bind_values.push(bind_value_from_literal(assignment.value()));
     }
 
-    SQLiteStatement {
-        sql: format!(
+    SQLiteStatement::new(
+        format!(
             "INSERT INTO {} ({}) VALUES ({})",
             quote_identifier(plan.root_target().table_name()),
             columns.join(", "),
             vec!["?"; columns.len()].join(", ")
         ),
         bind_values,
-        output_names: vec![],
-    }
+    )
 }
 
 /// Renders a structured SQLite update plan into SQL text and bind values.
@@ -137,11 +136,7 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement {
-        sql,
-        bind_values,
-        output_names: vec![],
-    }
+    SQLiteStatement::new(sql, bind_values)
 }
 
 /// Renders a structured SQLite delete plan into SQL text and bind values.
@@ -166,11 +161,7 @@ pub fn render_delete(plan: &SQLiteDeletePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement {
-        sql,
-        bind_values,
-        output_names: vec![],
-    }
+    SQLiteStatement::new(sql, bind_values)
 }
 
 fn append_mutation_filter(
