@@ -80,7 +80,7 @@ fn assert_selected_field(
     value: &crate::SQLiteSelectValue,
     source_alias: &str,
     column_name: &str,
-    output_name: &str,
+    output_name: Option<&str>,
     field_name: &str,
     role: SQLiteValueRole,
 ) {
@@ -118,7 +118,7 @@ fn sqlite_select_plan_can_project_root_scalar_field() {
         &selected_values[0],
         "root",
         "title",
-        "title",
+        Some("title"),
         "title",
         SQLiteValueRole::Scalar,
     );
@@ -150,7 +150,7 @@ fn sqlite_select_plan_preserves_root_scalar_output_name() {
         &selected_values[0],
         "root",
         "title",
-        "headline",
+        Some("headline"),
         "title",
         SQLiteValueRole::Scalar,
     );
@@ -183,7 +183,7 @@ fn sqlite_select_plan_can_project_computed_value() {
     let selected_values = plan.selected_values();
 
     assert_eq!(selected_values.len(), 1);
-    assert_eq!(selected_values[0].output_name(), "score");
+    assert_eq!(selected_values[0].output_name(), Some("score"));
     assert_eq!(selected_values[0].role(), SQLiteValueRole::Computed);
     let computed_value = selected_values[0]
         .as_computed()
@@ -227,7 +227,7 @@ fn sqlite_select_plan_can_project_computed_unary_arithmetic_value() {
     let selected_values = plan.selected_values();
 
     assert_eq!(selected_values.len(), 1);
-    assert_eq!(selected_values[0].output_name(), "neg_views");
+    assert_eq!(selected_values[0].output_name(), Some("neg_views"));
     assert_eq!(selected_values[0].role(), SQLiteValueRole::Computed);
     let computed_value = selected_values[0]
         .as_computed()
@@ -281,7 +281,7 @@ fn sqlite_select_plan_uses_nested_source_alias_for_computed_value() {
     let selected_values = plan.selected_values();
 
     assert_eq!(selected_values.len(), 2);
-    assert_eq!(selected_values[1].output_name(), "boosted_score");
+    assert_eq!(selected_values[1].output_name(), Some("boosted_score"));
     assert_eq!(
         selected_values[1]
             .as_computed()
@@ -501,7 +501,7 @@ fn sqlite_select_plan_assigns_unique_sql_aliases_for_repeated_computed_output_na
     let selected_values = plan.selected_values();
 
     assert_eq!(selected_values.len(), 3);
-    assert_eq!(selected_values[0].output_name(), "score");
+    assert_eq!(selected_values[0].output_name(), Some("score"));
     assert_eq!(
         selected_values[0]
             .as_computed()
@@ -513,11 +513,11 @@ fn sqlite_select_plan_assigns_unique_sql_aliases_for_repeated_computed_output_na
         &selected_values[1],
         "author",
         "id",
-        "id",
+        None,
         "id",
         SQLiteValueRole::ObjectId,
     );
-    assert_eq!(selected_values[2].output_name(), "score");
+    assert_eq!(selected_values[2].output_name(), Some("score"));
     assert_eq!(
         selected_values[2]
             .as_computed()
@@ -591,7 +591,7 @@ fn sqlite_select_plan_reserves_computed_sql_aliases_against_selected_field_colum
         &selected_values[0],
         "root",
         "__gelite_value_0",
-        "__gelite_value_0",
+        Some("__gelite_value_0"),
         "__gelite_value_0",
         SQLiteValueRole::Scalar,
     );
@@ -721,11 +721,11 @@ fn sqlite_select_plan_keeps_nested_identity_and_computed_id_column_names_distinc
         &selected_values[0],
         "author",
         "id",
-        "id",
+        None,
         "id",
         SQLiteValueRole::ObjectId,
     );
-    assert_eq!(selected_values[1].output_name(), "id");
+    assert_eq!(selected_values[1].output_name(), Some("id"));
     assert_eq!(
         selected_values[1]
             .as_computed()
@@ -785,7 +785,7 @@ fn sqlite_select_plan_preserves_root_scalar_projection_order() {
         &selected_values[0],
         "root",
         "title",
-        "title",
+        Some("title"),
         "title",
         SQLiteValueRole::Scalar,
     );
@@ -793,7 +793,7 @@ fn sqlite_select_plan_preserves_root_scalar_projection_order() {
         &selected_values[1],
         "root",
         "author",
-        "author",
+        Some("author"),
         "author",
         SQLiteValueRole::Scalar,
     );
@@ -2163,7 +2163,7 @@ fn sqlite_select_plan_can_project_implicit_id() {
         &selected_values[0],
         "root",
         "id",
-        "id",
+        Some("id"),
         "id",
         SQLiteValueRole::ObjectId,
     );
@@ -2254,7 +2254,7 @@ fn sqlite_select_plan_uses_unique_aliases_for_repeated_nested_selected_link_name
         &plan.selected_values()[0],
         "best_friend",
         "id",
-        "id",
+        None,
         "id",
         SQLiteValueRole::ObjectId,
     );
@@ -2262,7 +2262,7 @@ fn sqlite_select_plan_uses_unique_aliases_for_repeated_nested_selected_link_name
         &plan.selected_values()[1],
         joins[1].target_alias(),
         "id",
-        "id",
+        None,
         "id",
         SQLiteValueRole::ObjectId,
     );
@@ -2270,7 +2270,7 @@ fn sqlite_select_plan_uses_unique_aliases_for_repeated_nested_selected_link_name
         &plan.selected_values()[2],
         joins[1].target_alias(),
         "name",
-        "name",
+        Some("name"),
         "name",
         SQLiteValueRole::Scalar,
     );
@@ -2330,7 +2330,7 @@ fn sqlite_select_plan_avoids_root_path_alias_collision_with_nested_selected_link
         &plan.selected_values()[3],
         joins[1].target_alias(),
         "name",
-        "name",
+        Some("name"),
         "name",
         SQLiteValueRole::Scalar,
     );
@@ -2362,7 +2362,7 @@ fn sqlite_select_plan_reserves_root_selected_aliases_before_nested_selected_link
         &plan.selected_values()[3],
         joins[1].target_alias(),
         "name",
-        "name",
+        Some("name"),
         "name",
         SQLiteValueRole::Scalar,
     );
@@ -2370,7 +2370,7 @@ fn sqlite_select_plan_reserves_root_selected_aliases_before_nested_selected_link
         &plan.selected_values()[5],
         "best_friend",
         "name",
-        "name",
+        Some("name"),
         "name",
         SQLiteValueRole::Scalar,
     );
@@ -2450,7 +2450,7 @@ fn sqlite_select_plan_can_project_selected_single_link_scalar_field() {
         &selected_values[1],
         "author",
         "name",
-        "name",
+        Some("name"),
         "name",
         SQLiteValueRole::Scalar,
     );
@@ -2468,7 +2468,7 @@ fn sqlite_select_plan_projects_selected_single_link_identity() {
         &selected_values[0],
         "author",
         "id",
-        "id",
+        None,
         "id",
         SQLiteValueRole::ObjectId,
     );
@@ -2476,7 +2476,7 @@ fn sqlite_select_plan_projects_selected_single_link_identity() {
         &selected_values[1],
         "author",
         "name",
-        "name",
+        Some("name"),
         "name",
         SQLiteValueRole::Scalar,
     );
@@ -2495,7 +2495,7 @@ fn sqlite_select_plan_preserves_selected_value_order_with_nested_link() {
         &selected_values[0],
         "root",
         "title",
-        "title",
+        Some("title"),
         "title",
         SQLiteValueRole::Scalar,
     );
@@ -2503,7 +2503,7 @@ fn sqlite_select_plan_preserves_selected_value_order_with_nested_link() {
         &selected_values[1],
         "author",
         "id",
-        "id",
+        None,
         "id",
         SQLiteValueRole::ObjectId,
     );
@@ -2511,7 +2511,7 @@ fn sqlite_select_plan_preserves_selected_value_order_with_nested_link() {
         &selected_values[2],
         "author",
         "name",
-        "name",
+        Some("name"),
         "name",
         SQLiteValueRole::Scalar,
     );
@@ -2621,6 +2621,34 @@ fn sqlite_select_plan_can_join_optional_selected_single_link() {
 fn sqlite_select_plan_preserves_nested_result_shape_field_order() {
     let ir = post_query_with_shape(vec![post_author_shape_field_with_id_then_name()]);
     let plan = plan_select(&ir);
+    let selected_values = plan.selected_values();
+
+    assert_eq!(selected_values.len(), 3);
+    assert_selected_field(
+        &selected_values[0],
+        "author",
+        "id",
+        None,
+        "id",
+        SQLiteValueRole::ObjectId,
+    );
+    assert_selected_field(
+        &selected_values[1],
+        "author",
+        "id",
+        Some("id"),
+        "id",
+        SQLiteValueRole::ObjectId,
+    );
+    assert_selected_field(
+        &selected_values[2],
+        "author",
+        "name",
+        Some("name"),
+        "name",
+        SQLiteValueRole::Scalar,
+    );
+
     let author = &plan.result_shape().fields()[0];
     let nested_shape = author
         .nested_shape()
