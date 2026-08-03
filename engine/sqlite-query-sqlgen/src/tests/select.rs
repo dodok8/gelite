@@ -83,6 +83,7 @@ fn sqlite_sqlgen_can_render_computed_projection() {
         "SELECT (\"root\".\"view_count\" + ?) AS \"__gelite_value_0\" FROM \"post\" AS \"root\""
     );
     assert_eq!(statement.bind_values(), &[SQLiteBindValue::Int64(1)]);
+    assert_eq!(statement.output_names(), vec![Some("score".to_string())]);
 }
 
 #[test]
@@ -131,6 +132,10 @@ fn sqlite_sqlgen_can_render_selected_single_link_join() {
         statement.sql(),
         "SELECT \"root\".\"title\", \"author\".\"id\", \"author\".\"name\" FROM \"post\" AS \"root\" INNER JOIN \"user\" AS \"author\" ON \"root\".\"author_id\" = \"author\".\"id\""
     );
+    assert_eq!(
+        statement.output_names(),
+        vec![Some("title".to_string()), None, Some("name".to_string())]
+    )
 }
 
 #[test]
