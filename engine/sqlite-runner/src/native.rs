@@ -200,24 +200,41 @@ impl NativeSQLiteRunner {
         self.bind_query_values(&prepared, statement.bind_values())?;
 
         let column_count = prepared.column_count();
-        let mut columns = Vec::new();
-        for index in 0..column_count {
-            columns.push(
-                prepared
-                    .column_name(index)
-                    .map_err(|error| self.result_error("read result column name", error))?
-                    .to_string(),
-            );
+        let output_names = statement.output_names();
+
+        if !output_names.is_empty() && output_names.len() != column_count as usize {
+            return Err(SQLiteRunnerError::execution_failed(
+                "result output metadata does not match SQLite column count",
+            ));
         }
+
+        let selected_columns: Vec<(i32, String)> = if output_names.is_empty() {
+            (0..column_count)
+                .map(|index| {
+                    prepared
+                        .column_name(index)
+                        .map(|name| (index, name.to_string()))
+                        .map_err(|error| self.result_error("read result column name", error))
+                })
+                .collect::<Result<_, _>>()?
+        } else {
+            (0..column_count)
+                .zip(output_names)
+                .filter_map(|(index, name)| name.as_ref().map(|name| (index, name.clone())))
+                .collect()
+        };
+
+        let (column_indexes, columns): (Vec<_>, Vec<_>) = selected_columns.into_iter().unzip();
 
         let mut rows = Vec::new();
         loop {
             match prepared.step() {
                 Ok(ResultCode::ROW) => {
-                    let mut row = Vec::new();
-                    for index in 0..column_count {
-                        row.push(read_cell_value(&prepared, index)?);
-                    }
+                    let row = column_indexes
+                        .iter()
+                        .map(|index| read_cell_value(&prepared, *index))
+                        .collect::<Result<Vec<_>, _>>()?;
+
                     rows.push(row);
                 }
                 Ok(ResultCode::DONE) => break,
