@@ -418,7 +418,7 @@ Useful command checks:
 
 ```sh
 cargo run -p gelite-cli -- --help
-cargo run -p gelite-cli -- schema plan examples/blog.geli
+cargo run -p gelite-cli -- schema plan examples/organization.geli
 ```
 
 For formatting and lint checks:

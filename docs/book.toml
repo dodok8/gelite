@@ -1,0 +1,22 @@
+[book]
+title = "Gelite Documentation"
+authors = ["Gelite contributors"]
+description = "Runnable documentation for the Gelite query engine"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/gelite-dev/gelite"
+edit-url-template = "https://github.com/gelite-dev/gelite/edit/main/docs/{path}"
+preferred-dark-theme = "navy"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20

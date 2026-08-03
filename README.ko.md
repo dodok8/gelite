@@ -163,182 +163,39 @@ LIMIT 10
 
 ## 실행 방법
 
-전체 테스트:
+Organization 예제 schema를 local SQLite database에 적용합니다.
 
 ```sh
-cargo test --workspace
+cargo run -p gelite-cli -- schema apply examples/organization.geli --database organization.db
 ```
 
-현재 CLI 실행:
+Database-backed REPL을 엽니다.
 
 ```sh
-cargo run -p gelite-cli -- --help
+cargo run -p gelite-cli -- repl --database organization.db
 ```
 
-`gelite` binary를 직접 설치하거나 빌드한 경우에는 아래 예시에서
-`cargo run -p gelite-cli --` prefix를 빼고 사용할 수 있습니다.
+별도 문서에는 실행 가능한 예제 세 가지, REPL 입력 방법과 현재 출력 제약이
+정리되어 있습니다.
 
-### 현재 사용 가능한 CLI 명령
+- [시작하기](docs/src/README.md)
+- [Examples](docs/src/examples.md)
+- [Organization](docs/src/organization.md)
+- [Store](docs/src/store.md)
+- [Music catalog](docs/src/music.md)
+- [CLI reference](docs/src/cli.md)
+- [현재 제약](docs/src/limitations.md)
 
-현재 CLI에서 실제로 동작하는 명령 경로는 세 가지입니다.
-
-```text
-gelite schema plan <schema.geli>
-gelite schema apply <schema.geli> --database <app.db>
-gelite repl --schema <schema.geli> [--debug] [QUERY]...
-gelite repl --database <app.db> [--debug] [QUERY]...
-```
-
-`gelite schema plan <schema.geli>`는 schema source file을 parse하고, initial
-SQLite schema plan을 만들고, SQL과 metadata bind value를 출력합니다. 이 명령은
-database를 열거나 변경하지 않습니다.
-
-예시 schema file:
-
-```text
-type User {
-  required email: str
-}
-
-type Post {
-  required title: str
-  required link author: User
-}
-```
-
-schema planning 실행:
+CI와 같은 mdBook version을 설치한 뒤 local site를 실행합니다.
 
 ```sh
-cargo run -p gelite-cli -- schema plan examples/blog.geli
+cargo install mdbook --version 0.5.4 --locked
+mdbook serve docs
 ```
 
-schema를 SQLite database에 적용:
+mdBook 없이도 source Markdown을 직접 읽을 수 있습니다.
 
-```sh
-cargo run -p gelite-cli -- schema apply examples/blog.geli --database app.db
-```
-
-`gelite repl --schema <schema.geli>`는 schema source file에서 parse한 catalog를
-기준으로 현재 query inspection pipeline을 실행합니다. query 인자가 없으면
-interactive REPL을 시작하고, query 인자가 있으면 그 query 하나를 parse하고 SQL로
-렌더링합니다.
-
-`gelite repl --database <app.db>`는 SQLite database 안의 Gelite metadata table에서
-catalog를 읽고, select, insert, update, delete query를 실제 database에 실행합니다.
-`--debug`가 없으면 result row, 생성된 insert ID 또는 update/delete의
-`affected_rows`를 출력하고, `--debug`가 있으면 rendered SQL과 bind value를 먼저
-출력합니다.
-
-CLI REPL 실행:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db
-```
-
-`examples/blog.geli`를 적용한 뒤 interactive REPL에서 다음 query들을 실행할 수
-있습니다.
-
-User insert:
-
-```text
-insert User {
-  email := "alice@example.com"
-}
-```
-
-REPL이 생성한 UUID를 출력합니다. 이 값을 link된 Post를 insert할 때 사용합니다.
-
-```text
-insert Post {
-  title := "Draft",
-  view_count := 5,
-  author := "<generated-user-id>"
-}
-```
-
-Insert한 Post와 author 조회:
-
-```text
-select Post {
-  id,
-  title,
-  view_count,
-  author: {
-    email
-  }
-}
-```
-
-Link된 object를 기준으로 Post update:
-
-```text
-update Post filter .author.email = "alice@example.com" set {
-  title := "Reviewed"
-}
-```
-
-Update 결과 확인:
-
-```text
-select Post {
-  title,
-  author: {
-    email
-  }
-}
-filter .title = "Reviewed"
-```
-
-Link된 object를 기준으로 Post delete:
-
-```text
-delete Post
-filter .author.email = "alice@example.com"
-```
-
-성공하면 `affected_rows`가 출력됩니다. Filter는 선택 사항이므로 filter 없는
-`delete Post`는 확인 질문 없이 모든 `Post` row를 삭제합니다.
-
-Database-backed interactive REPL에서 여러 변경을 하나로 commit:
-
-```text
-start transaction
-insert User { email := "sheri@example.com" }
-insert User { email := "alice@example.com" }
-commit
-```
-
-`rollback`으로 변경 취소:
-
-```text
-start transaction
-delete Post filter .title = "Draft"
-rollback
-```
-
-각 command는 semicolon 없이 따로 입력합니다. Transaction command는 `--schema`
-compile-only session과 one-shot query argument에서는 지원하지 않습니다.
-
-query 하나 실행:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db 'select Post { title, author: { email } } filter .title = "Hello" order by .title desc limit 10'
-```
-
-Membership filter 실행:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db 'select Post { title, author: { email } } filter .title in ["Draft", "Published"] and .author.email not in ["blocked@example.com"] order by .title asc limit 20'
-```
-
-result row 전에 SQL과 bind value 출력:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db --debug 'select Post { title, author: { email } } filter .title = "Hello"'
-```
-
-CLI REPL은 숨겨진 default catalog를 사용하지 않습니다. `--schema`나 `--database`
-가 없으면 사용 안내 성격의 error를 내고 종료합니다.
+전체 project check는 `cargo test --workspace`로 실행합니다.
 
 ## 저장소 안내
 

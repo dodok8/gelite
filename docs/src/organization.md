@@ -1,0 +1,102 @@
+# Organization
+
+This `EMP`/`DEPT`-style example demonstrates a required department link and an
+optional self-referencing manager link.
+
+```text
+{{#include ../../examples/organization.geli}}
+```
+
+## Create data
+
+Apply the schema to a new database:
+
+```sh
+cargo run -p gelite-cli -- schema apply examples/organization.geli --database organization.db
+```
+
+Open `gelite repl --database organization.db`, then insert two departments and
+keep their generated IDs:
+
+```text
+insert Department { code := "INVESTIGATION", name := "Investigation" }
+```
+
+```text
+insert Department { code := "ARCHIVE", name := "Records Archive" }
+```
+
+Insert the manager first and keep her generated ID:
+
+```text
+insert Employee {
+  employee_no := "MG-667",
+  name := "Sheri Tachibana",
+  title := "Chief Investigator",
+  salary := 92000,
+  active := true,
+  hired_at := "2026-04-01T09:00:00Z",
+  department := "<investigation-department-id>"
+}
+```
+
+```text
+insert Employee {
+  employee_no := "MG-001",
+  name := "Emma Sakuraba",
+  title := "Investigator",
+  salary := 68000,
+  active := true,
+  hired_at := "2026-04-15T09:00:00Z",
+  department := "<investigation-department-id>",
+  manager := "<sheri-id>"
+}
+```
+
+```text
+insert Employee {
+  employee_no := "MG-002",
+  name := "Hiro Nikaido",
+  title := "Archivist",
+  salary := 64000,
+  active := true,
+  hired_at := "2026-05-01T09:00:00Z",
+  department := "<archive-department-id>",
+  manager := null
+}
+```
+
+## Query nested links
+
+```text
+select Employee {
+  employee_no,
+  name,
+  title,
+  department: {
+    code,
+    name
+  },
+  manager: {
+    name,
+    title
+  }
+}
+filter .active = true
+  and .department.code in ["INVESTIGATION", "ARCHIVE"]
+  and .employee_no not in ["MG-999"]
+order by .salary desc, .name asc
+limit 10
+offset 0
+```
+
+Find top-level employees whose optional manager link is absent:
+
+```text
+select Employee { employee_no, name, title }
+filter .manager.id = null
+order by .name asc
+```
+
+The REPL executes both queries but currently prints nested selections as flat
+tab-separated columns.
