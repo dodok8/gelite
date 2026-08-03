@@ -357,7 +357,7 @@ fn select_pipeline_executes_computed_projection() {
     let result =
         execute_query(r#"select Post { score := .view_count + 1 } order by .view_count asc"#);
 
-    assert_eq!(result.columns(), &["__gelite_value_0".to_string()]);
+    assert_eq!(result.columns(), &["score".to_string()]);
     assert_eq!(
         result.rows(),
         &[
@@ -387,9 +387,7 @@ filter .title = "Draft""#,
         result.columns(),
         &[
             "title".to_string(),
-            "id".to_string(),
             "email".to_string(),
-            "id".to_string(),
             "email".to_string(),
         ]
     );
@@ -397,10 +395,30 @@ filter .title = "Draft""#,
         result.rows(),
         &[vec![
             SQLiteCellValue::Text("Draft".to_string()),
+            SQLiteCellValue::Text("alice@example.com".to_string()),
+            SQLiteCellValue::Text("blocked@example.com".to_string()),
+        ]]
+    );
+}
+
+#[test]
+fn select_pipeline_preserves_explicit_nested_id() {
+    let result = execute_query(
+        r#"select Post {
+  author: {
+    id,
+    email
+  }
+}
+filter .title = "Draft""#,
+    );
+
+    assert_eq!(result.columns(), &["id".to_string(), "email".to_string()]);
+    assert_eq!(
+        result.rows(),
+        &[vec![
             SQLiteCellValue::Text("user-1".to_string()),
             SQLiteCellValue::Text("alice@example.com".to_string()),
-            SQLiteCellValue::Text("user-2".to_string()),
-            SQLiteCellValue::Text("blocked@example.com".to_string()),
         ]]
     );
 }
@@ -424,9 +442,7 @@ filter .email = "alice@example.com""#,
         result.columns(),
         &[
             "email".to_string(),
-            "id".to_string(),
             "email".to_string(),
-            "id".to_string(),
             "email".to_string(),
         ]
     );
@@ -434,9 +450,7 @@ filter .email = "alice@example.com""#,
         result.rows(),
         &[vec![
             SQLiteCellValue::Text("alice@example.com".to_string()),
-            SQLiteCellValue::Text("user-2".to_string()),
             SQLiteCellValue::Text("blocked@example.com".to_string()),
-            SQLiteCellValue::Text("user-3".to_string()),
             SQLiteCellValue::Text("carol@example.com".to_string()),
         ]]
     );
@@ -447,7 +461,7 @@ fn select_pipeline_executes_unary_arithmetic_computed_projection() {
     let result =
         execute_query(r#"select Post { neg_views := -.view_count } order by +.view_count asc"#);
 
-    assert_eq!(result.columns(), &["__gelite_value_0".to_string()]);
+    assert_eq!(result.columns(), &["neg_views".to_string()]);
     assert_eq!(
         result.rows(),
         &[
