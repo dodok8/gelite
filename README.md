@@ -167,196 +167,39 @@ compiler step can be inspected independently.
 
 ## Running the project
 
-Run all tests:
+Apply the organization example to a local SQLite database:
 
 ```sh
-cargo test --workspace
+cargo run -p gelite-cli -- schema apply examples/organization.geli --database organization.db
 ```
 
-Run the current CLI:
+Open the database-backed REPL:
 
 ```sh
-cargo run -p gelite-cli -- --help
+cargo run -p gelite-cli -- repl --database organization.db
 ```
 
-If the `gelite` binary is installed or built directly, the examples below can
-be written without the `cargo run -p gelite-cli --` prefix.
+The documentation contains three runnable examples, REPL input notes, and
+current output limitations:
 
-### Current CLI commands
+- [Getting started](docs/src/README.md)
+- [Examples](docs/src/examples.md)
+- [Organization](docs/src/organization.md)
+- [Store](docs/src/store.md)
+- [Music catalog](docs/src/music.md)
+- [CLI reference](docs/src/cli.md)
+- [Current limitations](docs/src/limitations.md)
 
-The current CLI exposes three working command paths:
-
-```text
-gelite schema plan <schema.geli>
-gelite schema apply <schema.geli> --database <app.db>
-gelite repl --schema <schema.geli> [--debug] [QUERY]...
-gelite repl --database <app.db> [--debug] [QUERY]...
-```
-
-`gelite schema plan <schema.geli>` parses a schema source file, builds the
-initial SQLite schema plan, renders SQL, and prints metadata bind values
-separately from SQL text. It does not open or mutate a database.
-
-Example schema file:
-
-```text
-type User {
-  required email: str
-}
-
-type Post {
-  required title: str
-  required link author: User
-}
-```
-
-Run schema planning:
+Install the CI-pinned mdBook version, then serve the documentation locally:
 
 ```sh
-cargo run -p gelite-cli -- schema plan examples/blog.geli
+cargo install mdbook --version 0.5.4 --locked
+mdbook serve docs
 ```
 
-Apply the schema to a SQLite database:
+The source Markdown remains readable without mdBook.
 
-```sh
-cargo run -p gelite-cli -- schema apply examples/blog.geli --database app.db
-```
-
-`gelite repl --schema <schema.geli>` runs the current query inspection pipeline
-against a catalog parsed from a schema source file. With no query argument, it
-starts the interactive REPL. With a query argument, it parses and renders that
-one query.
-
-`gelite repl --database <app.db>` loads the catalog from Gelite metadata tables
-inside the SQLite database and executes select, insert, update, and delete queries
-against that database. Without `--debug`, it prints result rows, a generated
-insert ID, or an `affected_rows` count for update and delete. With `--debug`, it
-prints the rendered SQL and bind values before the result.
-
-Open the CLI REPL:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db
-```
-
-### Multiline REPL input
-
-Press `Alt+Enter` to insert a newline without submitting the current input.
-On macOS, use `Opt+Enter` after configuring the terminal to send Option as
-Alt/Meta:
-
-- Terminal: enable **Settings > Profiles > Keyboard > Use Option as Meta key**.
-- iTerm2: set **Settings > Profiles > Keys > Left/Right Option Key** to
-  **Esc+**.
-
-Regular Enter continues automatically while braces are unbalanced.
-
-The following queries can be entered into the interactive REPL after applying
-`examples/blog.geli`.
-
-Insert a user:
-
-```text
-insert User {
-  email := "alice@example.com"
-}
-```
-
-The REPL prints the generated UUID. Use that value when inserting a linked
-post:
-
-```text
-insert Post {
-  title := "Draft",
-  view_count := 5,
-  author := "<generated-user-id>"
-}
-```
-
-Read the inserted post and its author:
-
-```text
-select Post {
-  id,
-  title,
-  view_count,
-  author: {
-    email
-  }
-}
-```
-
-Update posts selected through a linked object:
-
-```text
-update Post filter .author.email = "alice@example.com" set {
-  title := "Reviewed"
-}
-```
-
-Confirm the update:
-
-```text
-select Post {
-  title,
-  author: {
-    email
-  }
-}
-filter .title = "Reviewed"
-```
-
-Delete posts selected through a linked object:
-
-```text
-delete Post
-filter .author.email = "alice@example.com"
-```
-
-Successful execution prints an `affected_rows` count. The filter is optional;
-`delete Post` without a filter deletes every `Post` row and does not prompt for
-confirmation.
-
-Commit several changes as one unit in the database-backed interactive REPL:
-
-```text
-start transaction
-insert User { email := "sheri@example.com" }
-insert User { email := "alice@example.com" }
-commit
-```
-
-Discard changes with `rollback`:
-
-```text
-start transaction
-delete Post filter .title = "Draft"
-rollback
-```
-
-Enter each command separately without semicolons. Transaction commands are not
-supported by `--schema` compile-only sessions or by one-shot query arguments.
-
-Run one query through the CLI:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db 'select Post { title, author: { email } } filter .title = "Hello" order by .title desc limit 10'
-```
-
-Run a membership filter through the CLI:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db 'select Post { title, author: { email } } filter .title in ["Draft", "Published"] and .author.email not in ["blocked@example.com"] order by .title asc limit 20'
-```
-
-Print SQL and bind values before the result rows:
-
-```sh
-cargo run -p gelite-cli -- repl --database app.db --debug 'select Post { title, author: { email } } filter .title = "Hello"'
-```
-
-The CLI REPL does not use a hidden default catalog. If neither `--schema` nor
-`--database` is provided, the command exits with a usage-oriented error.
+Run the project checks with `cargo test --workspace`.
 
 ## Repository guide
 

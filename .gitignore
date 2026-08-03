@@ -4,6 +4,7 @@ gel/
 # Rust build output
 target/
 engine/target/
+docs/book/
 
 # SQLite local database files
 *.db

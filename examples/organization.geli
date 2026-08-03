@@ -1,0 +1,15 @@
+type Department {
+  required unique code: str
+  required name: str
+}
+
+type Employee {
+  required unique employee_no: str
+  required name: str
+  required title: str
+  required salary: int64
+  required active: bool
+  required hired_at: datetime
+  required link department: Department
+  link manager: Employee
+}

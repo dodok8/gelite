@@ -1,0 +1,26 @@
+type Customer {
+  required unique email: str
+  required name: str
+  required tier: str
+}
+
+type Product {
+  required unique sku: str
+  required name: str
+  required price: float64
+  required active: bool
+}
+
+type PurchaseOrder {
+  required unique order_no: str
+  required status: str
+  required ordered_at: datetime
+  required link customer: Customer
+}
+
+type OrderItem {
+  required quantity: int64
+  required unit_price: float64
+  required link purchase: PurchaseOrder
+  required link product: Product
+}
