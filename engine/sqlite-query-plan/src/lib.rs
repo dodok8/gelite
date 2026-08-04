@@ -367,7 +367,7 @@ pub enum SQLiteSelectValue {
 
 /// Schema-backed column selected by the generated SQL.
 pub struct SQLiteFieldSelectValue {
-    output_name: String,
+    output_name: Option<String>,
     value: SQLiteValueExpr,
     field: schema_model::FieldRef,
     role: SQLiteValueRole,
@@ -384,12 +384,12 @@ impl SQLiteSelectValue {
     pub fn from_field(
         source_alias: impl Into<String>,
         field: schema_model::FieldRef,
-        output_name: impl Into<String>,
+        output_name: Option<String>,
     ) -> Self {
         let source_alias = source_alias.into();
         let column_name = field.name().to_string();
         Self::Field(SQLiteFieldSelectValue {
-            output_name: output_name.into(),
+            output_name,
             value: SQLiteValueExpr::Column(SQLiteColumnRef {
                 source_alias,
                 column_name,
@@ -425,10 +425,10 @@ impl SQLiteSelectValue {
         }
     }
 
-    pub fn output_name(&self) -> &str {
+    pub fn output_name(&self) -> Option<&str> {
         match self {
             Self::Field(value) => value.output_name(),
-            Self::Computed(value) => value.output_name(),
+            Self::Computed(value) => Some(value.output_name()),
         }
     }
 
@@ -460,8 +460,8 @@ impl SQLiteSelectValue {
 }
 
 impl SQLiteFieldSelectValue {
-    pub fn output_name(&self) -> &str {
-        &self.output_name
+    pub fn output_name(&self) -> Option<&str> {
+        self.output_name.as_deref()
     }
 
     pub fn source_alias(&self) -> &str {
@@ -863,7 +863,7 @@ fn plan_shape_values(
                     values.push(SQLiteSelectValue::from_field(
                         nested_alias,
                         child_id_field,
-                        "id",
+                        None,
                     ));
 
                     let planned_child_values = plan_shape_values(
@@ -881,7 +881,7 @@ fn plan_shape_values(
                 None => values.push(SQLiteSelectValue::from_field(
                     source_alias,
                     field.field().clone(),
-                    field.output_name(),
+                    Some(field.output_name().to_string()),
                 )),
             },
             query_ir::ResolvedShapeItem::Computed(computed) => {

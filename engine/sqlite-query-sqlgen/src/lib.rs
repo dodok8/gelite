@@ -62,9 +62,16 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
         clauses.push(offset_clause);
     }
 
+    let output_names = plan
+        .selected_values()
+        .iter()
+        .map(|value| value.output_name().map(str::to_string))
+        .collect();
+
     SQLiteStatement {
         sql: clauses.join(" "),
         bind_values,
+        output_names,
     }
 }
 
@@ -82,15 +89,15 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
         bind_values.push(bind_value_from_literal(assignment.value()));
     }
 
-    SQLiteStatement {
-        sql: format!(
+    SQLiteStatement::new(
+        format!(
             "INSERT INTO {} ({}) VALUES ({})",
             quote_identifier(plan.root_target().table_name()),
             columns.join(", "),
             vec!["?"; columns.len()].join(", ")
         ),
         bind_values,
-    }
+    )
 }
 
 /// Renders a structured SQLite update plan into SQL text and bind values.
@@ -129,7 +136,7 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement { sql, bind_values }
+    SQLiteStatement::new(sql, bind_values)
 }
 
 /// Renders a structured SQLite delete plan into SQL text and bind values.
@@ -154,7 +161,7 @@ pub fn render_delete(plan: &SQLiteDeletePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement { sql, bind_values }
+    SQLiteStatement::new(sql, bind_values)
 }
 
 fn append_mutation_filter(
@@ -490,6 +497,7 @@ fn render_offset_clause(plan: &SQLiteSelectPlan) -> Option<String> {
 pub struct SQLiteStatement {
     sql: String,
     bind_values: Vec<SQLiteBindValue>,
+    output_names: Vec<Option<String>>,
 }
 
 impl SQLiteStatement {
@@ -497,6 +505,7 @@ impl SQLiteStatement {
         Self {
             sql: sql.into(),
             bind_values,
+            output_names: vec![],
         }
     }
 
@@ -506,6 +515,10 @@ impl SQLiteStatement {
 
     pub fn bind_values(&self) -> &[SQLiteBindValue] {
         &self.bind_values
+    }
+
+    pub fn output_names(&self) -> &[Option<String>] {
+        &self.output_names
     }
 }
 

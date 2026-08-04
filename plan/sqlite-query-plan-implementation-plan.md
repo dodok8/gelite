@@ -703,6 +703,51 @@ WHERE (root.title = ?) AND (root.status = ?)
 and collect bind values in the same left-to-right traversal order as the
 placeholder generation.
 
+## Next Slice: User-Visible Select Results
+
+Issue #40 should stop exposing physical SQLite result columns as logical query
+output. The planner already preserves both sides of this boundary:
+
+- `SQLiteSelectPlan.selected_values` describes the ordered physical columns
+  required by SQL execution.
+- `SQLiteSelectPlan.result_shape` describes the logical output fields and keeps
+  synthesized nested object identities separate from those fields.
+
+The next slice should derive one ordered output descriptor from that existing
+metadata and carry it with the rendered select statement to execution. Each
+physical column position should either name one user-visible output field or be
+marked internal. Runtime row decoding should then:
+
+- rename computed SQL aliases such as `__gelite_value_0` to their logical
+  `output_name`
+- omit synthesized nested object identity columns from user-facing columns and
+  rows
+- preserve `id` when it was explicitly selected by the query
+- preserve the requested field order
+
+Internal identity values must remain in the generated SQL. They are needed for
+later null detection, object deduplication, and nested result reconstruction;
+this slice changes only the public projection of the physical row.
+
+Use column positions rather than SQLite column-name lookup. Physical names may
+repeat across joins, and an explicitly selected nested `id` may coexist with a
+synthesized identity value for the same object.
+
+Implementation order:
+
+1. Represent the visibility and logical name of each ordered selected value in
+   the SQLite select plan.
+2. Preserve that output descriptor when the REPL compiles a select instead of
+   retaining only the rendered statement.
+3. Apply the descriptor after native row decoding and before constructing the
+   user-facing `SQLiteQueryResult`.
+4. Update pipeline and REPL tests for logical computed names, hidden internal
+   identities, explicit `id`, and stable field order.
+
+This slice does not reconstruct nested JSON-like objects, merge duplicate rows,
+or implement multi-link follow-up fetching. Those behaviors should reuse the
+same internal identity values in the later runtime result-shaping slice.
+
 ## Commit Strategy
 
 Use small commits:
@@ -762,7 +807,7 @@ Later replacement options:
 - add a richer resolved field descriptor to `ir`
 - pass catalog-backed field metadata into sqlite planning
 
-### Implicit nested object identity is not fully modeled yet
+### Implicit nested object identity is hidden from flat query results
 
 Selected nested objects need an identity value for result shaping. For example:
 
@@ -772,34 +817,32 @@ select Post {
 }
 ```
 
-The planner will eventually need both:
+The planner selects both:
 
 ```text
 author.id
 author.name
 ```
 
-Current limitation:
+Current behavior:
 
-- `query_ir::ResolvedShape` does not explicitly include internal identity slots.
-- `SQLiteSelectValue` does not distinguish user-requested output values from
-  internal shaping values.
-- `SQLiteSelectValue.output_name` is still a plain `String`, so internal values
-  cannot be represented as `None` yet.
+- the planner synthesizes nested `id` values when entering a selected
+  single-link child shape
+- `SQLiteResultShapePlan` keeps those identities separate from user-requested
+  fields
+- `SQLiteSelectValue::output_name` returns `None` for synthesized identities and
+  the logical output name for user-requested values
+- `render_select` carries those ordered output names in `SQLiteStatement`
+- the native runner uses the positional metadata to hide synthesized identities,
+  expose computed values under their logical names, and preserve explicitly
+  selected `id` fields
 
-Short-term acceptable rule:
+Deferred result shaping:
 
-- The planner may synthesize nested `id` values when entering a selected
-  single-link child shape.
-- The synthesized value may use output name `"id"` until result shape metadata
-  can distinguish internal identity slots.
-
-Later replacement:
-
-- introduce `SQLiteValueSlot`
-- introduce `SQLiteResultShapePlan`
-- make result shape fields point at slots
-- represent internal identity values separately from user output fields
+- reconstruct nested objects instead of returning one flat row
+- use synthesized identities for optional-object null detection and object
+  deduplication
+- fetch and shape selected multi-link fields
 
 ### Selected link detection relies on child shape presence
 
