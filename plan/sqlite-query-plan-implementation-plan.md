@@ -807,7 +807,7 @@ Later replacement options:
 - add a richer resolved field descriptor to `ir`
 - pass catalog-backed field metadata into sqlite planning
 
-### Implicit nested object identity is not hidden at runtime yet
+### Implicit nested object identity is hidden from flat query results
 
 Selected nested objects need an identity value for result shaping. For example:
 
@@ -817,29 +817,32 @@ select Post {
 }
 ```
 
-The planner will eventually need both:
+The planner selects both:
 
 ```text
 author.id
 author.name
 ```
 
-Current limitation:
+Current behavior:
 
 - the planner synthesizes nested `id` values when entering a selected
   single-link child shape
 - `SQLiteResultShapePlan` keeps those identities separate from user-requested
-  fields, but `SQLiteSelectValue` does not expose that distinction to execution
-- the REPL retains only the rendered statement, so the native runner reports
-  SQLite's physical column names and includes the synthesized identities
+  fields
+- `SQLiteSelectValue::output_name` returns `None` for synthesized identities and
+  the logical output name for user-requested values
+- `render_select` carries those ordered output names in `SQLiteStatement`
+- the native runner uses the positional metadata to hide synthesized identities,
+  expose computed values under their logical names, and preserve explicitly
+  selected `id` fields
 
-Planned replacement:
+Deferred result shaping:
 
-- derive an ordinal output descriptor from `SQLiteSelectPlan`
-- mark synthesized identities as internal without removing them from SQL
-- carry the descriptor through REPL execution
-- project decoded rows to logical names and user-visible values before returning
-  `SQLiteQueryResult`
+- reconstruct nested objects instead of returning one flat row
+- use synthesized identities for optional-object null detection and object
+  deduplication
+- fetch and shape selected multi-link fields
 
 ### Selected link detection relies on child shape presence
 
