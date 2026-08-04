@@ -216,12 +216,15 @@ The value expression is resolved against the `ResolvedShape` source object that
 contains the computed field. A computed field inside a nested link shape uses
 the nested shape source object, not the root select object.
 
-The first computed projection milestone accepts scalar numeric arithmetic
-expressions and supported built-in value functions over scalar paths and scalar
-literals. Boolean expressions, membership expressions, link values,
-many-cardinality paths, `null`, unsupported function calls, and subqueries are
-rejected before SQLite planning. Literal-only computed projections are also
-rejected in this milestone because they do not depend on the current row.
+Computed projections accept direct scalar paths, scalar numeric arithmetic
+expressions, and supported built-in value functions over scalar paths and
+scalar literals. A direct path may traverse declared single links and must end
+at a scalar field. The computed field uses the terminal scalar type and the
+cardinality derived from the complete path. Boolean expressions, membership
+expressions, link values, many-cardinality paths, `null`, unsupported function
+calls, and subqueries are rejected before SQLite planning. Literal-only
+computed projections are also rejected in this milestone because they do not
+depend on the current row.
 
 Output names must be unique within one `ResolvedShape`. This rule applies
 across schema-backed fields and computed fields. Nested shapes have independent

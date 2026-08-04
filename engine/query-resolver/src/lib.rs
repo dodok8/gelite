@@ -468,7 +468,8 @@ fn resolve_computed_shape_item(
 fn computed_projection_expr_is_supported(expr: &query_ast::Expr) -> bool {
     matches!(
         expr,
-        query_ast::Expr::Arithmetic(_)
+        query_ast::Expr::Path(_)
+            | query_ast::Expr::Arithmetic(_)
             | query_ast::Expr::UnaryArithmetic(_)
             | query_ast::Expr::FunctionCall(_)
     )

@@ -111,14 +111,25 @@ primary_expr     := literal | path | "(" expr ")"
 - Backlink traversal and inferred inverse relations are not supported in the
   MVP.
 
-Computed projection expressions are value expressions. The first computed
-projection milestone accepts numeric arithmetic expressions and supported
-built-in value functions over scalar paths and scalar literals:
+Computed projection expressions are value expressions. The supported subset
+includes scalar paths, numeric arithmetic expressions, and supported built-in
+value functions over scalar paths and scalar literals:
 
 ```text
 select Post {
   title,
+  title_copy := .title,
   score := .likes * 10 + .view_count
+}
+```
+
+A direct path must end at a scalar field. It may traverse declared single
+links, and its result type is the terminal scalar type. Its result cardinality
+is derived from the complete path:
+
+```text
+select Post {
+  author_name := .author.name
 }
 ```
 

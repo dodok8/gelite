@@ -338,6 +338,17 @@ fn select_pipeline_renders_computed_projection_from_query_text() {
 }
 
 #[test]
+fn select_pipeline_renders_path_only_computed_projection_from_query_text() {
+    let statement = render_query(r#"select Post { title_copy := .title }"#);
+
+    assert_eq!(
+        statement.sql(),
+        "SELECT \"root\".\"title\" AS \"__gelite_value_0\" FROM \"post\" AS \"root\""
+    );
+    assert!(statement.bind_values().is_empty());
+}
+
+#[test]
 fn select_pipeline_executes_root_scalar_comparison_filter() {
     let result =
         execute_query(r#"select Post { title } filter .view_count >= 10 order by .title asc"#);
@@ -364,6 +375,21 @@ fn select_pipeline_executes_computed_projection() {
             vec![SQLiteCellValue::Integer(6)],
             vec![SQLiteCellValue::Integer(21)],
             vec![SQLiteCellValue::Integer(101)],
+        ]
+    );
+}
+
+#[test]
+fn select_pipeline_executes_path_only_computed_projection() {
+    let result = execute_query(r#"select Post { title_copy := .title } order by .view_count asc"#);
+
+    assert_eq!(result.columns(), &["title_copy".to_string()]);
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![SQLiteCellValue::Text("Draft".to_string())],
+            vec![SQLiteCellValue::Text("Published".to_string())],
+            vec![SQLiteCellValue::Text("Archived".to_string())],
         ]
     );
 }
