@@ -695,7 +695,7 @@ fn resolves_unary_arithmetic_parenthesized_binary_operand() {
 }
 
 #[test]
-fn rejects_computed_projection_plain_path_expr() {
+fn resolves_computed_projection_plain_path_expr() {
     let catalog = post_with_scalar_fields_catalog();
 
     let query = SelectQuery::new(
@@ -710,13 +710,164 @@ fn rejects_computed_projection_plain_path_expr() {
         None,
     );
 
-    let resolved = resolve_select(&catalog, &query);
+    let resolved = resolve_select(&catalog, &query).expect("select query resolves");
+    let query_ir::ResolvedShapeItem::Computed(computed) = &resolved.shape().items()[0] else {
+        panic!("shape item should resolve to a computed projection");
+    };
+
+    assert_eq!(computed.output_name(), "score");
+    assert_eq!(computed.scalar_type(), ScalarType::Int64);
+    assert_eq!(computed.cardinality(), Cardinality::Required);
+
+    let ValueExpr::Path(path) = computed.value() else {
+        panic!("computed projection should store a path value expression");
+    };
+    assert_eq!(path.root_object_type().name(), "Post");
+    assert_eq!(path.steps().len(), 1);
+    assert_eq!(path.steps()[0].field().name(), "view_count");
+}
+
+#[test]
+fn resolves_computed_projection_path_through_single_link() {
+    let catalog = post_with_author_catalog();
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::computed(
+            "author_name",
+            path_expr(&["author", "name"]),
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let resolved = resolve_select(&catalog, &query).expect("select query resolves");
+    let query_ir::ResolvedShapeItem::Computed(computed) = &resolved.shape().items()[0] else {
+        panic!("shape item should resolve to a computed projection");
+    };
+
+    assert_eq!(computed.output_name(), "author_name");
+    assert_eq!(computed.scalar_type(), ScalarType::Str);
+    assert_eq!(computed.cardinality(), Cardinality::Required);
+
+    let ValueExpr::Path(path) = computed.value() else {
+        panic!("computed projection should store a path value expression");
+    };
+    assert_eq!(path.root_object_type().name(), "Post");
+    assert_eq!(path.steps().len(), 2);
+    assert_eq!(path.steps()[0].field().name(), "author");
+    assert_eq!(path.steps()[1].field().name(), "name");
+}
+
+#[test]
+fn resolves_nested_computed_projection_path_relative_to_child_shape() {
+    let catalog = post_with_author_catalog();
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("author")]),
+            Some(Shape::new(vec![ShapeItem::computed(
+                "name_copy",
+                path_expr(&["name"]),
+            )])),
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let resolved = resolve_select(&catalog, &query).expect("select query resolves");
+    let query_ir::ResolvedShapeItem::Field(author) = &resolved.shape().items()[0] else {
+        panic!("shape item should resolve to a field");
+    };
+    let child_shape = author
+        .child_shape()
+        .expect("author should have a child shape");
+    let query_ir::ResolvedShapeItem::Computed(computed) = &child_shape.items()[0] else {
+        panic!("child shape item should resolve to a computed projection");
+    };
+    let ValueExpr::Path(path) = computed.value() else {
+        panic!("computed projection should store a path value expression");
+    };
+
+    assert_eq!(child_shape.source_object_type().name(), "User");
+    assert_eq!(computed.output_name(), "name_copy");
+    assert_eq!(computed.scalar_type(), ScalarType::Str);
+    assert_eq!(computed.cardinality(), Cardinality::Required);
+    assert_eq!(path.root_object_type().name(), "User");
+    assert_eq!(path.steps()[0].field().name(), "name");
+}
+
+#[test]
+fn preserves_optional_computed_projection_path_cardinality() {
+    let catalog = post_with_optional_subtitle_catalog();
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::computed(
+            "subtitle_copy",
+            path_expr(&["subtitle"]),
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    let resolved = resolve_select(&catalog, &query).expect("select query resolves");
+    let query_ir::ResolvedShapeItem::Computed(computed) = &resolved.shape().items()[0] else {
+        panic!("shape item should resolve to a computed projection");
+    };
+
+    assert_eq!(computed.scalar_type(), ScalarType::Str);
+    assert_eq!(computed.cardinality(), Cardinality::Optional);
+}
+
+#[test]
+fn rejects_computed_projection_path_ending_at_link() {
+    let catalog = post_with_author_catalog();
+
+    let query = SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::computed(
+            "author_value",
+            path_expr(&["author"]),
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
 
     assert_eq!(
-        resolved,
-        Err(ResolveError::UnsupportedExpr {
-            expr_type: "computed projection".to_string()
-        })
+        resolve_select(&catalog, &query),
+        Err(ResolveError::UnsupportedPath)
+    );
+}
+
+#[test]
+fn rejects_computed_projection_path_through_multi_link() {
+    let catalog = user_with_posts_catalog();
+
+    let query = SelectQuery::new(
+        "User",
+        Shape::new(vec![ShapeItem::computed(
+            "post_views",
+            path_expr(&["posts", "view_count"]),
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+
+    assert_eq!(
+        resolve_select(&catalog, &query),
+        Err(ResolveError::UnsupportedPath)
     );
 }
 
