@@ -231,8 +231,8 @@ fn run_query_command(command: QueryCommand) -> Result<(), String> {
         .map_err(|error| format!("failed to read {}: {error}", schema.display()))?;
     let query_source = fs::read_to_string(&query_file)
         .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
-    let catalog =
-        schema_parser::parse_schema(&schema_source).map_err(|error| format!("{error:#?}"))?;
+    let catalog = schema_parser::parse_schema(&schema_source)
+        .map_err(|error| format!("failed to parse schema {}: {error:#?}", schema.display()))?;
     let compiled =
         compile_query(&catalog, &query_source).map_err(|error| error.message().to_string())?;
 
@@ -252,7 +252,7 @@ mod tests {
     use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
-    use super::{Cli, Command, QueryCommand, execute_request};
+    use super::{Cli, Command, QueryCommand, execute_request, run_query_command};
 
     #[test]
     fn query_plan_accepts_query_file_and_schema_option() {
@@ -274,6 +274,18 @@ mod tests {
 
         assert_eq!(query_file, PathBuf::from("query.geliql"));
         assert_eq!(schema, PathBuf::from("schema.geli"));
+    }
+
+    #[test]
+    fn query_plan_reports_schema_parse_context() {
+        let schema = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let error = run_query_command(QueryCommand::Plan {
+            query_file: schema.clone(),
+            schema: schema.clone(),
+        })
+        .expect_err("invalid schema should fail");
+
+        assert!(error.starts_with(&format!("failed to parse schema {}:", schema.display())));
     }
 
     #[test]
