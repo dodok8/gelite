@@ -5,7 +5,9 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand};
-use gelite_commands::{CompiledQuery, QueryKind, SchemaPlanStatement, apply_schema, plan_schema};
+use gelite_commands::{
+    CompiledQuery, QueryKind, SchemaPlanStatement, apply_schema, compile_query, plan_schema,
+};
 use sqlite_runner::native::NativeSQLiteRunner;
 
 #[derive(Debug, Parser)]
@@ -23,6 +25,8 @@ enum Command {
         command: SchemaCommand,
     },
     Repl(ReplCommand),
+    Plan(PlanCommand),
+    Run(RunCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -49,6 +53,18 @@ struct ReplCommand {
     query: Vec<String>,
 }
 
+#[derive(Debug, Args)]
+struct PlanCommand {
+    schema_file: PathBuf,
+    query: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct RunCommand {
+    database: PathBuf,
+    query: Vec<String>,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -65,6 +81,8 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Schema { command } => run_schema_command(command),
         Command::Repl(command) => run_repl_command(command),
+        Command::Run(command) => todo!("Run is not implemented Yet!"),
+        Command::Plan(command) => run_plan_command(command),
     }
 }
 
@@ -206,6 +224,20 @@ fn affected_rows_result(affected_rows: i64) -> sqlite_runner::SQLiteQueryResult 
 fn path_to_str(path: &Path) -> Result<&str, String> {
     path.to_str()
         .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))
+}
+
+fn run_plan_command(command: PlanCommand) -> Result<(), String> {
+    let schema = fs::read_to_string(&command.schema_file)
+        .map_err(|error| format!("failed to read {}: {error}", command.schema_file.display()))?;
+
+    let catalog = schema_parser::parse_schema(&schema).map_err(|error| format!("{error:#?}"))?;
+
+    let source = command.query.join(" ");
+    let compiled = compile_query(&catalog, &source).map_err(|error| error.message().to_string())?;
+
+    println!("SQL:\n{}", compiled.statement.sql());
+    println!("Bind values: {:?}", compiled.statement.bind_values());
+    Ok(())
 }
 
 #[cfg(test)]
