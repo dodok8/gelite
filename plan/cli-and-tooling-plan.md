@@ -224,10 +224,11 @@ Pipeline:
 read schema.geli
 -> schema_parser::parse_schema
 read query.geliql
--> query_parser::parse_select
--> query_resolver::resolve_select
--> sqlite_query_plan::plan_select
--> sqlite_query_sqlgen::render_select
+-> dispatch select, insert, update, or delete
+-> query_parser parses the statement
+-> query_resolver resolves it against the schema catalog
+-> sqlite_query_plan creates the statement plan
+-> sqlite_query_sqlgen renders SQL and ordered bind values
 -> print SQL and bind values
 ```
 

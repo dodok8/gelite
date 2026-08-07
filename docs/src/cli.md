@@ -5,6 +5,7 @@ The current executable command paths are:
 ```text
 gelite schema plan <schema.geli>
 gelite schema apply <schema.geli> --database <app.db>
+gelite query plan <query.geliql> --schema <schema.geli>
 gelite repl --schema <schema.geli> [--debug] [QUERY]...
 gelite repl --database <app.db> [--debug] [QUERY]...
 ```
@@ -17,10 +18,19 @@ When running from this repository, prefix each command with
 `schema plan` prints initial SQLite DDL and metadata bind values without opening
 a database. `schema apply` creates the initial schema in a new database.
 
+## Query modes
+
+`query plan` reads query and schema files, then prints the rendered SQL and bind
+values without opening a database or executing the query.
+
 ## REPL modes
 
 `repl --schema` compiles queries without executing them. `repl --database`
 loads the schema catalog from the database and executes supported data queries.
+
+Insert compilation generates a fresh UUID v4 for the implicit `id` bind value.
+Its rendered bind output changes between runs and is not suitable for stable
+snapshot comparison or use as a reproducible plan artifact.
 
 With no query argument, either mode starts an interactive REPL. Enter each
 statement without a semicolon. Regular Enter continues while braces are

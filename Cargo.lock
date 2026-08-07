@@ -250,10 +250,16 @@ dependencies = [
 name = "gelite-commands"
 version = "0.1.0"
 dependencies = [
+ "query-parser",
+ "query-resolver",
+ "schema-model",
  "schema-parser",
+ "sqlite-query-plan",
+ "sqlite-query-sqlgen",
  "sqlite-runner",
  "sqlite-schema-plan",
  "sqlite-schema-sqlgen",
+ "uuid",
 ]
 
 [[package]]
@@ -580,16 +586,13 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "repl"
 version = "0.1.0"
 dependencies = [
+ "gelite-commands",
  "query-ast",
- "query-ir",
  "query-parser",
- "query-resolver",
  "rustyline",
  "schema-model",
- "sqlite-query-plan",
  "sqlite-query-sqlgen",
  "sqlite-runner",
- "uuid",
 ]
 
 [[package]]

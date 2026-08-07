@@ -5,7 +5,9 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand};
-use gelite_commands::{SchemaPlanStatement, apply_schema, plan_schema};
+use gelite_commands::{
+    CompiledQuery, QueryKind, SchemaPlanStatement, apply_schema, compile_query, plan_schema,
+};
 use sqlite_runner::native::NativeSQLiteRunner;
 
 #[derive(Debug, Parser)]
@@ -22,6 +24,10 @@ enum Command {
         #[command(subcommand)]
         command: SchemaCommand,
     },
+    Query {
+        #[command(subcommand)]
+        command: QueryCommand,
+    },
     Repl(ReplCommand),
 }
 
@@ -34,6 +40,15 @@ enum SchemaCommand {
         schema_file: PathBuf,
         #[arg(long)]
         database: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum QueryCommand {
+    Plan {
+        query_file: PathBuf,
+        #[arg(long)]
+        schema: PathBuf,
     },
 }
 
@@ -64,6 +79,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Schema { command } => run_schema_command(command),
+        Command::Query { command } => run_query_command(command),
         Command::Repl(command) => run_repl_command(command),
     }
 }
@@ -160,12 +176,12 @@ fn execute_request(
     request: repl::ExecutionRequest,
 ) -> Result<Option<sqlite_runner::SQLiteQueryResult>, String> {
     match request {
-        repl::ExecutionRequest::Query { kind, statement } => match kind {
-            repl::QueryKind::Select => runner
+        repl::ExecutionRequest::Query(CompiledQuery { kind, statement }) => match kind {
+            QueryKind::Select => runner
                 .execute_select(&statement)
                 .map(Some)
                 .map_err(|error| error.message().to_string()),
-            repl::QueryKind::Insert { generated_id } => {
+            QueryKind::Insert { generated_id } => {
                 runner
                     .execute_insert(&statement)
                     .map_err(|error| error.message().to_string())?;
@@ -175,12 +191,12 @@ fn execute_request(
                     vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
                 )))
             }
-            repl::QueryKind::Update => runner
+            QueryKind::Update => runner
                 .execute_update(&statement)
                 .map(affected_rows_result)
                 .map(Some)
                 .map_err(|error| error.message().to_string()),
-            repl::QueryKind::Delete => runner
+            QueryKind::Delete => runner
                 .execute_delete(&statement)
                 .map(affected_rows_result)
                 .map(Some)
@@ -208,13 +224,69 @@ fn path_to_str(path: &Path) -> Result<&str, String> {
         .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))
 }
 
+fn run_query_command(command: QueryCommand) -> Result<(), String> {
+    let QueryCommand::Plan { query_file, schema } = command;
+
+    let schema_source = fs::read_to_string(&schema)
+        .map_err(|error| format!("failed to read {}: {error}", schema.display()))?;
+    let query_source = fs::read_to_string(&query_file)
+        .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
+    let catalog = schema_parser::parse_schema(&schema_source)
+        .map_err(|error| format!("failed to parse schema {}: {error:#?}", schema.display()))?;
+    let compiled =
+        compile_query(&catalog, &query_source).map_err(|error| error.message().to_string())?;
+
+    println!("SQL:\n{}", compiled.statement.sql());
+    println!("Bind values: {:?}", compiled.statement.bind_values());
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use repl::{ExecutionRequest, QueryKind, TransactionCommand};
+    use std::path::PathBuf;
+
+    use clap::Parser;
+    use gelite_commands::{CompiledQuery, QueryKind};
+    use repl::{ExecutionRequest, TransactionCommand};
     use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
-    use super::execute_request;
+    use super::{Cli, Command, QueryCommand, execute_request, run_query_command};
+
+    #[test]
+    fn query_plan_accepts_query_file_and_schema_option() {
+        let cli = Cli::try_parse_from([
+            "gelite",
+            "query",
+            "plan",
+            "query.geliql",
+            "--schema",
+            "schema.geli",
+        ])
+        .expect("query plan arguments should parse");
+        let Command::Query {
+            command: QueryCommand::Plan { query_file, schema },
+        } = cli.command
+        else {
+            panic!("expected query plan command");
+        };
+
+        assert_eq!(query_file, PathBuf::from("query.geliql"));
+        assert_eq!(schema, PathBuf::from("schema.geli"));
+    }
+
+    #[test]
+    fn query_plan_reports_schema_parse_context() {
+        let schema = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let error = run_query_command(QueryCommand::Plan {
+            query_file: schema.clone(),
+            schema: schema.clone(),
+        })
+        .expect_err("invalid schema should fail");
+
+        assert!(error.starts_with(&format!("failed to parse schema {}:", schema.display())));
+    }
 
     #[test]
     fn native_repl_executor_maps_query_results() {
@@ -225,7 +297,7 @@ mod tests {
 
         let insert = execute_request(
             &mut runner,
-            ExecutionRequest::Query {
+            ExecutionRequest::Query(CompiledQuery {
                 kind: QueryKind::Insert {
                     generated_id: "entry-1".to_string(),
                 },
@@ -236,7 +308,7 @@ mod tests {
                         SQLiteBindValue::Int64(1),
                     ],
                 ),
-            },
+            }),
         )
         .expect("insert should execute")
         .expect("insert should return the generated id");
@@ -247,10 +319,10 @@ mod tests {
 
         let select = execute_request(
             &mut runner,
-            ExecutionRequest::Query {
+            ExecutionRequest::Query(CompiledQuery {
                 kind: QueryKind::Select,
                 statement: SQLiteStatement::new("SELECT value FROM entry", vec![]),
-            },
+            }),
         )
         .expect("select should execute")
         .expect("select should return rows");
@@ -265,10 +337,10 @@ mod tests {
         ] {
             let result = execute_request(
                 &mut runner,
-                ExecutionRequest::Query {
+                ExecutionRequest::Query(CompiledQuery {
                     kind,
                     statement: SQLiteStatement::new(sql, vec![]),
-                },
+                }),
             )
             .expect("mutation should execute")
             .expect("mutation should return affected rows");
@@ -321,10 +393,10 @@ mod tests {
 
         let result = execute_request(
             &mut runner,
-            ExecutionRequest::Query {
+            ExecutionRequest::Query(CompiledQuery {
                 kind: QueryKind::Select,
                 statement: SQLiteStatement::new("SELECT id FROM entry", vec![]),
-            },
+            }),
         )
         .expect("select should execute")
         .expect("select should return rows");

@@ -137,6 +137,10 @@ This structure keeps Gel-like language semantics separate from SQLite-specific
 storage decisions. It also makes the code useful as a study project: each
 compiler step can be inspected independently.
 
+Insert compilation generates a fresh UUID v4 for the implicit `id` bind value.
+Rendered insert bind output is therefore non-deterministic and must not be used
+as a stable snapshot or reproducible plan artifact.
+
 ## What is implemented
 
 - `schema-model`: semantic schema catalog with object types, scalar fields,
@@ -159,7 +163,7 @@ compiler step can be inspected independently.
 
 ## What is not implemented yet
 
-- `gelite query plan` and `gelite query run`.
+- `gelite query run`.
 - Migration diffing and migration history.
 - Runtime nested result shaping.
 - HTTP API.
