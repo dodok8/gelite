@@ -1,4 +1,4 @@
-use gelite_commands::{CommandError, CompiledQuery, QueryKind, compile_query as raw_compile_query};
+use gelite_commands::{CompiledQuery, compile_query};
 pub use query_ast::TransactionCommand;
 use query_parser::parse_transaction_command;
 use rustyline::{Cmd, DefaultEditor, KeyCode, KeyEvent, Modifiers, error::ReadlineError};
@@ -6,7 +6,6 @@ use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
     SingleCardinality,
 };
-use sqlite_query_sqlgen::SQLiteStatement;
 use sqlite_runner::{SQLiteCellValue, SQLiteQueryResult};
 
 pub struct ReplOptions {
@@ -296,21 +295,6 @@ fn needs_more_input(input: &str) -> bool {
     in_string || balance > 0
 }
 
-fn compile_query(
-    catalog: &SchemaCatalog,
-    query_text: &str,
-    debug: bool,
-) -> Result<(QueryKind, SQLiteStatement), CommandError> {
-    let compiled = raw_compile_query(catalog, query_text)?;
-
-    if debug {
-        println!("SQL:\n{}", compiled.statement().sql());
-        println!("Bind values: {:?}", compiled.statement().bind_values());
-    }
-
-    Ok((compiled.kind().clone(), compiled.statement().clone()))
-}
-
 fn compile_input(
     catalog: &SchemaCatalog,
     input: &str,
@@ -323,8 +307,14 @@ fn compile_input(
                 eprintln!("failed to parse transaction command: {error:#?}");
                 ReplError
             }),
-        _ => compile_query(catalog, input, debug)
-            .map(|(kind, statement)| ExecutionRequest::Query(CompiledQuery { kind, statement }))
+        _ => compile_query(catalog, input)
+            .map(|compiled| {
+                if debug {
+                    println!("SQL:\n{}", compiled.statement.sql());
+                    println!("Bind values: {:?}", compiled.statement.bind_values());
+                }
+                ExecutionRequest::Query(compiled)
+            })
             .map_err(|error| {
                 eprintln!("{}", error.message());
                 ReplError
@@ -387,15 +377,15 @@ fn build_development_schema() -> SchemaCatalog {
 
 #[cfg(test)]
 mod tests {
-    use gelite_commands::CompiledQuery;
+    use gelite_commands::{CompiledQuery, QueryKind, compile_query};
     use query_ast::TransactionCommand;
     use sqlite_query_sqlgen::SQLiteStatement;
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
     use super::{
-        DefaultEditor, ExecutionRequest, QueryKind, ReplError, ReplLoopAction, ReplOptions,
-        ReplRuntime, build_development_schema, compile_query, complete_repl_inputs,
-        handle_repl_line, needs_more_input, run_with_catalog, run_with_executor,
+        DefaultEditor, ExecutionRequest, ReplError, ReplLoopAction, ReplOptions, ReplRuntime,
+        build_development_schema, complete_repl_inputs, handle_repl_line, needs_more_input,
+        run_with_catalog, run_with_executor,
     };
 
     #[test]
@@ -532,16 +522,15 @@ mod tests {
     fn compile_query_dispatches_update_pipeline() {
         let catalog = build_development_schema();
 
-        let (kind, statement) = compile_query(
+        let compiled = compile_query(
             &catalog,
             r#"update Post filter .title = "Draft" set { title := "Reviewed" }"#,
-            false,
         )
         .expect("update should compile");
 
-        assert_eq!(kind, QueryKind::Update);
+        assert_eq!(compiled.kind, QueryKind::Update);
         assert_eq!(
-            statement.sql(),
+            compiled.statement.sql(),
             "UPDATE \"post\" AS \"root\" SET \"title\" = ? WHERE \"root\".\"title\" = ?"
         );
     }
@@ -550,13 +539,12 @@ mod tests {
     fn compile_query_dispatches_delete_pipeline() {
         let catalog = build_development_schema();
 
-        let (kind, statement) =
-            compile_query(&catalog, r#"delete Post filter .title = "Draft""#, false)
-                .expect("delete should compile");
+        let compiled = compile_query(&catalog, r#"delete Post filter .title = "Draft""#)
+            .expect("delete should compile");
 
-        assert_eq!(kind, QueryKind::Delete);
+        assert_eq!(compiled.kind, QueryKind::Delete);
         assert_eq!(
-            statement.sql(),
+            compiled.statement.sql(),
             "DELETE FROM \"post\" AS \"root\" WHERE \"root\".\"title\" = ?"
         );
     }
@@ -565,21 +553,20 @@ mod tests {
     fn compile_query_dispatches_insert_pipeline_with_generated_id() {
         let catalog = build_development_schema();
 
-        let (kind, statement) =
-            compile_query(&catalog, r#"insert User { name := "Sheri" }"#, false)
-                .expect("insert should compile");
+        let compiled = compile_query(&catalog, r#"insert User { name := "Sheri" }"#)
+            .expect("insert should compile");
 
-        let QueryKind::Insert { generated_id } = kind else {
+        let QueryKind::Insert { generated_id } = &compiled.kind else {
             panic!("expected insert query kind");
         };
         assert_eq!(
-            uuid::Uuid::parse_str(&generated_id)
+            uuid::Uuid::parse_str(generated_id)
                 .expect("generated id should be a UUID")
                 .get_version(),
             Some(uuid::Version::Random)
         );
         assert_eq!(
-            statement.sql(),
+            compiled.statement.sql(),
             "INSERT INTO \"user\" (\"id\", \"name\") VALUES (?, ?)"
         );
     }

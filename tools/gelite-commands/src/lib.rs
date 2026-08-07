@@ -114,16 +114,6 @@ pub struct CompiledQuery {
     pub statement: SQLiteStatement,
 }
 
-impl CompiledQuery {
-    pub fn kind(&self) -> &QueryKind {
-        &self.kind
-    }
-
-    pub fn statement(&self) -> &SQLiteStatement {
-        &self.statement
-    }
-}
-
 pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQuery, CommandError> {
     let (kind, statement) = match source.split_whitespace().next() {
         Some("select") => {

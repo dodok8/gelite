@@ -494,7 +494,6 @@ fn render_offset_clause(plan: &SQLiteSelectPlan) -> Option<String> {
 }
 
 /// Rendered SQLite statement and its ordered bind values.
-#[derive(Clone)]
 pub struct SQLiteStatement {
     sql: String,
     bind_values: Vec<SQLiteBindValue>,
