@@ -4,7 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+schema-model = { path = "../../engine/schema-model" }
 schema-parser = { path = "../../engine/schema-parser" }
+query-parser = { path = "../../engine/query-parser" }
+query-resolver = { path = "../../engine/query-resolver" }
+sqlite-query-plan = { path = "../../engine/sqlite-query-plan" }
+sqlite-query-sqlgen = { path = "../../engine/sqlite-query-sqlgen" }
+sqlite-runner = { path = "../../engine/sqlite-runner" }
 sqlite-schema-plan = { path = "../../engine/sqlite-schema-plan" }
 sqlite-schema-sqlgen = { path = "../../engine/sqlite-schema-sqlgen" }
-sqlite-runner = { path = "../../engine/sqlite-runner" }
+uuid = { version = "1.24.0", features = ["v4"] }

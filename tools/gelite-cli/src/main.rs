@@ -5,7 +5,7 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand};
-use gelite_commands::{SchemaPlanStatement, apply_schema, plan_schema};
+use gelite_commands::{CompiledQuery, QueryKind, SchemaPlanStatement, apply_schema, plan_schema};
 use sqlite_runner::native::NativeSQLiteRunner;
 
 #[derive(Debug, Parser)]
@@ -160,12 +160,12 @@ fn execute_request(
     request: repl::ExecutionRequest,
 ) -> Result<Option<sqlite_runner::SQLiteQueryResult>, String> {
     match request {
-        repl::ExecutionRequest::Query { kind, statement } => match kind {
-            repl::QueryKind::Select => runner
+        repl::ExecutionRequest::Query(CompiledQuery { kind, statement }) => match kind {
+            QueryKind::Select => runner
                 .execute_select(&statement)
                 .map(Some)
                 .map_err(|error| error.message().to_string()),
-            repl::QueryKind::Insert { generated_id } => {
+            QueryKind::Insert { generated_id } => {
                 runner
                     .execute_insert(&statement)
                     .map_err(|error| error.message().to_string())?;
@@ -175,12 +175,12 @@ fn execute_request(
                     vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
                 )))
             }
-            repl::QueryKind::Update => runner
+            QueryKind::Update => runner
                 .execute_update(&statement)
                 .map(affected_rows_result)
                 .map(Some)
                 .map_err(|error| error.message().to_string()),
-            repl::QueryKind::Delete => runner
+            QueryKind::Delete => runner
                 .execute_delete(&statement)
                 .map(affected_rows_result)
                 .map(Some)
@@ -210,7 +210,8 @@ fn path_to_str(path: &Path) -> Result<&str, String> {
 
 #[cfg(test)]
 mod tests {
-    use repl::{ExecutionRequest, QueryKind, TransactionCommand};
+    use gelite_commands::{CompiledQuery, QueryKind};
+    use repl::{ExecutionRequest, TransactionCommand};
     use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
@@ -225,7 +226,7 @@ mod tests {
 
         let insert = execute_request(
             &mut runner,
-            ExecutionRequest::Query {
+            ExecutionRequest::Query(CompiledQuery {
                 kind: QueryKind::Insert {
                     generated_id: "entry-1".to_string(),
                 },
@@ -236,7 +237,7 @@ mod tests {
                         SQLiteBindValue::Int64(1),
                     ],
                 ),
-            },
+            }),
         )
         .expect("insert should execute")
         .expect("insert should return the generated id");
@@ -247,10 +248,10 @@ mod tests {
 
         let select = execute_request(
             &mut runner,
-            ExecutionRequest::Query {
+            ExecutionRequest::Query(CompiledQuery {
                 kind: QueryKind::Select,
                 statement: SQLiteStatement::new("SELECT value FROM entry", vec![]),
-            },
+            }),
         )
         .expect("select should execute")
         .expect("select should return rows");
@@ -265,10 +266,10 @@ mod tests {
         ] {
             let result = execute_request(
                 &mut runner,
-                ExecutionRequest::Query {
+                ExecutionRequest::Query(CompiledQuery {
                     kind,
                     statement: SQLiteStatement::new(sql, vec![]),
-                },
+                }),
             )
             .expect("mutation should execute")
             .expect("mutation should return affected rows");
@@ -321,10 +322,10 @@ mod tests {
 
         let result = execute_request(
             &mut runner,
-            ExecutionRequest::Query {
+            ExecutionRequest::Query(CompiledQuery {
                 kind: QueryKind::Select,
                 statement: SQLiteStatement::new("SELECT id FROM entry", vec![]),
-            },
+            }),
         )
         .expect("select should execute")
         .expect("select should return rows");
