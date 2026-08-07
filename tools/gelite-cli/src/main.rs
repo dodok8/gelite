@@ -225,22 +225,21 @@ fn path_to_str(path: &Path) -> Result<&str, String> {
 }
 
 fn run_query_command(command: QueryCommand) -> Result<(), String> {
-    match command {
-        QueryCommand::Plan { query_file, schema } => {
-            let schema_source = fs::read_to_string(&schema)
-                .map_err(|error| format!("failed to read {}: {error}", schema.display()))?;
-            let query_source = fs::read_to_string(&query_file)
-                .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
-            let catalog = schema_parser::parse_schema(&schema_source)
-                .map_err(|error| format!("{error:#?}"))?;
-            let compiled = compile_query(&catalog, &query_source)
-                .map_err(|error| error.message().to_string())?;
+    let QueryCommand::Plan { query_file, schema } = command;
 
-            println!("SQL:\n{}", compiled.statement.sql());
-            println!("Bind values: {:?}", compiled.statement.bind_values());
-            Ok(())
-        }
-    }
+    let schema_source = fs::read_to_string(&schema)
+        .map_err(|error| format!("failed to read {}: {error}", schema.display()))?;
+    let query_source = fs::read_to_string(&query_file)
+        .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
+    let catalog =
+        schema_parser::parse_schema(&schema_source).map_err(|error| format!("{error:#?}"))?;
+    let compiled =
+        compile_query(&catalog, &query_source).map_err(|error| error.message().to_string())?;
+
+    println!("SQL:\n{}", compiled.statement.sql());
+    println!("Bind values: {:?}", compiled.statement.bind_values());
+
+    Ok(())
 }
 
 #[cfg(test)]
