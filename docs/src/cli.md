@@ -22,6 +22,10 @@ a database. `schema apply` creates the initial schema in a new database.
 `repl --schema` compiles queries without executing them. `repl --database`
 loads the schema catalog from the database and executes supported data queries.
 
+Insert compilation generates a fresh UUID v4 for the implicit `id` bind value.
+Its rendered bind output changes between runs and is not suitable for stable
+snapshot comparison or use as a reproducible plan artifact.
+
 With no query argument, either mode starts an interactive REPL. Enter each
 statement without a semicolon. Regular Enter continues while braces are
 unbalanced; `Alt+Enter` inserts a newline without submitting.

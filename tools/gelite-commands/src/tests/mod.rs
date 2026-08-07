@@ -1,10 +1,16 @@
 mod fixtures;
 
+use schema_model::SchemaCatalog;
+use sqlite_query_sqlgen::SQLiteBindValue;
 use sqlite_runner::{SQLiteRunner, SQLiteRunnerError};
 use sqlite_schema_plan::SQLiteValuePlan;
 
-use crate::{SchemaPlanStatement, apply_schema, plan_schema};
+use crate::{QueryKind, SchemaPlanStatement, apply_schema, compile_query, plan_schema};
 use fixtures::blog_schema_source;
+
+fn blog_catalog() -> SchemaCatalog {
+    schema_parser::parse_schema(blog_schema_source()).expect("blog schema should parse")
+}
 
 #[derive(Default)]
 struct RecordingRunner {
@@ -122,4 +128,82 @@ fn schema_apply_command_executes_rendered_schema_statements() {
             .any(|call| call.contains("INSERT INTO \"_engine_catalog_objects\"")),
         "catalog object metadata should be inserted"
     );
+}
+
+#[test]
+fn query_command_compiles_select() {
+    let compiled =
+        compile_query(&blog_catalog(), "select Post { title }").expect("select should compile");
+
+    assert_eq!(compiled.kind, QueryKind::Select);
+    assert_eq!(
+        compiled.statement.sql(),
+        "SELECT \"root\".\"title\" FROM \"post\" AS \"root\""
+    );
+}
+
+#[test]
+fn query_command_compiles_insert_with_generated_id() {
+    let compiled = compile_query(
+        &blog_catalog(),
+        r#"insert User { email := "sheri@example.com" }"#,
+    )
+    .expect("insert should compile");
+    let QueryKind::Insert { generated_id } = &compiled.kind else {
+        panic!("expected insert query kind");
+    };
+
+    assert_eq!(
+        uuid::Uuid::parse_str(generated_id)
+            .expect("generated id should be a UUID")
+            .get_version(),
+        Some(uuid::Version::Random)
+    );
+    assert_eq!(
+        compiled.statement.bind_values().first(),
+        Some(&SQLiteBindValue::String(generated_id.clone()))
+    );
+}
+
+#[test]
+fn query_command_compiles_update() {
+    let compiled = compile_query(
+        &blog_catalog(),
+        r#"update Post filter .title = "Draft" set { title := "Reviewed" }"#,
+    )
+    .expect("update should compile");
+
+    assert_eq!(compiled.kind, QueryKind::Update);
+    assert_eq!(
+        compiled.statement.sql(),
+        "UPDATE \"post\" AS \"root\" SET \"title\" = ? WHERE \"root\".\"title\" = ?"
+    );
+}
+
+#[test]
+fn query_command_compiles_delete() {
+    let compiled = compile_query(&blog_catalog(), r#"delete Post filter .title = "Draft""#)
+        .expect("delete should compile");
+
+    assert_eq!(compiled.kind, QueryKind::Delete);
+    assert_eq!(
+        compiled.statement.sql(),
+        "DELETE FROM \"post\" AS \"root\" WHERE \"root\".\"title\" = ?"
+    );
+}
+
+#[test]
+fn query_command_reports_dispatch_parse_and_resolution_errors() {
+    for (source, expected) in [
+        ("truncate Post", "query must start"),
+        ("select", "failed to parse query"),
+        ("select Missing { id }", "failed to resolve query"),
+    ] {
+        let error = match compile_query(&blog_catalog(), source) {
+            Ok(_) => panic!("query should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
 }

@@ -134,6 +134,10 @@ LIMIT 10
 이 구조는 Gel-like language semantics와 SQLite-specific storage decision을
 분리합니다. 동시에 각 compiler step을 따로 조사할 수 있어서 학습에도 좋습니다.
 
+Insert compilation은 implicit `id` bind value로 매번 새로운 UUID v4를
+생성합니다. 따라서 렌더링된 insert bind output은 비결정적이며 stable
+snapshot이나 재현 가능한 plan artifact로 사용하면 안 됩니다.
+
 ## 구현된 것
 
 - `schema-model`: object type, scalar field, link, cardinality, deterministic

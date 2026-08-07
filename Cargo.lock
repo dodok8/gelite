@@ -593,7 +593,6 @@ dependencies = [
  "schema-model",
  "sqlite-query-sqlgen",
  "sqlite-runner",
- "uuid",
 ]
 
 [[package]]

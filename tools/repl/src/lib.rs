@@ -377,7 +377,7 @@ fn build_development_schema() -> SchemaCatalog {
 
 #[cfg(test)]
 mod tests {
-    use gelite_commands::{CompiledQuery, QueryKind, compile_query};
+    use gelite_commands::{CompiledQuery, QueryKind};
     use query_ast::TransactionCommand;
     use sqlite_query_sqlgen::SQLiteStatement;
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
@@ -516,59 +516,6 @@ mod tests {
         assert!(!needs_more_input(
             r#"select Post { title } filter .title = "{""#
         ));
-    }
-
-    #[test]
-    fn compile_query_dispatches_update_pipeline() {
-        let catalog = build_development_schema();
-
-        let compiled = compile_query(
-            &catalog,
-            r#"update Post filter .title = "Draft" set { title := "Reviewed" }"#,
-        )
-        .expect("update should compile");
-
-        assert_eq!(compiled.kind, QueryKind::Update);
-        assert_eq!(
-            compiled.statement.sql(),
-            "UPDATE \"post\" AS \"root\" SET \"title\" = ? WHERE \"root\".\"title\" = ?"
-        );
-    }
-
-    #[test]
-    fn compile_query_dispatches_delete_pipeline() {
-        let catalog = build_development_schema();
-
-        let compiled = compile_query(&catalog, r#"delete Post filter .title = "Draft""#)
-            .expect("delete should compile");
-
-        assert_eq!(compiled.kind, QueryKind::Delete);
-        assert_eq!(
-            compiled.statement.sql(),
-            "DELETE FROM \"post\" AS \"root\" WHERE \"root\".\"title\" = ?"
-        );
-    }
-
-    #[test]
-    fn compile_query_dispatches_insert_pipeline_with_generated_id() {
-        let catalog = build_development_schema();
-
-        let compiled = compile_query(&catalog, r#"insert User { name := "Sheri" }"#)
-            .expect("insert should compile");
-
-        let QueryKind::Insert { generated_id } = &compiled.kind else {
-            panic!("expected insert query kind");
-        };
-        assert_eq!(
-            uuid::Uuid::parse_str(generated_id)
-                .expect("generated id should be a UUID")
-                .get_version(),
-            Some(uuid::Version::Random)
-        );
-        assert_eq!(
-            compiled.statement.sql(),
-            "INSERT INTO \"user\" (\"id\", \"name\") VALUES (?, ?)"
-        );
     }
 
     #[test]

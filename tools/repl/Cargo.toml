@@ -14,4 +14,3 @@ rustyline = "18"
 [dev-dependencies]
 sqlite-query-sqlgen = { path = "../../engine/sqlite-query-sqlgen" }
 sqlite-runner = { path = "../../engine/sqlite-runner", features = ["native"] }
-uuid = { version = "1.24.0", features = ["v4"] }
