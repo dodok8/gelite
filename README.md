@@ -163,7 +163,7 @@ as a stable snapshot or reproducible plan artifact.
 
 ## What is not implemented yet
 
-- `gelite query plan` and `gelite query run`.
+- `gelite query run`.
 - Migration diffing and migration history.
 - Runtime nested result shaping.
 - HTTP API.

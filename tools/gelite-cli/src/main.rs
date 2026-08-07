@@ -24,9 +24,11 @@ enum Command {
         #[command(subcommand)]
         command: SchemaCommand,
     },
+    Query {
+        #[command(subcommand)]
+        command: QueryCommand,
+    },
     Repl(ReplCommand),
-    Plan(PlanCommand),
-    Run(RunCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -41,6 +43,15 @@ enum SchemaCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum QueryCommand {
+    Plan {
+        query_file: PathBuf,
+        #[arg(long)]
+        schema: PathBuf,
+    },
+}
+
 #[derive(Debug, Args)]
 struct ReplCommand {
     #[arg(long)]
@@ -50,18 +61,6 @@ struct ReplCommand {
     #[arg(long)]
     database: Option<PathBuf>,
     #[arg(trailing_var_arg = true)]
-    query: Vec<String>,
-}
-
-#[derive(Debug, Args)]
-struct PlanCommand {
-    schema_file: PathBuf,
-    query: Vec<String>,
-}
-
-#[derive(Debug, Args)]
-struct RunCommand {
-    database: PathBuf,
     query: Vec<String>,
 }
 
@@ -80,9 +79,8 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Schema { command } => run_schema_command(command),
+        Command::Query { command } => run_query_command(command),
         Command::Repl(command) => run_repl_command(command),
-        Command::Run(command) => todo!("Run is not implemented Yet!"),
-        Command::Plan(command) => run_plan_command(command),
     }
 }
 
@@ -226,28 +224,58 @@ fn path_to_str(path: &Path) -> Result<&str, String> {
         .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))
 }
 
-fn run_plan_command(command: PlanCommand) -> Result<(), String> {
-    let schema = fs::read_to_string(&command.schema_file)
-        .map_err(|error| format!("failed to read {}: {error}", command.schema_file.display()))?;
+fn run_query_command(command: QueryCommand) -> Result<(), String> {
+    match command {
+        QueryCommand::Plan { query_file, schema } => {
+            let schema_source = fs::read_to_string(&schema)
+                .map_err(|error| format!("failed to read {}: {error}", schema.display()))?;
+            let query_source = fs::read_to_string(&query_file)
+                .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
+            let catalog = schema_parser::parse_schema(&schema_source)
+                .map_err(|error| format!("{error:#?}"))?;
+            let compiled = compile_query(&catalog, &query_source)
+                .map_err(|error| error.message().to_string())?;
 
-    let catalog = schema_parser::parse_schema(&schema).map_err(|error| format!("{error:#?}"))?;
-
-    let source = command.query.join(" ");
-    let compiled = compile_query(&catalog, &source).map_err(|error| error.message().to_string())?;
-
-    println!("SQL:\n{}", compiled.statement.sql());
-    println!("Bind values: {:?}", compiled.statement.bind_values());
-    Ok(())
+            println!("SQL:\n{}", compiled.statement.sql());
+            println!("Bind values: {:?}", compiled.statement.bind_values());
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use clap::Parser;
     use gelite_commands::{CompiledQuery, QueryKind};
     use repl::{ExecutionRequest, TransactionCommand};
     use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
-    use super::execute_request;
+    use super::{Cli, Command, QueryCommand, execute_request};
+
+    #[test]
+    fn query_plan_accepts_query_file_and_schema_option() {
+        let cli = Cli::try_parse_from([
+            "gelite",
+            "query",
+            "plan",
+            "query.geliql",
+            "--schema",
+            "schema.geli",
+        ])
+        .expect("query plan arguments should parse");
+        let Command::Query {
+            command: QueryCommand::Plan { query_file, schema },
+        } = cli.command
+        else {
+            panic!("expected query plan command");
+        };
+
+        assert_eq!(query_file, PathBuf::from("query.geliql"));
+        assert_eq!(schema, PathBuf::from("schema.geli"));
+    }
 
     #[test]
     fn native_repl_executor_maps_query_results() {

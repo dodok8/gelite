@@ -159,7 +159,7 @@ snapshot이나 재현 가능한 plan artifact로 사용하면 안 됩니다.
 
 ## 아직 구현되지 않은 것
 
-- `gelite query plan`, `gelite query run`.
+- `gelite query run`.
 - Migration diffing과 migration history.
 - Runtime nested result shaping.
 - HTTP API.
