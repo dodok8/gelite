@@ -501,7 +501,12 @@ insert User {
 ```text
 insert_stmt     := "insert" type_ref object_literal
 object_literal  := "{" assign_item* "}"
-assign_item     := IDENT ":=" literal ","?
+assign_item     := IDENT ":=" assignment_value ","?
+assignment_value
+                := literal
+                 | single_link_select
+single_link_select
+                := "(" select_stmt ")"
 ```
 
 ### Insert Semantics
@@ -519,15 +524,16 @@ assign_item     := IDENT ":=" literal ","?
 - Scalar assignment literals must match the declared scalar type. `null` is
   accepted only for optional scalar fields.
 - A single relation assignment accepts a string literal as a temporary MVP
-  object-id shorthand. It does not accept a scalar value of another kind.
+  object-id shorthand or a supported `single_link_select`. It does not accept
+  a scalar value of another kind.
 - `null` is accepted only for optional single relation fields.
 - Multi relation inserts are deferred from the first execution milestone.
 - Relation assignments must target declared `link` fields.
 
-The temporary string-literal relation shorthand is an execution-scope
-convenience, not a general object-expression feature. Nested inserts,
-subqueries, and object-valued assignment expressions remain unsupported until
-a later mutation design replaces or extends this syntax.
+The temporary string-literal relation shorthand remains supported. A
+`single_link_select` is the only object-valued assignment expression supported
+in this milestone; nested inserts and other subquery positions remain
+unsupported.
 
 Allowed single relation insert example:
 
@@ -573,6 +579,32 @@ set_clause      := "set" object_literal
 - Multi relations may not be updated in the MVP.
 - Relation assignments must target declared `link` fields.
 - Updating `id` is not allowed.
+
+### Single-Link Select Assignment Semantics
+
+Insert and update use the same assignment rules. A `single_link_select` is
+valid only when all of the following hold:
+
+- the assignment target is a declared single `link`
+- the nested select root type is the link target type
+- the nested shape selects exactly the target object's implicit `id` field
+- the nested select can return at most one row
+- the selected identity type is compatible with the link target identity type
+
+The first cardinality proof accepted for a nested select is an equality filter
+on either the implicit `id` field or a declared `unique` scalar field. The
+other operand must be a compatible non-null scalar literal. A nested select
+whose at-most-one cardinality cannot be proven is rejected before SQLite
+planning. `limit 1` is not proof of semantic uniqueness.
+
+The nested select resolves in its own object scope and cannot refer to the
+outer mutation row. If it returns one row, that row's identity is assigned to
+the link. If it returns no rows, an optional link receives `null` and a
+required link fails during execution.
+
+A select assignment to a scalar field or multi link is invalid. General
+subqueries, correlated subqueries, computed assignment expressions, and
+multi-link assignment syntax remain unsupported.
 
 ## Delete
 
@@ -652,7 +684,7 @@ The first version does not support:
 - computed expressions in assignment
 - function calls
 - `in`
-- subqueries
+- subqueries outside supported single-link assignments
 
 ## Error Conditions
 
@@ -725,6 +757,6 @@ These are intentionally out of scope until the end-to-end path is stable:
 - grouping
 - pagination cursors
 - arbitrary function calls beyond supported built-ins
-- subqueries
+- arbitrary subqueries outside supported single-link assignments
 - query parameters
 - upsert
