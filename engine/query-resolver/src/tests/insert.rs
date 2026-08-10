@@ -8,7 +8,11 @@ use crate::tests::fixtures::{
 use crate::{ResolveError, resolve_insert};
 use alloc::string::ToString;
 use alloc::vec;
-use query_ast::{Assignment as AstAssignment, InsertQuery, Literal};
+use query_ast::{Assignment as AstAssignment, AssignmentValue, InsertQuery, Literal};
+
+fn assignment(field_name: impl Into<alloc::string::String>, literal: Literal) -> AstAssignment {
+    AstAssignment::new(field_name, AssignmentValue::Literal(literal))
+}
 
 #[test]
 fn resolves_insert_root_object_type() {
@@ -29,10 +33,7 @@ fn resolves_insert_scalar_assignment() {
 
     let query = InsertQuery::new(
         "User",
-        vec![AstAssignment::new(
-            "name",
-            Literal::String("Sheri".to_string()),
-        )],
+        vec![assignment("name", Literal::String("Sheri".to_string()))],
     );
 
     let resolved = resolve_insert(&catalog, &query).expect("insert query resolves");
@@ -54,8 +55,8 @@ fn resolves_insert_scalar_definition_order() {
     let query = InsertQuery::new(
         "User",
         vec![
-            AstAssignment::new("name", Literal::String("Sheri".to_string())),
-            AstAssignment::new("email", Literal::String("sheri@tachibana.com".to_string())),
+            assignment("name", Literal::String("Sheri".to_string())),
+            assignment("email", Literal::String("sheri@tachibana.com".to_string())),
         ],
     );
 
@@ -85,10 +86,10 @@ fn resolves_insert_scalar_literal_types() {
     let query = InsertQuery::new(
         "User",
         vec![
-            AstAssignment::new("name", Literal::String("Sheri".to_string())),
-            AstAssignment::new("alive", Literal::Bool(true)),
-            AstAssignment::new("number", Literal::Int64(667)),
-            AstAssignment::new("weight", Literal::Float64(55.0)),
+            assignment("name", Literal::String("Sheri".to_string())),
+            assignment("alive", Literal::Bool(true)),
+            assignment("number", Literal::Int64(667)),
+            assignment("weight", Literal::Float64(55.0)),
         ],
     );
 
@@ -127,7 +128,7 @@ fn resolves_insert_uuid_string_literal() {
 
     let query = InsertQuery::new(
         "User",
-        vec![AstAssignment::new(
+        vec![assignment(
             "external_id",
             Literal::String("00000000-0000-0000-0000-000000000001".to_string()),
         )],
@@ -152,7 +153,7 @@ fn resolves_insert_datetime_string_literal() {
 
     let query = InsertQuery::new(
         "Event",
-        vec![AstAssignment::new(
+        vec![assignment(
             "starts_at",
             Literal::String("2026-07-13T10:30:00Z".to_string()),
         )],
@@ -177,7 +178,7 @@ fn resolves_insert_single_link_string_as_link_id() {
 
     let query = InsertQuery::new(
         "Post",
-        vec![AstAssignment::new(
+        vec![assignment(
             "author",
             Literal::String("00000000-0000-0000-0000-000000000001".to_string()),
         )],
@@ -198,7 +199,7 @@ fn resolves_insert_single_link_string_as_link_id() {
 fn resolves_insert_null_for_optional_scalar() {
     let catalog = user_with_optional_nickname_catalog();
 
-    let query = InsertQuery::new("User", vec![AstAssignment::new("nickname", Literal::Null)]);
+    let query = InsertQuery::new("User", vec![assignment("nickname", Literal::Null)]);
 
     let resolved = resolve_insert(&catalog, &query).expect("insert query should resolve");
     let assignments = resolved.assignments();
@@ -215,7 +216,7 @@ fn resolves_insert_null_for_optional_scalar() {
 fn resolves_insert_null_for_optional_single_link() {
     let catalog = post_with_optional_author_catalog();
 
-    let query = InsertQuery::new("Post", vec![AstAssignment::new("author", Literal::Null)]);
+    let query = InsertQuery::new("Post", vec![assignment("author", Literal::Null)]);
 
     let resolved = resolve_insert(&catalog, &query).expect("insert query should resolve");
     let assignments = resolved.assignments();
@@ -257,10 +258,7 @@ fn rejects_insert_unknown_assignment_field() {
     let catalog = user_only_catalog();
     let query = InsertQuery::new(
         "User",
-        vec![AstAssignment::new(
-            "nickname",
-            Literal::String("Sheri".to_string()),
-        )],
+        vec![assignment("nickname", Literal::String("Sheri".to_string()))],
     );
 
     let err = resolve_insert(&catalog, &query).expect_err("insert query should not resolve");
@@ -280,8 +278,8 @@ fn rejects_insert_duplicate_assignment_field() {
     let query = InsertQuery::new(
         "User",
         vec![
-            AstAssignment::new("name", Literal::String("Sheri".to_string())),
-            AstAssignment::new("name", Literal::String("Ellie".to_string())),
+            assignment("name", Literal::String("Sheri".to_string())),
+            assignment("name", Literal::String("Ellie".to_string())),
         ],
     );
 
@@ -302,7 +300,7 @@ fn rejects_insert_assignment_to_implicit_id() {
 
     let query = InsertQuery::new(
         "User",
-        vec![AstAssignment::new(
+        vec![assignment(
             "id",
             Literal::String("00000000-0000-0000-0000-000000000001".to_string()),
         )],
@@ -322,10 +320,7 @@ fn rejects_insert_assignment_to_implicit_id() {
 #[test]
 fn rejects_insert_incompatible_scalar_literal() {
     let catalog = user_with_required_name_catalog();
-    let query = InsertQuery::new(
-        "User",
-        vec![AstAssignment::new("name", Literal::Int64(100))],
-    );
+    let query = InsertQuery::new("User", vec![assignment("name", Literal::Int64(100))]);
 
     let err = resolve_insert(&catalog, &query).expect_err("insert query should not resolve");
 
@@ -344,10 +339,7 @@ fn rejects_insert_incompatible_scalar_literal() {
 fn rejects_insert_null_for_required_scalar() {
     let catalog = user_with_required_name_catalog();
 
-    let query = InsertQuery::new(
-        "User",
-        vec![AstAssignment::new("name".to_string(), Literal::Null)],
-    );
+    let query = InsertQuery::new("User", vec![assignment("name".to_string(), Literal::Null)]);
 
     let err = resolve_insert(&catalog, &query).expect_err("insert query should not resolve");
 
@@ -366,7 +358,7 @@ fn rejects_insert_null_for_required_single_link() {
 
     let query = InsertQuery::new(
         "Post",
-        vec![AstAssignment::new("author".to_string(), Literal::Null)],
+        vec![assignment("author".to_string(), Literal::Null)],
     );
 
     let err = resolve_insert(&catalog, &query).expect_err("insert query should not resolve");
@@ -418,10 +410,7 @@ fn rejects_insert_missing_required_single_link() {
 fn rejects_insert_non_string_single_link_value() {
     let catalog = post_with_only_required_author_catalog();
 
-    let query = InsertQuery::new(
-        "Post",
-        vec![AstAssignment::new("author", Literal::Int64(42))],
-    );
+    let query = InsertQuery::new("Post", vec![assignment("author", Literal::Int64(42))]);
 
     let err = resolve_insert(&catalog, &query).expect_err("insert query should not resolve");
 
@@ -442,7 +431,7 @@ fn rejects_insert_multi_link_assignment() {
 
     let query = InsertQuery::new(
         "User",
-        vec![AstAssignment::new(
+        vec![assignment(
             "posts",
             Literal::String("00000000-0000-0000-0000-000000000001".to_string()),
         )],

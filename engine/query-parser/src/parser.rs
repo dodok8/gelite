@@ -1067,7 +1067,10 @@ impl<'a> Parser<'a> {
         self.expect_token(TokenKind::ColonEq)?;
         let value = self.expect_literal()?;
 
-        Ok(Assignment::new(field_name, value))
+        Ok(Assignment::new(
+            field_name,
+            query_ast::AssignmentValue::Literal(value),
+        ))
     }
 }
 

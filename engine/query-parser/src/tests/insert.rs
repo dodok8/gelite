@@ -1,6 +1,6 @@
 use crate::{LexErrorKind, ParseErrorKind, TokenKind, lex, parse_insert};
 use alloc::string::ToString;
-use query_ast::Literal;
+use query_ast::{AssignmentValue, Literal};
 
 #[test]
 fn lexer_can_tokenize_insert_assignment() {
@@ -47,7 +47,7 @@ fn parser_can_parse_insert_with_string_assignment() {
     assert_eq!(query.assignments()[0].field_name(), "name");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("Sheri".to_string())
+        &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
     );
 }
 
@@ -61,7 +61,9 @@ fn parser_can_parse_insert_with_string_link_id_assignment() {
     assert_eq!(query.assignments()[0].field_name(), "author");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("00000000-0000-0000-0000-000000000001".to_string())
+        &AssignmentValue::Literal(Literal::String(
+            "00000000-0000-0000-0000-000000000001".to_string()
+        ))
     );
 }
 
@@ -75,12 +77,12 @@ fn parser_can_parse_insert_with_multiple_assignment() {
     assert_eq!(query.assignments()[0].field_name(), "name");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("Sheri".to_string())
+        &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
     );
     assert_eq!(query.assignments()[1].field_name(), "email");
     assert_eq!(
         query.assignments()[1].value(),
-        &Literal::String("sheri@tachibana.com".to_string())
+        &AssignmentValue::Literal(Literal::String("sheri@tachibana.com".to_string()))
     );
 }
 
@@ -94,7 +96,7 @@ fn parser_can_parse_insert_with_trailing_comma() {
     assert_eq!(query.assignments()[0].field_name(), "name");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("Sheri".to_string())
+        &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
     );
 }
 
@@ -110,12 +112,12 @@ fn parser_can_parse_insert_with_multiline_insert() {
     assert_eq!(query.assignments()[0].field_name(), "name");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("Sheri".to_string())
+        &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
     );
     assert_eq!(query.assignments()[1].field_name(), "email");
     assert_eq!(
         query.assignments()[1].value(),
-        &Literal::String("sheri@tachibana.com".to_string())
+        &AssignmentValue::Literal(Literal::String("sheri@tachibana.com".to_string()))
     );
 }
 
@@ -132,20 +134,32 @@ fn parser_can_parse_insert_literal_assignment() {
     assert_eq!(query.assignments()[0].field_name(), "name");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("Sheri".to_string())
+        &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
     );
 
     assert_eq!(query.assignments()[1].field_name(), "age");
-    assert_eq!(query.assignments()[1].value(), &Literal::Int64(15));
+    assert_eq!(
+        query.assignments()[1].value(),
+        &AssignmentValue::Literal(Literal::Int64(15))
+    );
 
     assert_eq!(query.assignments()[2].field_name(), "weight");
-    assert_eq!(query.assignments()[2].value(), &Literal::Float64(55.0));
+    assert_eq!(
+        query.assignments()[2].value(),
+        &AssignmentValue::Literal(Literal::Float64(55.0))
+    );
 
     assert_eq!(query.assignments()[3].field_name(), "alive");
-    assert_eq!(query.assignments()[3].value(), &Literal::Bool(true));
+    assert_eq!(
+        query.assignments()[3].value(),
+        &AssignmentValue::Literal(Literal::Bool(true))
+    );
 
     assert_eq!(query.assignments()[4].field_name(), "etc");
-    assert_eq!(query.assignments()[4].value(), &Literal::Null);
+    assert_eq!(
+        query.assignments()[4].value(),
+        &AssignmentValue::Literal(Literal::Null)
+    );
 }
 
 #[test]

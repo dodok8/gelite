@@ -1,13 +1,19 @@
 use alloc::string::ToString;
 use alloc::vec;
 
-use query_ast::{Assignment, CompareExpr, CompareOp, Expr, Literal, Path, PathStep, UpdateQuery};
+use query_ast::{
+    Assignment, AssignmentValue, CompareExpr, CompareOp, Expr, Literal, Path, PathStep, UpdateQuery,
+};
 
 use crate::tests::fixtures::{
     post_with_author_catalog, post_with_title_catalog, user_only_catalog,
     user_with_only_multi_posts_catalog, user_with_required_name_catalog,
 };
 use crate::{ResolveError, resolve_update};
+
+fn assignment(field_name: impl Into<alloc::string::String>, literal: Literal) -> Assignment {
+    Assignment::new(field_name, AssignmentValue::Literal(literal))
+}
 
 fn equality_filter(field: &str, literal: Literal) -> Expr {
     Expr::Compare(CompareExpr::new(
@@ -23,7 +29,7 @@ fn resolves_update_target_filter_and_scalar_assignment() {
     let query = UpdateQuery::new(
         "Post",
         Some(equality_filter("id", Literal::String("post-1".to_string()))),
-        vec![Assignment::new(
+        vec![assignment(
             "title",
             Literal::String("Closed Case".to_string()),
         )],
@@ -47,10 +53,7 @@ fn resolves_update_single_link_assignment_without_other_required_fields() {
     let query = UpdateQuery::new(
         "Post",
         None,
-        vec![Assignment::new(
-            "author",
-            Literal::String("user-2".to_string()),
-        )],
+        vec![assignment("author", Literal::String("user-2".to_string()))],
     );
 
     let resolved = resolve_update(&catalog, &query).expect("update query should resolve");
@@ -84,10 +87,7 @@ fn rejects_update_unknown_target_type() {
     let query = UpdateQuery::new(
         "Missing",
         None,
-        vec![Assignment::new(
-            "name",
-            Literal::String("Sheri".to_string()),
-        )],
+        vec![assignment("name", Literal::String("Sheri".to_string()))],
     );
 
     let error =
@@ -110,10 +110,7 @@ fn rejects_update_unknown_filter_field() {
             "missing",
             Literal::String("value".to_string()),
         )),
-        vec![Assignment::new(
-            "title",
-            Literal::String("Closed".to_string()),
-        )],
+        vec![assignment("title", Literal::String("Closed".to_string()))],
     );
 
     let error =
@@ -134,10 +131,7 @@ fn rejects_update_unknown_assignment_field() {
     let query = UpdateQuery::new(
         "Post",
         None,
-        vec![Assignment::new(
-            "missing",
-            Literal::String("value".to_string()),
-        )],
+        vec![assignment("missing", Literal::String("value".to_string()))],
     );
 
     let error =
@@ -159,8 +153,8 @@ fn rejects_update_duplicate_assignment() {
         "User",
         None,
         vec![
-            Assignment::new("name", Literal::String("Sheri".to_string())),
-            Assignment::new("name", Literal::String("Ellie".to_string())),
+            assignment("name", Literal::String("Sheri".to_string())),
+            assignment("name", Literal::String("Ellie".to_string())),
         ],
     );
 
@@ -182,7 +176,7 @@ fn rejects_update_assignment_to_implicit_id() {
     let query = UpdateQuery::new(
         "User",
         None,
-        vec![Assignment::new("id", Literal::String("user-1".to_string()))],
+        vec![assignment("id", Literal::String("user-1".to_string()))],
     );
 
     let error = resolve_update(&catalog, &query).expect_err("id assignment should not resolve");
@@ -199,11 +193,7 @@ fn rejects_update_assignment_to_implicit_id() {
 #[test]
 fn rejects_update_incompatible_scalar_literal() {
     let catalog = user_with_required_name_catalog();
-    let query = UpdateQuery::new(
-        "User",
-        None,
-        vec![Assignment::new("name", Literal::Int64(42))],
-    );
+    let query = UpdateQuery::new("User", None, vec![assignment("name", Literal::Int64(42))]);
 
     let error =
         resolve_update(&catalog, &query).expect_err("incompatible assignment should not resolve");
@@ -222,7 +212,7 @@ fn rejects_update_incompatible_scalar_literal() {
 #[test]
 fn rejects_update_null_for_required_field() {
     let catalog = user_with_required_name_catalog();
-    let query = UpdateQuery::new("User", None, vec![Assignment::new("name", Literal::Null)]);
+    let query = UpdateQuery::new("User", None, vec![assignment("name", Literal::Null)]);
 
     let error =
         resolve_update(&catalog, &query).expect_err("required null assignment should not resolve");
@@ -242,10 +232,7 @@ fn rejects_update_multi_link_assignment() {
     let query = UpdateQuery::new(
         "User",
         None,
-        vec![Assignment::new(
-            "posts",
-            Literal::String("post-1".to_string()),
-        )],
+        vec![assignment("posts", Literal::String("post-1".to_string()))],
     );
 
     let error =

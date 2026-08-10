@@ -258,7 +258,16 @@ fn resolve_assignment(
         .find_field_ref(target_object_type.name(), assignment.field_name())
         .expect("field ref should exist for a field found in the catalog");
 
-    let value = resolve_assignment_value(target_object_type, field, assignment.value())?;
+    let value = match assignment.value() {
+        query_ast::AssignmentValue::Literal(literal) => {
+            resolve_assignment_value(target_object_type, field, literal)?
+        }
+        query_ast::AssignmentValue::Select(_) => {
+            return Err(ResolveError::UnsupportedExpr {
+                expr_type: "select assignment".to_string(),
+            });
+        }
+    };
 
     Ok(query_ir::Assignment::new(field_ref, value))
 }
