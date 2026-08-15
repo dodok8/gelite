@@ -12,8 +12,10 @@ limitations are:
   It does not provide a JSON result format.
 - Initial schema application expects a new database. Migration diffing and
   migration history are not implemented.
-- Inserts and updates accept scalar literals and single-link IDs. Nested
-  inserts, subqueries, and multi-link mutations are not implemented.
+- Inserts and updates accept scalar literals, single-link ID strings, and
+  single-link selects narrowed by an implicit `id` or declared `unique` scalar
+  field. Nested inserts, general subqueries, and multi-link mutations are not
+  implemented.
 - Composite unique constraints are not available in the current schema syntax.
   Association objects such as `OrderItem` and `PlaylistTrack` rely on the
   application to reject duplicate link pairs when needed.

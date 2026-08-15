@@ -4,13 +4,13 @@ type Artist {
 }
 
 type Album {
-  required title: str
+  required unique title: str
   required release_year: int64
   required link artist: Artist
 }
 
 type Track {
-  required title: str
+  required unique title: str
   required track_no: int64
   required duration_seconds: int64
   required genre: str
