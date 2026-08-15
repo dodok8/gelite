@@ -1,6 +1,8 @@
 use crate::{LexErrorKind, ParseErrorKind, TokenKind, lex, parse_insert};
 use alloc::string::ToString;
-use query_ast::{AssignmentValue, Literal};
+use query_ast::{AssignmentValue, CompareOp, Literal};
+
+use super::fixtures::{assert_compare_expr, assert_literal_expr, assert_path_expr};
 
 #[test]
 fn lexer_can_tokenize_insert_assignment() {
@@ -65,6 +67,48 @@ fn parser_can_parse_insert_with_string_link_id_assignment() {
             "00000000-0000-0000-0000-000000000001".to_string()
         ))
     );
+}
+
+#[test]
+fn parser_can_parse_insert_with_single_link_select_assignment() {
+    let query = parse_insert(
+        r#"insert Post {
+            title := "Case File",
+            author := (
+                select User { id }
+                filter .email = "sheri@example.com"
+            ),
+            subtitle := "Solved"
+        }"#,
+    )
+    .expect("insert query should parse");
+
+    assert_eq!(query.assignments().len(), 3);
+    assert_eq!(query.assignments()[0].field_name(), "title");
+    assert_eq!(query.assignments()[1].field_name(), "author");
+    assert_eq!(query.assignments()[2].field_name(), "subtitle");
+
+    let AssignmentValue::Select(select) = query.assignments()[1].value() else {
+        panic!("author should contain a select assignment");
+    };
+
+    assert_eq!(select.root_type_name(), "User");
+    assert_eq!(select.shape().items().len(), 1);
+    assert_eq!(select.shape().items()[0].path().steps().len(), 1);
+    assert_eq!(
+        select.shape().items()[0].path().steps()[0].field_name(),
+        "id"
+    );
+    assert!(select.shape().items()[0].child_shape().is_none());
+
+    let (left, right) = assert_compare_expr(
+        select
+            .filter()
+            .expect("nested select should keep its filter"),
+        CompareOp::Eq,
+    );
+    assert_path_expr(left, &["email"]);
+    assert_literal_expr(right, &Literal::String("sheri@example.com".to_string()));
 }
 
 #[test]

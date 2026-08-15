@@ -70,6 +70,30 @@ fn parser_can_parse_filtered_update() {
 }
 
 #[test]
+fn parser_can_parse_update_with_single_link_select_assignment() {
+    let query = parse_update(
+        r#"update Post
+        filter .title = "Case File"
+        set {
+            author := (
+                select User { id }
+                filter .email = "sheri@example.com"
+            )
+        }"#,
+    )
+    .expect("update query should parse");
+
+    assert_eq!(query.target_type_name(), "Post");
+    assert_eq!(query.assignments().len(), 1);
+    assert_eq!(query.assignments()[0].field_name(), "author");
+
+    let AssignmentValue::Select(select) = query.assignments()[0].value() else {
+        panic!("author should contain a select assignment");
+    };
+    assert_eq!(select.root_type_name(), "User");
+}
+
+#[test]
 fn parser_can_parse_unfiltered_update() {
     let query =
         parse_update(r#"update Post set { title := "Archived" }"#).expect("query should parse");
