@@ -585,17 +585,26 @@ the parsed field name as the semantic source of truth.
 
 ### `MutationValue`
 
-The first mutation execution milestone uses a literal-only assignment value
-model:
+Mutation values preserve the semantic distinction between scalar values,
+temporary object-ID shorthand, and resolved single-link select assignments:
 
 - scalar literal, including `null` where the resolved field is optional
 - `LinkId` string for the temporary single-link object-id shorthand
+- `LinkSelect` containing a resolved `SelectQuery` that returns the linked
+  object's identity
 
 `LinkId` deliberately records the relation shorthand separately from a scalar
 string literal. The resolver chooses this variant only for a declared single
-`link` field. This keeps the later replacement with object-valued expressions
-local to the mutation-value model instead of changing field resolution or
-SQLite storage contracts.
+`link` field. `LinkSelect` is also specific to a declared single `link`; its
+payload contains resolved schema references and expressions rather than raw
+AST names.
+
+Before constructing `LinkSelect`, the resolver must verify that the nested
+select root matches the link target, its shape contains exactly the target's
+implicit `id`, and its result cardinality is at most one. The first accepted
+cardinality proof is equality between implicit `id` or a declared `unique`
+scalar field and a compatible non-null scalar literal. `limit 1` alone is not
+a semantic uniqueness proof.
 
 MVP constraints:
 
@@ -605,7 +614,8 @@ MVP constraints:
 - assignments may not target `multi` links
 - scalar values must match the resolved scalar type
 - `null` requires an optional resolved field
-- a single-link value is either `LinkId` or, for an optional link, `null`
+- a single-link value is `LinkId`, `LinkSelect`, or, for an optional link,
+  `null`
 
 ## Boundary With SQLite Planning
 

@@ -782,15 +782,16 @@ impl Assignment {
     }
 }
 
-/// Value forms supported by the literal-only insert IR.
+/// Value forms supported by mutation IR.
 ///
 /// A link identifier is kept distinct from a scalar string. Scalar and link
-/// nulls remain distinct so backend planners can choose the correct physical
-/// column without consulting the schema catalog again.
+/// nulls remain distinct, and a resolved link select retains its semantic
+/// query so backend planners do not need to inspect unresolved syntax.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssignmentValue {
     Scalar(Literal),
     LinkId(String),
+    LinkSelect(Box<SelectQuery>),
     ScalarNull,
     LinkNull,
 }

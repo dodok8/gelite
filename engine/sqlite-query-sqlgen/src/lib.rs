@@ -5,8 +5,8 @@
 //! values. It does not resolve schema names, choose joins, or inspect query AST
 //! nodes. Those responsibilities belong to earlier compiler stages.
 //!
-//! The renderer currently emits select statements and literal-only insert and
-//! update statements for the subsets implemented by `sqlite-query-plan`.
+//! The renderer currently emits select statements plus insert and update
+//! statements with literal or supported single-link select assignments.
 //! Literal values are emitted as bind placeholders instead of being
 //! interpolated into SQL strings.
 
@@ -17,7 +17,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_query_plan::{
-    SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
+    SQLiteArithmeticOp, SQLiteAssignmentValue, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
     SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInsertPlan, SQLiteJoin, SQLiteJoinKind,
     SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteSelectPlan,
     SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr,
@@ -78,6 +78,7 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
 /// Renders a structured SQLite insert plan with a runtime-generated object id.
 pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteStatement {
     let mut columns = vec![quote_identifier(plan.root_target().id_column())];
+    let mut values = vec!["?".to_string()];
     let mut bind_values = match plan.generated_id_strategy() {
         SQLiteGeneratedIdStrategy::RuntimeUuid => {
             vec![SQLiteBindValue::String(generated_id.to_string())]
@@ -86,7 +87,10 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
 
     for assignment in plan.assignments() {
         columns.push(quote_identifier(assignment.column_name()));
-        bind_values.push(bind_value_from_literal(assignment.value()));
+        values.push(render_assignment_value(
+            assignment.value(),
+            &mut bind_values,
+        ));
     }
 
     SQLiteStatement::new(
@@ -94,7 +98,7 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
             "INSERT INTO {} ({}) VALUES ({})",
             quote_identifier(plan.root_target().table_name()),
             columns.join(", "),
-            vec!["?"; columns.len()].join(", ")
+            values.join(", ")
         ),
         bind_values,
     )
@@ -107,9 +111,9 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         .assignments()
         .iter()
         .map(|assignment| {
-            bind_values.push(bind_value_from_literal(assignment.value()));
+            let value = render_assignment_value(assignment.value(), &mut bind_values);
 
-            format!("{} = ?", quote_identifier(assignment.column_name()))
+            format!("{} = {value}", quote_identifier(assignment.column_name()))
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -137,6 +141,23 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
     );
 
     SQLiteStatement::new(sql, bind_values)
+}
+
+fn render_assignment_value(
+    value: &SQLiteAssignmentValue,
+    bind_values: &mut Vec<SQLiteBindValue>,
+) -> String {
+    match value {
+        SQLiteAssignmentValue::Literal(literal) => {
+            bind_values.push(bind_value_from_literal(literal));
+            "?".to_string()
+        }
+        SQLiteAssignmentValue::Select(plan) => {
+            let statement = render_select(plan);
+            bind_values.extend_from_slice(statement.bind_values());
+            format!("({})", statement.sql())
+        }
+    }
 }
 
 /// Renders a structured SQLite delete plan into SQL text and bind values.

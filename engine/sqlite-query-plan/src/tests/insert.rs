@@ -1,8 +1,8 @@
 use super::fixtures::{
-    empty_post_insert_query, post_insert_with_ordered_assignments,
-    post_insert_with_title_assignment,
+    empty_post_insert_query, post_insert_with_author_select_assignment,
+    post_insert_with_ordered_assignments, post_insert_with_title_assignment,
 };
-use crate::{SQLiteGeneratedIdStrategy, SQLiteLiteral, plan_insert};
+use crate::{SQLiteAssignmentValue, SQLiteGeneratedIdStrategy, SQLiteLiteral, plan_insert};
 use alloc::string::ToString;
 
 #[test]
@@ -37,10 +37,26 @@ fn sqlite_insert_plan_maps_scalar_assignment_to_column() {
 
     assert_eq!(assignments.len(), 1);
     assert_eq!(assignments[0].column_name(), "title");
-    assert_eq!(
-        assignments[0].value(),
-        &SQLiteLiteral::String("Case File".to_string())
-    );
+    let SQLiteAssignmentValue::Literal(value) = assignments[0].value() else {
+        panic!("expected literal assignment");
+    };
+    assert_eq!(value, &SQLiteLiteral::String("Case File".to_string()));
+}
+
+#[test]
+fn sqlite_insert_plan_maps_link_select_to_foreign_key_scalar_select() {
+    let ir = post_insert_with_author_select_assignment();
+
+    let plan = plan_insert(&ir);
+    let assignment = &plan.assignments()[0];
+
+    assert_eq!(assignment.column_name(), "author_id");
+    let SQLiteAssignmentValue::Select(select) = assignment.value() else {
+        panic!("expected scalar select assignment");
+    };
+    assert_eq!(select.root_source().table_name(), "user");
+    assert_eq!(select.selected_values()[0].column_name(), Some("id"));
+    assert!(select.filter().is_some());
 }
 
 #[test]

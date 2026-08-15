@@ -15,8 +15,7 @@ Apply the schema to a new database:
 cargo run -p gelite-cli -- schema apply examples/organization.geli --database organization.db
 ```
 
-Open `gelite repl --database organization.db`, then insert two departments and
-keep their generated IDs:
+Open `gelite repl --database organization.db`, then insert two departments:
 
 ```text
 insert Department { code := "INVESTIGATION", name := "Investigation" }
@@ -26,7 +25,9 @@ insert Department { code := "INVESTIGATION", name := "Investigation" }
 insert Department { code := "ARCHIVE", name := "Records Archive" }
 ```
 
-Insert the manager first and keep her generated ID:
+Insert the manager first. Link assignments look up existing objects through
+their unique fields, so generated IDs do not need to be copied from earlier
+commands:
 
 ```text
 insert Employee {
@@ -36,7 +37,10 @@ insert Employee {
   salary := 92000,
   active := true,
   hired_at := "2026-04-01T09:00:00Z",
-  department := "<investigation-department-id>"
+  department := (
+    select Department { id }
+    filter .code = "INVESTIGATION"
+  )
 }
 ```
 
@@ -48,8 +52,14 @@ insert Employee {
   salary := 68000,
   active := true,
   hired_at := "2026-04-15T09:00:00Z",
-  department := "<investigation-department-id>",
-  manager := "<sheri-id>"
+  department := (
+    select Department { id }
+    filter .code = "INVESTIGATION"
+  ),
+  manager := (
+    select Employee { id }
+    filter .employee_no = "MG-667"
+  )
 }
 ```
 
@@ -61,7 +71,10 @@ insert Employee {
   salary := 64000,
   active := true,
   hired_at := "2026-05-01T09:00:00Z",
-  department := "<archive-department-id>",
+  department := (
+    select Department { id }
+    filter .code = "ARCHIVE"
+  ),
   manager := null
 }
 ```

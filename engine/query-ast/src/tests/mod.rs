@@ -1,6 +1,6 @@
 use crate::{
-    ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, DeleteQuery, Expr,
-    FunctionCallExpr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, Path,
+    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, DeleteQuery,
+    Expr, FunctionCallExpr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, Path,
     PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
 };
 use alloc::string::ToString;
@@ -8,10 +8,16 @@ use alloc::vec;
 
 #[test]
 fn assignment_can_store_field_name_and_literal_value() {
-    let assignment = Assignment::new("name", Literal::String("Sheri".to_string()));
+    let assignment = Assignment::new(
+        "name",
+        AssignmentValue::Literal(Literal::String("Sheri".to_string())),
+    );
 
     assert_eq!(assignment.field_name(), "name");
-    assert_eq!(assignment.value(), &Literal::String("Sheri".to_string()));
+    assert_eq!(
+        assignment.value(),
+        &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
+    );
 }
 
 #[test]
@@ -19,8 +25,14 @@ fn insert_query_can_store_root_type_and_assignments_in_definition_order() {
     let query = InsertQuery::new(
         "User",
         vec![
-            Assignment::new("name", Literal::String("Sheri".to_string())),
-            Assignment::new("email", Literal::String("sheri@example.com".to_string())),
+            Assignment::new(
+                "name",
+                AssignmentValue::Literal(Literal::String("Sheri".to_string())),
+            ),
+            Assignment::new(
+                "email",
+                AssignmentValue::Literal(Literal::String("sheri@example.com".to_string())),
+            ),
         ],
     );
 
@@ -29,12 +41,12 @@ fn insert_query_can_store_root_type_and_assignments_in_definition_order() {
     assert_eq!(query.assignments()[0].field_name(), "name");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("Sheri".to_string())
+        &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
     );
     assert_eq!(query.assignments()[1].field_name(), "email");
     assert_eq!(
         query.assignments()[1].value(),
-        &Literal::String("sheri@example.com".to_string())
+        &AssignmentValue::Literal(Literal::String("sheri@example.com".to_string()))
     );
 }
 
@@ -49,8 +61,14 @@ fn update_query_can_store_unresolved_filter_and_assignments_in_definition_order(
         "Post",
         Some(filter.clone()),
         vec![
-            Assignment::new("title", Literal::String("Closed Case".to_string())),
-            Assignment::new("author", Literal::String("user-2".to_string())),
+            Assignment::new(
+                "title",
+                AssignmentValue::Literal(Literal::String("Closed Case".to_string())),
+            ),
+            Assignment::new(
+                "author",
+                AssignmentValue::Literal(Literal::String("user-2".to_string())),
+            ),
         ],
     );
 

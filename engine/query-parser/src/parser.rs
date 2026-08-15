@@ -3,9 +3,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::{string::String, vec};
 use query_ast::{
-    ArithmeticExpr, ArithmeticOp, Assignment, CompareExpr, CompareOp, DeleteQuery, Expr, InExpr,
-    InOp, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem,
-    TransactionCommand, UpdateQuery,
+    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, DeleteQuery,
+    Expr, InExpr, InOp, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape,
+    ShapeItem, TransactionCommand, UpdateQuery,
 };
 
 /// Parses one MVP `select` statement from source text.
@@ -129,6 +129,12 @@ impl<'a> Parser<'a> {
     ///                limit_clause? offset_clause?
     /// ```
     fn parse_select_stmt(&mut self) -> Result<query_ast::SelectQuery, ParseError> {
+        let query = self.parse_select_query()?;
+        self.ensure_eof()?;
+        Ok(query)
+    }
+
+    fn parse_select_query(&mut self) -> Result<query_ast::SelectQuery, ParseError> {
         self.expect_keyword(Keyword::Select)?;
         let root_type_name = self.expect_ident()?;
         let shape = self.parse_shape()?;
@@ -136,7 +142,6 @@ impl<'a> Parser<'a> {
         let order_by = self.parse_order_clause()?;
         let limit = self.parse_limit_clause()?;
         let offset = self.parse_offset_clause()?;
-        self.ensure_eof()?;
 
         Ok(SelectQuery::new(
             root_type_name,
@@ -1065,9 +1070,24 @@ impl<'a> Parser<'a> {
     fn parse_assignment(&mut self) -> Result<Assignment, ParseError> {
         let field_name = self.expect_ident()?;
         self.expect_token(TokenKind::ColonEq)?;
-        let value = self.expect_literal()?;
+        let value = self.parse_assignment_value()?;
 
         Ok(Assignment::new(field_name, value))
+    }
+
+    fn parse_assignment_value(&mut self) -> Result<AssignmentValue, ParseError> {
+        if self
+            .peek()
+            .is_some_and(|token| token.kind() == &TokenKind::LParen)
+        {
+            self.expect_token(TokenKind::LParen)?;
+            let select = self.parse_select_query()?;
+            self.expect_rparen()?;
+
+            return Ok(AssignmentValue::Select(Box::new(select)));
+        }
+
+        Ok(AssignmentValue::Literal(self.expect_literal()?))
     }
 }
 

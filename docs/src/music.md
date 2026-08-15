@@ -14,8 +14,8 @@ cargo run -p gelite-cli -- schema apply examples/music.geli --database music.db
 cargo run -p gelite-cli -- repl --database music.db
 ```
 
-Insert an artist, album, two tracks, and a playlist in that order. Keep every
-generated ID used by the next insert:
+Insert an artist, album, two tracks, and a playlist in that order. Links use
+unique names and titles instead of copied generated IDs:
 
 ```text
 insert Artist { name := "Coco Sawatari", country := "Japan" }
@@ -25,7 +25,10 @@ insert Artist { name := "Coco Sawatari", country := "Japan" }
 insert Album {
   title := "Midnight Testimony",
   release_year := 2026,
-  artist := "<coco-id>"
+  artist := (
+    select Artist { id }
+    filter .name = "Coco Sawatari"
+  )
 }
 ```
 
@@ -35,7 +38,10 @@ insert Track {
   track_no := 1,
   duration_seconds := 214,
   genre := "mystery pop",
-  album := "<album-id>"
+  album := (
+    select Album { id }
+    filter .title = "Midnight Testimony"
+  )
 }
 ```
 
@@ -45,7 +51,10 @@ insert Track {
   track_no := 2,
   duration_seconds := 188,
   genre := "mystery pop",
-  album := "<album-id>"
+  album := (
+    select Album { id }
+    filter .title = "Midnight Testimony"
+  )
 }
 ```
 
@@ -56,8 +65,14 @@ insert Playlist { name := "Sheri's Case Notes" }
 ```text
 insert PlaylistTrack {
   position := 1,
-  playlist := "<playlist-id>",
-  track := "<first-track-id>"
+  playlist := (
+    select Playlist { id }
+    filter .name = "Sheri's Case Notes"
+  ),
+  track := (
+    select Track { id }
+    filter .title = "First Deduction"
+  )
 }
 ```
 

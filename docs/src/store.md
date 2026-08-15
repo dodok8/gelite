@@ -16,7 +16,7 @@ cargo run -p gelite-cli -- schema apply examples/store.geli --database store.db
 cargo run -p gelite-cli -- repl --database store.db
 ```
 
-Insert a customer and two products, keeping their generated IDs:
+Insert a customer and two products:
 
 ```text
 insert Customer {
@@ -44,9 +44,8 @@ insert Product {
 }
 ```
 
-Create the purchase order and its items in one interactive transaction. Replace
-the placeholders with generated IDs and the ID printed by the purchase order
-insert:
+Create the purchase order and its items in one interactive transaction. Each
+link assignment finds the related object through a unique business key:
 
 ```text
 start transaction
@@ -57,7 +56,10 @@ insert PurchaseOrder {
   order_no := "TRIAL-0001",
   status := "paid",
   ordered_at := "2026-08-03T10:00:00Z",
-  customer := "<margo-id>"
+  customer := (
+    select Customer { id }
+    filter .email = "margo@example.com"
+  )
 }
 ```
 
@@ -65,8 +67,14 @@ insert PurchaseOrder {
 insert OrderItem {
   quantity := 2,
   unit_price := 12.5,
-  purchase := "<purchase-order-id>",
-  product := "<notebook-id>"
+  purchase := (
+    select PurchaseOrder { id }
+    filter .order_no = "TRIAL-0001"
+  ),
+  product := (
+    select Product { id }
+    filter .sku = "CASE-NOTEBOOK"
+  )
 }
 ```
 
@@ -74,8 +82,14 @@ insert OrderItem {
 insert OrderItem {
   quantity := 1,
   unit_price := 8.0,
-  purchase := "<purchase-order-id>",
-  product := "<pin-id>"
+  purchase := (
+    select PurchaseOrder { id }
+    filter .order_no = "TRIAL-0001"
+  ),
+  product := (
+    select Product { id }
+    filter .sku = "OWL-PIN"
+  )
 }
 ```
 

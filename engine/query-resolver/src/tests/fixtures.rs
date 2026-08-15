@@ -1,11 +1,14 @@
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use query_ast::{
-    ArithmeticExpr, ArithmeticOp, CompareExpr, CompareOp, Expr, FunctionCallExpr, InExpr, InOp,
-    Literal, Path, PathStep,
+    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, Expr,
+    FunctionCallExpr, InExpr, InOp, Literal, Path, PathStep, SelectQuery, Shape, ShapeItem,
 };
-use schema_model::{Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog};
+use schema_model::{
+    Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog, Uniqueness,
+};
 
 pub fn post_only_catalog() -> SchemaCatalog {
     SchemaCatalog::try_new(vec![ObjectType::new("Post", vec![])])
@@ -106,6 +109,43 @@ pub fn post_with_author_catalog() -> SchemaCatalog {
         ),
     ])
     .expect("post-with-author schema catalog should be valid")
+}
+
+pub fn post_with_author_lookup_catalog() -> SchemaCatalog {
+    SchemaCatalog::try_new(vec![
+        ObjectType::new(
+            "User",
+            vec![
+                Field::Scalar(ScalarField::with_uniqueness(
+                    "email",
+                    ScalarType::Str,
+                    schema_model::SingleCardinality::Required,
+                    Uniqueness::Unique,
+                )),
+                Field::Scalar(ScalarField::new(
+                    "name",
+                    ScalarType::Str,
+                    schema_model::SingleCardinality::Required,
+                )),
+            ],
+        ),
+        ObjectType::new(
+            "Post",
+            vec![
+                Field::Scalar(ScalarField::new(
+                    "title",
+                    ScalarType::Str,
+                    schema_model::SingleCardinality::Optional,
+                )),
+                Field::Link(LinkField::new(
+                    "author",
+                    "User",
+                    schema_model::Cardinality::Optional,
+                )),
+            ],
+        ),
+    ])
+    .expect("post-with-author-lookup schema catalog should be valid")
 }
 
 pub fn user_with_posts_catalog() -> SchemaCatalog {
@@ -308,6 +348,24 @@ pub fn profile_with_optional_fields_catalog() -> SchemaCatalog {
         ),
     ])
     .expect("profile-with-optional-fields schema catalog should be valid")
+}
+
+pub fn select_assignment(
+    field_name: &str,
+    root_type_name: &str,
+    projected_fields: &[&str],
+    filter: Option<Expr>,
+    limit: Option<i64>,
+) -> Assignment {
+    let shape = Shape::new(
+        projected_fields
+            .iter()
+            .map(|field| ShapeItem::new(Path::new(vec![PathStep::new(*field)]), None))
+            .collect(),
+    );
+    let select = SelectQuery::new(root_type_name, shape, filter, vec![], limit, None);
+
+    Assignment::new(field_name, AssignmentValue::Select(Box::new(select)))
 }
 
 pub fn path_expr(path: &[&str]) -> Expr {

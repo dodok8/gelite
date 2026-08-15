@@ -1,6 +1,6 @@
 use alloc::string::ToString;
 
-use query_ast::{CompareOp, Literal};
+use query_ast::{AssignmentValue, CompareOp, Literal};
 
 use super::fixtures::{assert_compare_expr, assert_literal_expr, assert_path_expr};
 use crate::{Keyword, ParseErrorKind, TokenKind, lex, parse_insert, parse_select, parse_update};
@@ -60,13 +60,37 @@ fn parser_can_parse_filtered_update() {
     assert_eq!(query.assignments()[0].field_name(), "title");
     assert_eq!(
         query.assignments()[0].value(),
-        &Literal::String("Closed Case".to_string())
+        &AssignmentValue::Literal(Literal::String("Closed Case".to_string()))
     );
     assert_eq!(query.assignments()[1].field_name(), "author");
     assert_eq!(
         query.assignments()[1].value(),
-        &Literal::String("user-2".to_string())
+        &AssignmentValue::Literal(Literal::String("user-2".to_string()))
     );
+}
+
+#[test]
+fn parser_can_parse_update_with_single_link_select_assignment() {
+    let query = parse_update(
+        r#"update Post
+        filter .title = "Case File"
+        set {
+            author := (
+                select User { id }
+                filter .email = "sheri@example.com"
+            )
+        }"#,
+    )
+    .expect("update query should parse");
+
+    assert_eq!(query.target_type_name(), "Post");
+    assert_eq!(query.assignments().len(), 1);
+    assert_eq!(query.assignments()[0].field_name(), "author");
+
+    let AssignmentValue::Select(select) = query.assignments()[0].value() else {
+        panic!("author should contain a select assignment");
+    };
+    assert_eq!(select.root_type_name(), "User");
 }
 
 #[test]

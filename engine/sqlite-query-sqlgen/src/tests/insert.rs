@@ -1,6 +1,7 @@
 use super::fixtures::{
-    empty_post_insert_query, post_insert_with_author_link, post_insert_with_null_assignments,
-    post_insert_with_ordered_assignments, post_insert_with_scalar_assignments, quoted_insert_query,
+    empty_post_insert_query, post_insert_with_author_link, post_insert_with_author_select,
+    post_insert_with_null_assignments, post_insert_with_ordered_assignments,
+    post_insert_with_scalar_assignments, quoted_insert_query,
 };
 use crate::{SQLiteBindValue, render_insert};
 use alloc::string::ToString;
@@ -57,6 +58,25 @@ fn sqlite_sqlgen_can_render_single_link_foreign_key_assignment() {
         &[
             SQLiteBindValue::String(GENERATED_ID.to_string()),
             SQLiteBindValue::String("00000000-0000-0000-0000-000000000001".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn sqlite_sqlgen_can_render_insert_link_select_assignment() {
+    let plan = sqlite_query_plan::plan_insert(&post_insert_with_author_select());
+
+    let statement = render_insert(&plan, GENERATED_ID);
+
+    assert_eq!(
+        statement.sql(),
+        "INSERT INTO \"post\" (\"id\", \"author_id\") VALUES (?, (SELECT \"root\".\"id\" FROM \"user\" AS \"root\" WHERE \"root\".\"id\" = ?))"
+    );
+    assert_eq!(
+        statement.bind_values(),
+        &[
+            SQLiteBindValue::String(GENERATED_ID.to_string()),
+            SQLiteBindValue::String("user-1".to_string()),
         ]
     );
 }

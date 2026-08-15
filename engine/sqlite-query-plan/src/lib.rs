@@ -9,10 +9,11 @@
 //! physical decisions before `sqlite-query-sqlgen` serializes them. It also keeps
 //! SQLite naming and join rules out of the backend-independent IR.
 //!
-//! The current planner handles select queries and literal-only insert and update
-//! queries. Select and update filters support direct scalar columns and path
-//! traversal through single links. Multi-link planning and follow-up fetch plans
-//! are specified but not implemented yet.
+//! The current planner handles select queries plus insert and update assignments
+//! from literals or supported single-link selects. Select and update filters
+//! support direct scalar columns and path traversal through single links.
+//! Multi-link planning and follow-up fetch plans are specified but not
+//! implemented yet.
 
 extern crate alloc;
 
@@ -180,17 +181,26 @@ fn sqlite_table_name(object_type: &ObjectTypeRef) -> String {
 fn plan_assignment(assignment: &query_ir::Assignment) -> SQLiteAssignment {
     let field = assignment.field();
     let (column_name, value) = match assignment.value() {
-        query_ir::AssignmentValue::Scalar(value) => {
-            (field.name().to_string(), sqlite_literal_from_ir(value))
-        }
+        query_ir::AssignmentValue::Scalar(value) => (
+            field.name().to_string(),
+            SQLiteAssignmentValue::Literal(sqlite_literal_from_ir(value)),
+        ),
         query_ir::AssignmentValue::LinkId(value) => (
             format!("{}_id", field.name()),
-            SQLiteLiteral::String(value.clone()),
+            SQLiteAssignmentValue::Literal(SQLiteLiteral::String(value.clone())),
         ),
-        query_ir::AssignmentValue::ScalarNull => (field.name().to_string(), SQLiteLiteral::Null),
-        query_ir::AssignmentValue::LinkNull => {
-            (format!("{}_id", field.name()), SQLiteLiteral::Null)
-        }
+        query_ir::AssignmentValue::LinkSelect(select) => (
+            format!("{}_id", field.name()),
+            SQLiteAssignmentValue::Select(Box::new(plan_select(select))),
+        ),
+        query_ir::AssignmentValue::ScalarNull => (
+            field.name().to_string(),
+            SQLiteAssignmentValue::Literal(SQLiteLiteral::Null),
+        ),
+        query_ir::AssignmentValue::LinkNull => (
+            format!("{}_id", field.name()),
+            SQLiteAssignmentValue::Literal(SQLiteLiteral::Null),
+        ),
     };
 
     SQLiteAssignment { column_name, value }
@@ -242,7 +252,7 @@ pub enum SQLiteGeneratedIdStrategy {
 /// One physical SQLite column assignment in a mutation plan.
 pub struct SQLiteAssignment {
     column_name: String,
-    value: SQLiteLiteral,
+    value: SQLiteAssignmentValue,
 }
 
 impl SQLiteAssignment {
@@ -250,9 +260,15 @@ impl SQLiteAssignment {
         &self.column_name
     }
 
-    pub fn value(&self) -> &SQLiteLiteral {
+    pub fn value(&self) -> &SQLiteAssignmentValue {
         &self.value
     }
+}
+
+/// Physical value assigned to one SQLite mutation column.
+pub enum SQLiteAssignmentValue {
+    Literal(SQLiteLiteral),
+    Select(Box<SQLiteSelectPlan>),
 }
 
 /// Structured SQLite plan for updating resolved objects.

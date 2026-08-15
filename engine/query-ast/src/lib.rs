@@ -52,7 +52,13 @@ pub struct DeleteQuery {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
     field_name: String,
-    value: Literal,
+    value: AssignmentValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignmentValue {
+    Literal(Literal),
+    Select(Box<SelectQuery>),
 }
 
 impl InsertQuery {
@@ -116,7 +122,7 @@ impl DeleteQuery {
 }
 
 impl Assignment {
-    pub fn new(field_name: impl Into<String>, value: Literal) -> Self {
+    pub fn new(field_name: impl Into<String>, value: AssignmentValue) -> Self {
         Self {
             field_name: field_name.into(),
             value,
@@ -127,7 +133,7 @@ impl Assignment {
         &self.field_name
     }
 
-    pub fn value(&self) -> &Literal {
+    pub fn value(&self) -> &AssignmentValue {
         &self.value
     }
 }

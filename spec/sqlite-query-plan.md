@@ -458,8 +458,14 @@ Minimum fields:
 
 Assignment forms:
 
-- scalar column update
-- single-link foreign key update
+- literal scalar or single-link foreign-key value
+- nested `SQLiteSelectPlan` used as a scalar single-link foreign-key value
+
+The planner lowers a resolved `LinkSelect` assignment through the existing
+select planner. The nested plan must select the linked object's identity and
+is rendered in the destination `<field>_id` value position. Semantic
+resolution has already verified the link target, projection, literal type, and
+at-most-one cardinality before this layer.
 
 ### `SQLiteDeletePlan`
 
