@@ -6,8 +6,9 @@ use query_ast::{
 };
 
 use crate::tests::fixtures::{
-    post_with_author_catalog, post_with_title_catalog, user_only_catalog,
-    user_with_only_multi_posts_catalog, user_with_required_name_catalog,
+    post_with_author_catalog, post_with_author_lookup_catalog, post_with_title_catalog,
+    select_assignment, user_only_catalog, user_with_only_multi_posts_catalog,
+    user_with_required_name_catalog,
 };
 use crate::{ResolveError, resolve_update};
 
@@ -21,6 +22,25 @@ fn equality_filter(field: &str, literal: Literal) -> Expr {
         CompareOp::Eq,
         Expr::Literal(literal),
     ))
+}
+
+#[test]
+fn resolves_update_link_select_by_implicit_id() {
+    let catalog = post_with_author_lookup_catalog();
+    let query = UpdateQuery::new(
+        "Post",
+        None,
+        vec![select_assignment(
+            "author",
+            "User",
+            &["id"],
+            Some(equality_filter("id", Literal::String("user-1".to_string()))),
+            None,
+        )],
+    );
+
+    let resolved = resolve_update(&catalog, &query).expect("link select assignment should resolve");
+    assert_eq!(resolved.assignments()[0].field().name(), "author");
 }
 
 #[test]
