@@ -270,15 +270,6 @@ pub enum SQLiteAssignmentValue {
     Select(Box<SQLiteSelectPlan>),
 }
 
-impl SQLiteAssignmentValue {
-    pub fn as_literal(&self) -> Option<&SQLiteLiteral> {
-        match self {
-            Self::Literal(value) => Some(value),
-            Self::Select(_) => None,
-        }
-    }
-}
-
 /// Structured SQLite plan for updating resolved objects.
 pub struct SQLiteUpdatePlan {
     target: SQLiteObjectSource,

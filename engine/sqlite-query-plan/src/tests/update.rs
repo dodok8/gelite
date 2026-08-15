@@ -10,7 +10,10 @@ use super::fixtures::{
     post_title_field, post_title_path_value, post_type, user_best_friend_field, user_name_field,
     user_type,
 };
-use crate::{SQLiteJoinKind, SQLiteLiteral, SQLiteValueExpr, SQLiteWhereExpr, plan_update};
+use crate::{
+    SQLiteAssignmentValue, SQLiteJoinKind, SQLiteLiteral, SQLiteValueExpr, SQLiteWhereExpr,
+    plan_update,
+};
 
 #[test]
 fn sqlite_update_plan_targets_one_root_table() {
@@ -43,15 +46,15 @@ fn sqlite_update_plan_maps_assignments_in_definition_order() {
 
     assert_eq!(plan.assignments().len(), 2);
     assert_eq!(plan.assignments()[0].column_name(), "title");
-    assert_eq!(
-        plan.assignments()[0].value().as_literal(),
-        Some(&SQLiteLiteral::String("Closed Case".to_string()))
-    );
+    let SQLiteAssignmentValue::Literal(title) = plan.assignments()[0].value() else {
+        panic!("expected literal title assignment");
+    };
+    assert_eq!(title, &SQLiteLiteral::String("Closed Case".to_string()));
     assert_eq!(plan.assignments()[1].column_name(), "author_id");
-    assert_eq!(
-        plan.assignments()[1].value().as_literal(),
-        Some(&SQLiteLiteral::String("user-2".to_string()))
-    );
+    let SQLiteAssignmentValue::Literal(author) = plan.assignments()[1].value() else {
+        panic!("expected literal author assignment");
+    };
+    assert_eq!(author, &SQLiteLiteral::String("user-2".to_string()));
 }
 
 #[test]

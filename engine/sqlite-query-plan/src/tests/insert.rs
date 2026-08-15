@@ -37,10 +37,10 @@ fn sqlite_insert_plan_maps_scalar_assignment_to_column() {
 
     assert_eq!(assignments.len(), 1);
     assert_eq!(assignments[0].column_name(), "title");
-    assert_eq!(
-        assignments[0].value().as_literal(),
-        Some(&SQLiteLiteral::String("Case File".to_string()))
-    );
+    let SQLiteAssignmentValue::Literal(value) = assignments[0].value() else {
+        panic!("expected literal assignment");
+    };
+    assert_eq!(value, &SQLiteLiteral::String("Case File".to_string()));
 }
 
 #[test]

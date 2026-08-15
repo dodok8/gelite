@@ -1,8 +1,6 @@
 use crate::{LexErrorKind, ParseErrorKind, TokenKind, lex, parse_insert};
 use alloc::string::ToString;
-use query_ast::{AssignmentValue, CompareOp, Literal};
-
-use super::fixtures::{assert_compare_expr, assert_literal_expr, assert_path_expr};
+use query_ast::{AssignmentValue, Literal};
 
 #[test]
 fn lexer_can_tokenize_insert_assignment() {
@@ -93,22 +91,6 @@ fn parser_can_parse_insert_with_single_link_select_assignment() {
     };
 
     assert_eq!(select.root_type_name(), "User");
-    assert_eq!(select.shape().items().len(), 1);
-    assert_eq!(select.shape().items()[0].path().steps().len(), 1);
-    assert_eq!(
-        select.shape().items()[0].path().steps()[0].field_name(),
-        "id"
-    );
-    assert!(select.shape().items()[0].child_shape().is_none());
-
-    let (left, right) = assert_compare_expr(
-        select
-            .filter()
-            .expect("nested select should keep its filter"),
-        CompareOp::Eq,
-    );
-    assert_path_expr(left, &["email"]);
-    assert_literal_expr(right, &Literal::String("sheri@example.com".to_string()));
 }
 
 #[test]

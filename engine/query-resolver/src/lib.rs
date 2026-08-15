@@ -298,10 +298,7 @@ fn resolve_link_select_assignment(
     }
 
     let resolved = resolve_select(catalog, select)?;
-    let [item] = resolved.shape().items() else {
-        return Err(invalid("select must project exactly the implicit id"));
-    };
-    let Some(selected_field) = item.as_field() else {
+    let [query_ir::ResolvedShapeItem::Field(selected_field)] = resolved.shape().items() else {
         return Err(invalid("select must project exactly the implicit id"));
     };
     let projects_implicit_id = catalog
