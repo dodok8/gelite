@@ -139,6 +139,13 @@ link shorthand is bound as a SQLite `TEXT` value; it is not stored as a nested
 object or as a value in a join table. An optional single-link `null` assignment
 writes SQLite `NULL`.
 
+A supported single-link select assignment renders as a scalar SQLite subquery
+in the same `<field>_id` value position. The resolver guarantees that the
+subquery projects the target object's `id` and returns at most one row. One row
+writes its identity; zero rows produce SQLite `NULL`. The latter is accepted by
+an optional link and rejected by the `NOT NULL` constraint of a required link.
+Nested filter bind values remain in source assignment order.
+
 ## Multi Relation Mapping
 
 Multi relations use a dedicated join table named:

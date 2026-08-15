@@ -13,7 +13,7 @@ use sqlite_schema_plan::SQLiteValuePlan;
 
 const BLOG_SCHEMA_SOURCE: &str = r#"
 type User {
-  required email: str
+  required unique email: str
   required score: int64
   link best_friend: User
   multi link posts: Post
@@ -729,6 +729,100 @@ fn update_pipeline_executes_related_filter_from_query_text() {
                 SQLiteCellValue::Text("post-3".to_string()),
                 SQLiteCellValue::Text("Archived".to_string()),
             ],
+        ]
+    );
+}
+
+#[test]
+fn insert_pipeline_executes_link_select_and_rejects_missing_required_link() {
+    let mut runner = setup_blog_database();
+    let catalog = runner
+        .load_schema_catalog()
+        .expect("catalog should load from metadata");
+
+    execute_insert(
+        &mut runner,
+        &catalog,
+        r#"insert Post {
+            title := "Linked",
+            view_count := 1,
+            author := (
+                select User { id }
+                filter .email = "carol@example.com"
+            ),
+        }"#,
+        "post-4",
+    );
+
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT author_id FROM post WHERE id = 'post-4'",
+            vec![],
+        ))
+        .expect("inserted link should be readable");
+    assert_eq!(
+        result.rows(),
+        &[vec![SQLiteCellValue::Text("user-3".to_string())]]
+    );
+
+    let ast = query_parser::parse_insert(
+        r#"insert Post {
+            title := "Missing",
+            view_count := 1,
+            author := (
+                select User { id }
+                filter .email = "missing@example.com"
+            ),
+        }"#,
+    )
+    .expect("required missing-link insert should parse");
+    let ir = query_resolver::resolve_insert(&catalog, &ast)
+        .expect("required missing-link insert should resolve");
+    let plan = sqlite_query_plan::plan_insert(&ir);
+    let statement = render_insert(&plan, "post-5");
+
+    runner
+        .execute_insert(&statement)
+        .expect_err("required link should reject a zero-row select");
+}
+
+#[test]
+fn update_pipeline_executes_link_select_and_clears_optional_link_on_no_rows() {
+    let mut runner = setup_blog_database();
+
+    let affected_rows = execute_update(
+        &mut runner,
+        r#"update Post filter .id = "post-3" set {
+            author := (
+                select User { id }
+                filter .email = "alice@example.com"
+            ),
+        }"#,
+    );
+    assert_eq!(affected_rows, 1);
+
+    let affected_rows = execute_update(
+        &mut runner,
+        r#"update User filter .id = "user-1" set {
+            best_friend := (
+                select User { id }
+                filter .email = "missing@example.com"
+            ),
+        }"#,
+    );
+    assert_eq!(affected_rows, 1);
+
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT author_id FROM post WHERE id = 'post-3' UNION ALL SELECT best_friend_id FROM user WHERE id = 'user-1'",
+            vec![],
+        ))
+        .expect("updated links should be readable");
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![SQLiteCellValue::Text("user-1".to_string())],
+            vec![SQLiteCellValue::Null],
         ]
     );
 }

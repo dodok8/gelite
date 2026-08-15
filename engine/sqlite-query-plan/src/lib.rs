@@ -9,10 +9,11 @@
 //! physical decisions before `sqlite-query-sqlgen` serializes them. It also keeps
 //! SQLite naming and join rules out of the backend-independent IR.
 //!
-//! The current planner handles select queries and literal-only insert and update
-//! queries. Select and update filters support direct scalar columns and path
-//! traversal through single links. Multi-link planning and follow-up fetch plans
-//! are specified but not implemented yet.
+//! The current planner handles select queries plus insert and update assignments
+//! from literals or supported single-link selects. Select and update filters
+//! support direct scalar columns and path traversal through single links.
+//! Multi-link planning and follow-up fetch plans are specified but not
+//! implemented yet.
 
 extern crate alloc;
 
