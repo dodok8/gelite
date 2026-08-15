@@ -262,14 +262,103 @@ fn resolve_assignment(
         query_ast::AssignmentValue::Literal(literal) => {
             resolve_assignment_value(target_object_type, field, literal)?
         }
-        query_ast::AssignmentValue::Select(_) => {
-            return Err(ResolveError::UnsupportedExpr {
-                expr_type: "select assignment".to_string(),
-            });
+        query_ast::AssignmentValue::Select(select) => {
+            resolve_link_select_assignment(catalog, target_object_type, field, select)?
         }
     };
 
     Ok(query_ir::Assignment::new(field_ref, value))
+}
+
+fn resolve_link_select_assignment(
+    catalog: &schema_model::SchemaCatalog,
+    target_object_type: &schema_model::ObjectTypeRef,
+    field: &Field,
+    select: &query_ast::SelectQuery,
+) -> Result<query_ir::AssignmentValue, ResolveError> {
+    let invalid = |reason: &str| ResolveError::InvalidLinkSelectAssignment {
+        object_type: target_object_type.name().to_string(),
+        field: field.name().to_string(),
+        reason: reason.to_string(),
+    };
+
+    let Field::Link(link) = field else {
+        return Err(invalid("assignment target is not a link"));
+    };
+
+    if link.cardinality() == schema_model::Cardinality::Many {
+        return Err(ResolveError::MultiLinkAssignmentUnsupported {
+            object_type: target_object_type.name().to_string(),
+            field: field.name().to_string(),
+        });
+    }
+
+    if select.root_type_name() != link.target_type_name() {
+        return Err(invalid("select root does not match the link target"));
+    }
+
+    let resolved = resolve_select(catalog, select)?;
+    let [item] = resolved.shape().items() else {
+        return Err(invalid("select must project exactly the implicit id"));
+    };
+    let Some(selected_field) = item.as_field() else {
+        return Err(invalid("select must project exactly the implicit id"));
+    };
+    let projects_implicit_id = catalog
+        .find_field(
+            resolved.root_object_type().name(),
+            selected_field.field().name(),
+        )
+        .is_some_and(Field::is_implicit);
+
+    if !projects_implicit_id {
+        return Err(invalid("select must project exactly the implicit id"));
+    }
+
+    if !has_unique_literal_filter(catalog, &resolved) {
+        return Err(invalid(
+            "select filter does not prove at-most-one cardinality",
+        ));
+    }
+
+    Ok(query_ir::AssignmentValue::LinkSelect(Box::new(resolved)))
+}
+
+fn has_unique_literal_filter(
+    catalog: &schema_model::SchemaCatalog,
+    select: &query_ir::SelectQuery,
+) -> bool {
+    let Some(query_ir::Expr::Compare(compare)) = select.filter() else {
+        return false;
+    };
+
+    if compare.op() != query_ir::CompareOp::Eq {
+        return false;
+    }
+
+    (is_unique_lookup_path(catalog, compare.left()) && is_non_null_literal(compare.right()))
+        || (is_non_null_literal(compare.left()) && is_unique_lookup_path(catalog, compare.right()))
+}
+
+fn is_unique_lookup_path(
+    catalog: &schema_model::SchemaCatalog,
+    value: &query_ir::ValueExpr,
+) -> bool {
+    let query_ir::ValueExpr::Path(path) = value else {
+        return false;
+    };
+    let [step] = path.steps() else {
+        return false;
+    };
+
+    match catalog.find_field(path.root_object_type().name(), step.field().name()) {
+        Some(field @ Field::Scalar(scalar)) => scalar.is_unique() || field.is_implicit(),
+        _ => false,
+    }
+}
+
+fn is_non_null_literal(value: &query_ir::ValueExpr) -> bool {
+    matches!(value, query_ir::ValueExpr::Literal(literal) if !matches!(literal, query_ir::Literal::Null))
 }
 
 fn resolve_assignment_value(
@@ -1690,6 +1779,11 @@ pub enum ResolveError {
     MultiLinkAssignmentUnsupported {
         object_type: String,
         field: String,
+    },
+    InvalidLinkSelectAssignment {
+        object_type: String,
+        field: String,
+        reason: String,
     },
     DuplicateAssignment {
         object_type: String,

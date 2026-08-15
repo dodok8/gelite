@@ -44,13 +44,13 @@ fn sqlite_update_plan_maps_assignments_in_definition_order() {
     assert_eq!(plan.assignments().len(), 2);
     assert_eq!(plan.assignments()[0].column_name(), "title");
     assert_eq!(
-        plan.assignments()[0].value(),
-        &SQLiteLiteral::String("Closed Case".to_string())
+        plan.assignments()[0].value().as_literal(),
+        Some(&SQLiteLiteral::String("Closed Case".to_string()))
     );
     assert_eq!(plan.assignments()[1].column_name(), "author_id");
     assert_eq!(
-        plan.assignments()[1].value(),
-        &SQLiteLiteral::String("user-2".to_string())
+        plan.assignments()[1].value().as_literal(),
+        Some(&SQLiteLiteral::String("user-2".to_string()))
     );
 }
 

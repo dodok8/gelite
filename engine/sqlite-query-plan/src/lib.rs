@@ -180,17 +180,26 @@ fn sqlite_table_name(object_type: &ObjectTypeRef) -> String {
 fn plan_assignment(assignment: &query_ir::Assignment) -> SQLiteAssignment {
     let field = assignment.field();
     let (column_name, value) = match assignment.value() {
-        query_ir::AssignmentValue::Scalar(value) => {
-            (field.name().to_string(), sqlite_literal_from_ir(value))
-        }
+        query_ir::AssignmentValue::Scalar(value) => (
+            field.name().to_string(),
+            SQLiteAssignmentValue::Literal(sqlite_literal_from_ir(value)),
+        ),
         query_ir::AssignmentValue::LinkId(value) => (
             format!("{}_id", field.name()),
-            SQLiteLiteral::String(value.clone()),
+            SQLiteAssignmentValue::Literal(SQLiteLiteral::String(value.clone())),
         ),
-        query_ir::AssignmentValue::ScalarNull => (field.name().to_string(), SQLiteLiteral::Null),
-        query_ir::AssignmentValue::LinkNull => {
-            (format!("{}_id", field.name()), SQLiteLiteral::Null)
+        // ponytail: temporary IR boundary, replace with a scalar-select assignment plan.
+        query_ir::AssignmentValue::LinkSelect(_) => {
+            panic!("link select assignment planning is not implemented")
         }
+        query_ir::AssignmentValue::ScalarNull => (
+            field.name().to_string(),
+            SQLiteAssignmentValue::Literal(SQLiteLiteral::Null),
+        ),
+        query_ir::AssignmentValue::LinkNull => (
+            format!("{}_id", field.name()),
+            SQLiteAssignmentValue::Literal(SQLiteLiteral::Null),
+        ),
     };
 
     SQLiteAssignment { column_name, value }
@@ -242,7 +251,7 @@ pub enum SQLiteGeneratedIdStrategy {
 /// One physical SQLite column assignment in a mutation plan.
 pub struct SQLiteAssignment {
     column_name: String,
-    value: SQLiteLiteral,
+    value: SQLiteAssignmentValue,
 }
 
 impl SQLiteAssignment {
@@ -250,8 +259,23 @@ impl SQLiteAssignment {
         &self.column_name
     }
 
-    pub fn value(&self) -> &SQLiteLiteral {
+    pub fn value(&self) -> &SQLiteAssignmentValue {
         &self.value
+    }
+}
+
+/// Physical value assigned to one SQLite mutation column.
+pub enum SQLiteAssignmentValue {
+    Literal(SQLiteLiteral),
+    Select(Box<SQLiteSelectPlan>),
+}
+
+impl SQLiteAssignmentValue {
+    pub fn as_literal(&self) -> Option<&SQLiteLiteral> {
+        match self {
+            Self::Literal(value) => Some(value),
+            Self::Select(_) => None,
+        }
     }
 }
 

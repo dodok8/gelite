@@ -17,7 +17,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_query_plan::{
-    SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
+    SQLiteArithmeticOp, SQLiteAssignmentValue, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
     SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInsertPlan, SQLiteJoin, SQLiteJoinKind,
     SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteSelectPlan,
     SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr,
@@ -86,7 +86,10 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
 
     for assignment in plan.assignments() {
         columns.push(quote_identifier(assignment.column_name()));
-        bind_values.push(bind_value_from_literal(assignment.value()));
+        let SQLiteAssignmentValue::Literal(value) = assignment.value() else {
+            panic!("select assignment SQL generation is not implemented")
+        };
+        bind_values.push(bind_value_from_literal(value));
     }
 
     SQLiteStatement::new(
@@ -107,7 +110,10 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         .assignments()
         .iter()
         .map(|assignment| {
-            bind_values.push(bind_value_from_literal(assignment.value()));
+            let SQLiteAssignmentValue::Literal(value) = assignment.value() else {
+                panic!("select assignment SQL generation is not implemented")
+            };
+            bind_values.push(bind_value_from_literal(value));
 
             format!("{} = ?", quote_identifier(assignment.column_name()))
         })

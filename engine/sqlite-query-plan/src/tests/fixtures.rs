@@ -69,6 +69,47 @@ pub fn post_insert_with_ordered_assignments() -> query_ir::InsertQuery {
     )
 }
 
+pub fn post_insert_with_author_select_assignment() -> query_ir::InsertQuery {
+    let user_id = user_id_field();
+    let select = query_ir::SelectQuery::new(
+        user_type(),
+        query_ir::ResolvedShape::new(
+            user_type(),
+            vec![query_ir::ResolvedShapeField::new(
+                "id",
+                user_id.clone(),
+                schema_model::Cardinality::Required,
+                None,
+            )],
+        ),
+        Some(query_ir::Expr::Compare(query_ir::CompareExpr::new(
+            query_ir::ValueExpr::Path(
+                query_ir::ResolvedPath::try_new(
+                    user_type(),
+                    vec![query_ir::ResolvedPathStep::scalar(
+                        user_id,
+                        schema_model::Cardinality::Required,
+                    )],
+                )
+                .expect("user id path should be valid"),
+            ),
+            query_ir::CompareOp::Eq,
+            query_ir::ValueExpr::Literal(query_ir::Literal::String("user-1".to_string())),
+        ))),
+        vec![],
+        None,
+        None,
+    );
+
+    query_ir::InsertQuery::new(
+        post_type(),
+        vec![query_ir::Assignment::new(
+            post_author_field(),
+            query_ir::AssignmentValue::LinkSelect(alloc::boxed::Box::new(select)),
+        )],
+    )
+}
+
 pub fn post_title_path_value() -> query_ir::ValueExpr {
     query_ir::ValueExpr::Path(
         query_ir::ResolvedPath::try_new(
@@ -190,6 +231,10 @@ pub fn post_generated_join_name_path_value() -> query_ir::ValueExpr {
 
 pub fn user_type() -> ObjectTypeRef {
     ObjectTypeRef::new(ObjectTypeId::new(2), "User")
+}
+
+pub fn user_id_field() -> FieldRef {
+    FieldRef::new(FieldId::new(1), user_type(), "id")
 }
 
 pub fn user_name_field() -> FieldRef {
@@ -385,7 +430,7 @@ pub fn post_author_shape_field_with_id_then_name() -> query_ir::ResolvedShapeFie
 fn user_id_shape_field() -> query_ir::ResolvedShapeField {
     query_ir::ResolvedShapeField::new(
         "id",
-        FieldRef::new(FieldId::new(1), user_type(), "id"),
+        user_id_field(),
         schema_model::Cardinality::Required,
         None,
     )
