@@ -86,6 +86,10 @@ pub fn user_type() -> ObjectTypeRef {
     ObjectTypeRef::new(ObjectTypeId::new(2), "User")
 }
 
+pub fn user_id_field() -> FieldRef {
+    FieldRef::new(FieldId::new(1), user_type(), "id")
+}
+
 pub fn user_name_field() -> FieldRef {
     FieldRef::new(FieldId::new(2), user_type(), "name")
 }
@@ -141,6 +145,48 @@ pub fn post_insert_with_author_link() -> query_ir::InsertQuery {
             query_ir::AssignmentValue::LinkId("00000000-0000-0000-0000-000000000001".to_string()),
         )],
     )
+}
+
+pub fn post_author_select_assignment() -> query_ir::Assignment {
+    let user_id = user_id_field();
+    let select = query_ir::SelectQuery::new(
+        user_type(),
+        query_ir::ResolvedShape::new(
+            user_type(),
+            vec![query_ir::ResolvedShapeField::new(
+                "id",
+                user_id.clone(),
+                schema_model::Cardinality::Required,
+                None,
+            )],
+        ),
+        Some(query_ir::Expr::Compare(query_ir::CompareExpr::new(
+            query_ir::ValueExpr::Path(
+                query_ir::ResolvedPath::try_new(
+                    user_type(),
+                    vec![query_ir::ResolvedPathStep::scalar(
+                        user_id,
+                        schema_model::Cardinality::Required,
+                    )],
+                )
+                .expect("user id path should be valid"),
+            ),
+            query_ir::CompareOp::Eq,
+            query_ir::ValueExpr::Literal(query_ir::Literal::String("user-1".to_string())),
+        ))),
+        vec![],
+        None,
+        None,
+    );
+
+    query_ir::Assignment::new(
+        post_author_field(),
+        query_ir::AssignmentValue::LinkSelect(alloc::boxed::Box::new(select)),
+    )
+}
+
+pub fn post_insert_with_author_select() -> query_ir::InsertQuery {
+    query_ir::InsertQuery::new(post_type(), vec![post_author_select_assignment()])
 }
 
 pub fn post_insert_with_null_assignments() -> query_ir::InsertQuery {

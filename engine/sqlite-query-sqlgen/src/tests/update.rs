@@ -4,7 +4,8 @@ use alloc::vec;
 use query_ir::{Assignment, AssignmentValue, CompareExpr, CompareOp, Expr, Literal, UpdateQuery};
 
 use super::fixtures::{
-    post_author_name_path_value, post_title_field, post_title_path_value, post_type,
+    post_author_name_path_value, post_author_select_assignment, post_title_field,
+    post_title_path_value, post_type,
 };
 use crate::{SQLiteBindValue, render_update};
 
@@ -43,6 +44,34 @@ fn sqlite_sqlgen_renders_assignment_binds_before_filter_binds() {
         statement.bind_values(),
         &[
             SQLiteBindValue::String("Closed Case".to_string()),
+            SQLiteBindValue::String("Draft".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn sqlite_sqlgen_can_render_update_link_select_before_filter_binds() {
+    let filter = Expr::Compare(CompareExpr::new(
+        post_title_path_value(),
+        CompareOp::Eq,
+        query_ir::ValueExpr::Literal(Literal::String("Draft".to_string())),
+    ));
+    let plan = sqlite_query_plan::plan_update(&UpdateQuery::new(
+        post_type(),
+        Some(filter),
+        vec![post_author_select_assignment()],
+    ));
+
+    let statement = render_update(&plan);
+
+    assert_eq!(
+        statement.sql(),
+        "UPDATE \"post\" AS \"root\" SET \"author_id\" = (SELECT \"root\".\"id\" FROM \"user\" AS \"root\" WHERE \"root\".\"id\" = ?) WHERE \"root\".\"title\" = ?"
+    );
+    assert_eq!(
+        statement.bind_values(),
+        &[
+            SQLiteBindValue::String("user-1".to_string()),
             SQLiteBindValue::String("Draft".to_string()),
         ]
     );
