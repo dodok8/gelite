@@ -188,10 +188,10 @@ fn plan_assignment(assignment: &query_ir::Assignment) -> SQLiteAssignment {
             format!("{}_id", field.name()),
             SQLiteAssignmentValue::Literal(SQLiteLiteral::String(value.clone())),
         ),
-        // ponytail: temporary IR boundary, replace with a scalar-select assignment plan.
-        query_ir::AssignmentValue::LinkSelect(_) => {
-            panic!("link select assignment planning is not implemented")
-        }
+        query_ir::AssignmentValue::LinkSelect(select) => (
+            format!("{}_id", field.name()),
+            SQLiteAssignmentValue::Select(Box::new(plan_select(select))),
+        ),
         query_ir::AssignmentValue::ScalarNull => (
             field.name().to_string(),
             SQLiteAssignmentValue::Literal(SQLiteLiteral::Null),
