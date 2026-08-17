@@ -506,23 +506,35 @@ Minimum fields:
 
 - left expression
 - membership operator: `in` or `not in`
-- list of right-hand value expressions
+- right-hand side, represented explicitly as either a value list or resolved
+  select query
 
 Supported right-hand side:
 
 - a non-empty list of non-null scalar value expressions
+- a resolved `SelectQuery` that projects exactly one schema-backed required
+  scalar field compatible with the left expression
 
 Membership expressions must resolve to a boolean result. The resolver is
-responsible for rejecting empty lists, subquery RHS forms, incompatible operand
-types, `null` list items, and non-scalar list items before the expression
-reaches SQLite planning.
+responsible for rejecting empty lists, incompatible operand types, `null` list
+items, non-scalar list items, and invalid select projections before the
+expression reaches SQLite planning.
 
 Right-hand list items must be row-independent in the arithmetic filter
 milestone. Literals and arithmetic expressions over literals are accepted.
 Path expressions, link traversals, subqueries, boolean predicates, and any
-expression that depends on the current row are rejected. This keeps membership
-planning as a single-row predicate and avoids introducing correlated expression
-semantics before subqueries and computed projections are defined.
+expression that depends on the current row are rejected as list items.
+
+The resolved select right-hand side retains its root object type, shape,
+filter, ordering, limit, and offset as Semantic IR. Its shape must contain one
+`ResolvedShapeField` for a scalar field with required cardinality. Computed
+fields, link fields, nested shapes, optional fields, and multiple shape items
+are invalid. The nested select may return zero, one, or many rows.
+
+Nested paths resolve only against the nested select root. The Semantic IR does
+not carry an outer-scope reference into the nested select, and the first
+membership-subquery milestone rejects another subquery inside it. The nested
+query remains structured Semantic IR; it must not contain backend SQL text.
 
 The Semantic IR should model `not in` explicitly instead of rewriting it to a
 boolean `not` around `in`. Keeping the operator in the membership node lets

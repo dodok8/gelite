@@ -212,7 +212,7 @@ select Post {
 filter (.title = "Hello" or .title = "Draft") and not .archived = true
 ```
 
-Membership checks use bracketed value expressions:
+Membership checks may use bracketed value expressions:
 
 ```text
 select Post {
@@ -227,6 +227,10 @@ The right-hand list may contain row-independent scalar value expressions:
 ```text
 filter .view_count in [1 + 1, 2 * 3]
 ```
+
+They may also use a parenthesized select that returns one compatible required
+scalar field. The detailed projection and scope rules are defined in
+[Expression Grammar](#expression-grammar).
 
 `null` comparisons are supported only with equality operators. `= null` and
 `null = .field` match absent optional values. `!= null` and `null != .field`
@@ -406,41 +410,58 @@ primary_expr      := literal
                   | path
                   | "(" expr ")"
                   | function_call
-                  | subquery_expr
 path              := "."? IDENT ("." IDENT)*
 function_call     := IDENT "(" argument_list? ")"
 argument_list     := expr ("," expr)*
 in_rhs            := "[" expr_list? "]"
                   | "(" select_stmt ")"
 expr_list         := expr ("," expr)*
-subquery_expr     := "(" select_stmt ")"
 ```
 
 Only path, literal, arithmetic, supported built-in function calls, comparison,
-bracketed-list `in`, bracketed-list `not in`, boolean, and parenthesized
-expressions are accepted by the resolver in the current expression milestones.
-Context determines which subset is valid: filters accept boolean expressions,
-ordering accepts scalar order values, and computed projection accepts value
-expressions that refer to the current row. `function_call` is currently
-accepted only for built-in numeric casts and supported string functions. Other
-function names remain reserved. `subquery_expr` is also reserved until subquery
-expression scope is defined.
+membership against a bracketed list or parenthesized select, boolean, and
+parenthesized expressions are accepted by the resolver in the current
+expression milestones. Context determines which subset is valid: filters
+accept boolean expressions, ordering accepts scalar order values, and computed
+projection accepts value expressions that refer to the current row.
+`function_call` is currently accepted only for built-in numeric casts and
+supported string functions. Other function names remain reserved.
 
-The first accepted `in_rhs` form is a non-empty bracketed list. The parser may
-accept `null` as a list item because it is a literal expression, but the
-resolver must reject `in []`, `not in []`, `null` list items, and list items
-that are not scalar value expressions. List items must be row-independent in
-this milestone: literals and arithmetic expressions over literals are accepted,
-but paths, link traversals, subqueries, and boolean predicates inside the list
-are rejected before SQLite planning. Use an explicit null comparison when a
-filter should match null and non-null values together:
+The bracketed `in_rhs` form must be a non-empty list. The parser may accept
+`null` as a list item because it is a literal expression, but the resolver must
+reject `in []`, `not in []`, `null` list items, and list items that are not
+scalar value expressions. List items must be row-independent: literals and
+arithmetic expressions over literals are accepted, but paths, link traversals,
+subqueries, and boolean predicates inside the list are rejected before SQLite
+planning. Use an explicit null comparison when a filter should match null and
+non-null values together:
 
 ```text
 filter .deleted_at = null or .deleted_at in ["2323"]
 ```
 
-Subquery RHS forms such as `.author.id in (select User { id })` are reserved by
-the grammar but rejected until subquery expression scope is defined.
+The parenthesized-select `in_rhs` form resolves the nested select in an
+independent scope rooted at its own target object type. It may return zero, one,
+or many rows, but must project exactly one schema-backed required scalar field.
+That field's scalar type must be compatible with the left expression. Computed
+projections, multiple fields, nested shapes, optional fields, and incompatible
+types are rejected before SQLite planning.
+
+```text
+filter .author.id in (
+  select User { id }
+  filter .country = "Japan"
+)
+```
+
+Membership selects are available in `select`, `update`, and `delete` filters.
+Zero, one, and multiple nested rows use standard set-membership behavior. A
+required projected field prevents `not in` from inheriting ambiguous `NULL`
+membership behavior.
+
+The nested select cannot reference the outer query scope. Paths inside it are
+always relative to the nested root. Membership subqueries cannot themselves
+contain subqueries in the first implementation.
 
 Precedence from strongest to weakest:
 
@@ -465,17 +486,19 @@ The MVP supports:
 - explicit numeric casts with `i64(expr)` and `f64(expr)`
 - string functions with `concat(...)` and `str(expr)`
 - scalar membership checks against non-empty lists of non-null scalar value
-  expressions
+  expressions or an uncorrelated select that returns one compatible required
+  scalar field
 - boolean composition
 - parenthesized grouping
 
 The MVP does not support:
 
 - traversal through backlinks or inferred inverse relations
-- arbitrary subqueries
+- correlated subqueries
+- scalar comparison subqueries
+- nested membership subqueries
 - aggregation
 - `exists`
-- subquery `in`
 - arbitrary function calls other than supported built-ins
 - implicit numeric casts
 - implicit string casts
@@ -683,8 +706,7 @@ The first version does not support:
 - nested object literals in expressions
 - computed expressions in assignment
 - function calls
-- `in`
-- subqueries outside supported single-link assignments
+- subqueries outside supported single-link assignments and membership filters
 
 ## Error Conditions
 
@@ -757,6 +779,7 @@ These are intentionally out of scope until the end-to-end path is stable:
 - grouping
 - pagination cursors
 - arbitrary function calls beyond supported built-ins
-- arbitrary subqueries outside supported single-link assignments
+- arbitrary subqueries outside supported single-link assignments and
+  membership filters
 - query parameters
 - upsert
