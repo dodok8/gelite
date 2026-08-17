@@ -7,7 +7,9 @@ use crate::{
     LexErrorKind, ParseErrorKind, TokenKind, lex, parse_select,
 };
 use alloc::string::ToString;
-use query_ast::{ArithmeticOp, CompareOp, Expr, InOp, Literal, OrderDirection, UnaryArithmeticOp};
+use query_ast::{
+    ArithmeticOp, CompareOp, Expr, InOp, InRhs, Literal, OrderDirection, UnaryArithmeticOp,
+};
 
 #[test]
 fn lexer_can_tokenize_select_shape() {
@@ -1415,6 +1417,72 @@ fn parser_can_parse_filter_not_in_literal_list() {
         }
         _ => panic!("filter should be a not in expression"),
     }
+}
+
+#[test]
+fn parser_can_parse_filter_in_select() {
+    let query = parse_select(
+        r#"select Post { title }
+        filter .author.id in (
+            select User { id }
+            filter .email = "sheri@example.com"
+        )"#,
+    )
+    .expect("query should parse");
+
+    let Expr::In(in_expr) = query.filter().expect("query should have filter") else {
+        panic!("filter should be a membership expression");
+    };
+
+    assert_path_expr(in_expr.left(), &["author", "id"]);
+    assert_eq!(in_expr.op(), InOp::In);
+
+    let InRhs::Select(select) = in_expr.right() else {
+        panic!("membership right side should be a select");
+    };
+
+    assert_eq!(select.root_type_name(), "User");
+    assert_eq!(select.shape().items().len(), 1);
+    assert!(select.filter().is_some());
+}
+
+#[test]
+fn parser_can_parse_filter_not_in_select() {
+    let query = parse_select("select Post { title } filter .author.id not in (select User { id })")
+        .expect("query should parse");
+
+    let Expr::In(in_expr) = query.filter().expect("query should have filter") else {
+        panic!("filter should be a membership expression");
+    };
+
+    assert_path_expr(in_expr.left(), &["author", "id"]);
+    assert_eq!(in_expr.op(), InOp::NotIn);
+    assert!(matches!(in_expr.right(), InRhs::Select(_)));
+}
+
+#[test]
+fn parser_preserves_boolean_precedence_after_membership_select() {
+    let query = parse_select(
+        "select Post { title } filter .author.id in (select User { id }) or .archived = true",
+    )
+    .expect("query should parse");
+
+    let filter = query.filter().expect("query should have filter");
+    let (left, right) = assert_or_expr(filter);
+
+    assert!(matches!(left, Expr::In(_)));
+    assert!(matches!(right, Expr::Compare(_)));
+}
+
+#[test]
+fn parser_rejects_membership_select_without_closing_paren() {
+    let error = parse_select("select Post { title } filter .author.id in (select User { id }")
+        .expect_err("query should fail");
+
+    assert_eq!(
+        error.kind(),
+        &ParseErrorKind::UnexpectedEof { expected: ")" }
+    );
 }
 
 #[test]
