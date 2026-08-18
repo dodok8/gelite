@@ -460,8 +460,7 @@ required projected field prevents `not in` from inheriting ambiguous `NULL`
 membership behavior.
 
 The nested select cannot reference the outer query scope. Paths inside it are
-always relative to the nested root. Membership subqueries cannot themselves
-contain subqueries in the first implementation.
+always relative to the nested root.
 
 Precedence from strongest to weakest:
 
@@ -496,7 +495,6 @@ The MVP does not support:
 - traversal through backlinks or inferred inverse relations
 - correlated subqueries
 - scalar comparison subqueries
-- nested membership subqueries
 - aggregation
 - `exists`
 - arbitrary function calls other than supported built-ins

@@ -532,9 +532,8 @@ fields, link fields, nested shapes, optional fields, and multiple shape items
 are invalid. The nested select may return zero, one, or many rows.
 
 Nested paths resolve only against the nested select root. The Semantic IR does
-not carry an outer-scope reference into the nested select, and the first
-membership-subquery milestone rejects another subquery inside it. The nested
-query remains structured Semantic IR; it must not contain backend SQL text.
+not carry an outer-scope reference into the nested select. The nested query
+remains structured Semantic IR; it must not contain backend SQL text.
 
 The Semantic IR should model `not in` explicitly instead of rewriting it to a
 boolean `not` around `in`. Keeping the operator in the membership node lets

@@ -430,7 +430,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_rbracket()?;
-        return Ok(InRhs::List(values));
+        Ok(InRhs::List(values))
     }
 
     fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
