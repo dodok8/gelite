@@ -98,7 +98,10 @@ select Post {
     name
   }
 }
-filter .title = "Hello"
+filter .author.id in (
+  select User { id }
+  filter .name = "Sheri Tachibana"
+)
 order by .title desc
 limit 10
 ```
@@ -110,7 +113,11 @@ produce Semantic IR, build a SQLite plan, and render SQL similar to:
 SELECT "root"."title", "author"."id", "author"."name"
 FROM "post" AS "root"
 INNER JOIN "user" AS "author" ON "root"."author_id" = "author"."id"
-WHERE "root"."title" = ?
+WHERE "author"."id" IN (
+  SELECT "root"."id"
+  FROM "user" AS "root"
+  WHERE "root"."name" = ?
+)
 ORDER BY "root"."title" DESC
 LIMIT 10
 ```

@@ -115,10 +115,15 @@ select OrderItem {
     }
   }
 }
-filter .purchase.status in ["paid", "shipped"]
+filter .purchase.id in (
+  select PurchaseOrder { id }
+  filter .status in ["paid", "shipped"]
+)
   and .product.active = true
 order by f64(.quantity) * .unit_price desc
 ```
 
-Computed projections are executed by SQLite. Their current REPL column labels
-are generated implementation aliases rather than the logical output names.
+The membership select finds purchase identities by status without requiring
+the caller to collect IDs first. Computed projections are executed by SQLite.
+Their current REPL column labels are generated implementation aliases rather
+than the logical output names.

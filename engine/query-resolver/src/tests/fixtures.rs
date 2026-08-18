@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use query_ast::{
     ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, Expr,
-    FunctionCallExpr, InExpr, InOp, Literal, Path, PathStep, SelectQuery, Shape, ShapeItem,
+    FunctionCallExpr, InExpr, InOp, InRhs, Literal, Path, PathStep, SelectQuery, Shape, ShapeItem,
 };
 use schema_model::{
     Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog, Uniqueness,
@@ -476,7 +476,7 @@ pub fn filter_in_strings(path: &[&str], values: &[&str]) -> Expr {
     Expr::In(InExpr::new(
         path_expr(path),
         InOp::In,
-        values.iter().copied().map(literal_string_expr).collect(),
+        InRhs::List(values.iter().copied().map(literal_string_expr).collect()),
     ))
 }
 
@@ -484,7 +484,7 @@ pub fn filter_in_ints(path: &[&str], values: &[i64]) -> Expr {
     Expr::In(InExpr::new(
         path_expr(path),
         InOp::In,
-        values.iter().copied().map(literal_int_expr).collect(),
+        InRhs::List(values.iter().copied().map(literal_int_expr).collect()),
     ))
 }
 
@@ -492,7 +492,7 @@ pub fn filter_in_floats(path: &[&str], values: &[f64]) -> Expr {
     Expr::In(InExpr::new(
         path_expr(path),
         InOp::In,
-        values.iter().copied().map(literal_float_expr).collect(),
+        InRhs::List(values.iter().copied().map(literal_float_expr).collect()),
     ))
 }
 
@@ -500,7 +500,7 @@ pub fn filter_in_bools(path: &[&str], values: &[bool]) -> Expr {
     Expr::In(InExpr::new(
         path_expr(path),
         InOp::In,
-        values.iter().copied().map(literal_bool_expr).collect(),
+        InRhs::List(values.iter().copied().map(literal_bool_expr).collect()),
     ))
 }
 
@@ -508,19 +508,19 @@ pub fn filter_not_in_strings(path: &[&str], values: &[&str]) -> Expr {
     Expr::In(InExpr::new(
         path_expr(path),
         InOp::NotIn,
-        values.iter().copied().map(literal_string_expr).collect(),
+        InRhs::List(values.iter().copied().map(literal_string_expr).collect()),
     ))
 }
 
 pub fn filter_in_empty(path: &[&str]) -> Expr {
-    Expr::In(InExpr::new(path_expr(path), InOp::In, vec![]))
+    Expr::In(InExpr::new(path_expr(path), InOp::In, InRhs::List(vec![])))
 }
 
 pub fn filter_in_null(path: &[&str]) -> Expr {
     Expr::In(InExpr::new(
         path_expr(path),
         InOp::In,
-        vec![literal_null_expr()],
+        InRhs::List(vec![literal_null_expr()]),
     ))
 }
 
@@ -528,6 +528,27 @@ pub fn filter_in_path_item(path: &[&str], item_path: &[&str]) -> Expr {
     Expr::In(InExpr::new(
         path_expr(path),
         InOp::In,
-        vec![path_expr(item_path)],
+        InRhs::List(vec![path_expr(item_path)]),
+    ))
+}
+
+pub fn filter_in_select(
+    path: &[&str],
+    root_type_name: &str,
+    projected_fields: &[&str],
+    filter: Option<Expr>,
+) -> Expr {
+    let shape = Shape::new(
+        projected_fields
+            .iter()
+            .map(|field| ShapeItem::new(Path::new(vec![PathStep::new(*field)]), None))
+            .collect(),
+    );
+    let select = SelectQuery::new(root_type_name, shape, filter, vec![], None, None);
+
+    Expr::In(InExpr::new(
+        path_expr(path),
+        InOp::In,
+        InRhs::Select(Box::new(select)),
     ))
 }

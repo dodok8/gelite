@@ -498,14 +498,20 @@ pub enum CompareOp {
 
 /// Resolved membership expression.
 #[derive(Debug, Clone, PartialEq)]
+pub enum InRhs {
+    List(Vec<ValueExpr>),
+    Select(Box<SelectQuery>),
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct InExpr {
     left: ValueExpr,
     op: InOp,
-    right: Vec<ValueExpr>,
+    right: InRhs,
 }
 
 impl InExpr {
-    pub fn new(left: ValueExpr, op: InOp, right: Vec<ValueExpr>) -> Self {
+    pub fn new(left: ValueExpr, op: InOp, right: InRhs) -> Self {
         Self { left, op, right }
     }
 
@@ -517,7 +523,7 @@ impl InExpr {
         self.op
     }
 
-    pub fn right(&self) -> &[ValueExpr] {
+    pub fn right(&self) -> &InRhs {
         &self.right
     }
 }

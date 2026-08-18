@@ -195,7 +195,7 @@ The SQLite planner needs a backend-specific predicate tree.
 Minimum supported forms:
 
 - value expression compared to value expression
-- value expression `in` or `not in` a value expression list
+- value expression `in` or `not in` a value expression list or nested select
 - `is null`
 - `is not null`
 - boolean `and`
@@ -227,6 +227,17 @@ Membership list items use the same value expression structure. The SQLite
 planner receives only resolver-accepted list items, so list items are non-null
 scalar expressions that do not depend on the current row in this milestone.
 The planner should preserve their tree shape and bind order for SQL generation.
+
+Membership right-hand sides distinguish a value-expression list from a nested
+`SQLiteSelectPlan`. The planner lowers the resolved select through the existing
+select planner rather than embedding SQL text. Its table and join aliases are
+allocated in a separate scope, so inner aliases may reuse names from the outer
+plan without collision.
+
+SQL generation renders the nested plan as `IN (SELECT ...)` or
+`NOT IN (SELECT ...)`. It renders the left value first and then appends nested
+select bind values in the order their placeholders appear. Bind values from
+later outer predicate nodes follow the nested select binds.
 
 ### `SQLiteArithmeticExpr`
 

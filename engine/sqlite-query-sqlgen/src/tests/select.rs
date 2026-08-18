@@ -3,7 +3,7 @@ use super::fixtures::{
     post_id_shape_field, post_or_path_value, post_or_shape_field, post_query_with_filter,
     post_query_with_limit_and_offset, post_query_with_order_by, post_query_with_shape,
     post_quote_path_value, post_title_path_value, post_title_shape_field, post_type,
-    post_view_count_path_value,
+    post_view_count_path_value, user_name_field, user_name_shape_field, user_type,
 };
 use crate::{SQLiteBindValue, render_select};
 use alloc::boxed::Box;
@@ -613,10 +613,10 @@ fn sqlite_sqlgen_can_render_root_scalar_in_filter() {
     let filter = query_ir::Expr::In(query_ir::InExpr::new(
         post_title_path_value(),
         query_ir::InOp::In,
-        vec![
+        query_ir::InRhs::List(vec![
             query_ir::ValueExpr::Literal(query_ir::Literal::String("Draft".to_string())),
             query_ir::ValueExpr::Literal(query_ir::Literal::String("Published".to_string())),
-        ],
+        ]),
     ));
 
     let ir = post_query_with_filter(filter);
@@ -639,6 +639,60 @@ fn sqlite_sqlgen_can_render_root_scalar_in_filter() {
 }
 
 #[test]
+fn sqlite_sqlgen_renders_membership_select_with_deterministic_bind_order() {
+    let user_name = user_name_field();
+    let membership_select = query_ir::SelectQuery::new(
+        user_type(),
+        query_ir::ResolvedShape::new(user_type(), vec![user_name_shape_field()]),
+        Some(query_ir::Expr::Compare(query_ir::CompareExpr::new(
+            query_ir::ValueExpr::Path(
+                query_ir::ResolvedPath::try_new(
+                    user_type(),
+                    vec![query_ir::ResolvedPathStep::scalar(
+                        user_name,
+                        schema_model::Cardinality::Required,
+                    )],
+                )
+                .expect("user name path should be valid"),
+            ),
+            query_ir::CompareOp::Eq,
+            query_ir::ValueExpr::Literal(query_ir::Literal::String("Sheri".to_string())),
+        ))),
+        vec![],
+        None,
+        None,
+    );
+    let membership = query_ir::Expr::In(query_ir::InExpr::new(
+        post_title_path_value(),
+        query_ir::InOp::In,
+        query_ir::InRhs::Select(Box::new(membership_select)),
+    ));
+    let later_filter = query_ir::Expr::Compare(query_ir::CompareExpr::new(
+        post_title_path_value(),
+        query_ir::CompareOp::Ne,
+        query_ir::ValueExpr::Literal(query_ir::Literal::String("Archived".to_string())),
+    ));
+    let ir = post_query_with_filter(query_ir::Expr::And(
+        Box::new(membership),
+        Box::new(later_filter),
+    ));
+
+    let statement = render_select(&sqlite_query_plan::plan_select(&ir));
+
+    assert_eq!(
+        statement.sql(),
+        "SELECT \"root\".\"title\" FROM \"post\" AS \"root\" WHERE (\"root\".\"title\" IN (SELECT \"root\".\"name\" FROM \"user\" AS \"root\" WHERE \"root\".\"name\" = ?) AND \"root\".\"title\" != ?)"
+    );
+    assert_eq!(
+        statement.bind_values(),
+        &[
+            SQLiteBindValue::String("Sheri".to_string()),
+            SQLiteBindValue::String("Archived".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn sqlite_sqlgen_can_render_root_scalar_in_arithmetic_value_filter() {
     let arithmetic = query_ir::ValueExpr::Arithmetic(query_ir::ArithmeticExpr::new(
         query_ir::ValueExpr::Literal(query_ir::Literal::Int64(1)),
@@ -649,7 +703,7 @@ fn sqlite_sqlgen_can_render_root_scalar_in_arithmetic_value_filter() {
     let filter = query_ir::Expr::In(query_ir::InExpr::new(
         post_view_count_path_value(),
         query_ir::InOp::In,
-        vec![arithmetic],
+        query_ir::InRhs::List(vec![arithmetic]),
     ));
 
     let ir = post_query_with_filter(filter);
@@ -673,9 +727,9 @@ fn sqlite_sqlgen_can_render_single_link_scalar_not_in_filter() {
     let filter = query_ir::Expr::In(query_ir::InExpr::new(
         post_author_name_path_value(),
         query_ir::InOp::NotIn,
-        vec![query_ir::ValueExpr::Literal(query_ir::Literal::String(
-            "Sheri".to_string(),
-        ))],
+        query_ir::InRhs::List(vec![query_ir::ValueExpr::Literal(
+            query_ir::Literal::String("Sheri".to_string()),
+        )]),
     ));
 
     let ir = post_query_with_filter(filter);

@@ -689,17 +689,60 @@ fn resolve_in_expr(
 ) -> Result<query_ir::Expr, ResolveError> {
     let left = resolve_typed_value_expr(catalog, source_object_type, in_expr.left())?;
     let op = resolve_in_op(in_expr.op());
-    let right = resolve_membership_items(in_expr.right())?;
+    let right = match in_expr.right() {
+        query_ast::InRhs::List(exprs) => {
+            let items = resolve_membership_items(exprs)?;
 
-    for item in &right {
-        ensure_compatible_membership_item(&left.source, &item.source)?;
-    }
+            for item in &items {
+                ensure_compatible_membership_item(&left.source, &item.source)?;
+            }
 
-    let right = right.into_iter().map(|item| item.value).collect();
+            query_ir::InRhs::List(items.into_iter().map(|item| item.value).collect())
+        }
+        query_ast::InRhs::Select(select) => {
+            let select = resolve_membership_select(catalog, &left.source, select)?;
+
+            query_ir::InRhs::Select(Box::new(select))
+        }
+    };
 
     Ok(query_ir::Expr::In(query_ir::InExpr::new(
         left.value, op, right,
     )))
+}
+
+fn resolve_membership_select(
+    catalog: &schema_model::SchemaCatalog,
+    left: &ValueSource,
+    select: &query_ast::SelectQuery,
+) -> Result<query_ir::SelectQuery, ResolveError> {
+    let resolved = resolve_select(catalog, select)?;
+
+    let [query_ir::ResolvedShapeItem::Field(selected)] = resolved.shape().items() else {
+        return Err(ResolveError::UnsupportedExpr {
+            expr_type: "membership select projection".to_string(),
+        });
+    };
+
+    if selected.child_shape().is_some()
+        || selected.cardinality() != schema_model::Cardinality::Required
+    {
+        return Err(ResolveError::UnsupportedExpr {
+            expr_type: "membership select projection".to_string(),
+        });
+    }
+
+    let Some(Field::Scalar(scalar)) =
+        catalog.find_field(resolved.root_object_type().name(), selected.field().name())
+    else {
+        return Err(ResolveError::UnsupportedExpr {
+            expr_type: "membership select projection".to_string(),
+        });
+    };
+
+    ensure_compatible_membership_item(left, &ValueSource::Path(scalar.scalar_type()))?;
+
+    Ok(resolved)
 }
 
 fn resolve_in_op(op: query_ast::InOp) -> query_ir::InOp {
