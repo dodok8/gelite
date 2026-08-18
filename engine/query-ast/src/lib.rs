@@ -249,7 +249,7 @@ impl FunctionCallExpr {
 pub struct InExpr {
     left: Box<Expr>,
     op: InOp,
-    right: Vec<Expr>,
+    right: InRhs,
 }
 
 /// Membership operators implemented by the current parser.
@@ -260,7 +260,7 @@ pub enum InOp {
 }
 
 impl InExpr {
-    pub fn new(left: Expr, op: InOp, right: Vec<Expr>) -> Self {
+    pub fn new(left: Expr, op: InOp, right: InRhs) -> Self {
         Self {
             left: Box::new(left),
             op,
@@ -276,9 +276,15 @@ impl InExpr {
         self.op
     }
 
-    pub fn right(&self) -> &[Expr] {
+    pub fn right(&self) -> &InRhs {
         &self.right
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InRhs {
+    Select(Box<SelectQuery>),
+    List(Vec<Expr>),
 }
 
 /// Binary comparison expression parsed from a filter clause.
