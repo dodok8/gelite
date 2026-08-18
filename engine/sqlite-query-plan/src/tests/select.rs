@@ -1803,6 +1803,40 @@ fn sqlite_select_plan_can_filter_root_scalar_field_in_literal_list() {
 }
 
 #[test]
+fn sqlite_select_plan_preserves_membership_select_as_nested_plan() {
+    let filter = query_ir::Expr::In(query_ir::InExpr::new(
+        post_title_path_value(),
+        query_ir::InOp::In,
+        InRhs::Select(Box::new(user_query_with_shape(vec![
+            user_name_shape_field(),
+        ]))),
+    ));
+    let ir = SelectQuery::new(
+        post_type(),
+        ResolvedShape::new(post_type(), vec![]),
+        Some(filter),
+        vec![],
+        None,
+        None,
+    );
+
+    let plan = plan_select(&ir);
+    let Some(SQLiteWhereExpr::In(in_expr)) = plan.filter() else {
+        panic!("expected in filter");
+    };
+    let SQLiteInRhs::Select(select) = in_expr.right() else {
+        panic!("membership right side should be a select");
+    };
+
+    assert_column_value(in_expr.left(), "root", "title");
+    assert_eq!(select.root_source().table_name(), "user");
+    assert_eq!(select.root_source().alias(), "root");
+    assert_eq!(select.selected_values().len(), 1);
+    assert_eq!(select.selected_values()[0].source_alias(), Some("root"));
+    assert_eq!(select.selected_values()[0].column_name(), Some("name"));
+}
+
+#[test]
 fn sqlite_select_plan_can_filter_path_in_unary_arithmetic_literal_list() {
     let expr = query_ir::Expr::In(query_ir::InExpr::new(
         post_view_count_path_value(),

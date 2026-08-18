@@ -636,6 +636,40 @@ fn select_pipeline_executes_single_link_membership_filter() {
 }
 
 #[test]
+fn select_pipeline_executes_membership_select_for_zero_one_and_multiple_rows() {
+    let zero = execute_query(
+        r#"select Post { title }
+        filter .author.id in (select User { id } filter .score > 1000)
+        order by .title asc"#,
+    );
+    assert!(zero.rows().is_empty());
+
+    let one = execute_query(
+        r#"select Post { title }
+        filter .author.id in (select User { id } filter .email = "blocked@example.com")
+        order by .title asc"#,
+    );
+    assert_eq!(
+        one.rows(),
+        &[vec![SQLiteCellValue::Text("Archived".to_string())]]
+    );
+
+    let multiple = execute_query(
+        r#"select Post { title }
+        filter .author.id in (select User { id } filter .score >= 0)
+        order by .title asc"#,
+    );
+    assert_eq!(
+        multiple.rows(),
+        &[
+            vec![SQLiteCellValue::Text("Archived".to_string())],
+            vec![SQLiteCellValue::Text("Draft".to_string())],
+            vec![SQLiteCellValue::Text("Published".to_string())],
+        ]
+    );
+}
+
+#[test]
 fn query_pipeline_executes_multi_link_schema_storage_setup() {
     let mut runner = setup_blog_database();
 
@@ -708,6 +742,46 @@ fn update_pipeline_executes_related_filter_from_query_text() {
 
     assert_eq!(affected_rows, 2);
 
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT id, title FROM post ORDER BY id",
+            vec![],
+        ))
+        .expect("updated posts should be readable");
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![
+                SQLiteCellValue::Text("post-1".to_string()),
+                SQLiteCellValue::Text("Reviewed".to_string()),
+            ],
+            vec![
+                SQLiteCellValue::Text("post-2".to_string()),
+                SQLiteCellValue::Text("Reviewed".to_string()),
+            ],
+            vec![
+                SQLiteCellValue::Text("post-3".to_string()),
+                SQLiteCellValue::Text("Archived".to_string()),
+            ],
+        ]
+    );
+}
+
+#[test]
+fn update_pipeline_executes_membership_select_filter() {
+    let mut runner = setup_blog_database();
+
+    let affected_rows = execute_update(
+        &mut runner,
+        r#"update Post
+        filter .author.id in (
+            select User { id }
+            filter .email = "alice@example.com"
+        )
+        set { title := "Reviewed" }"#,
+    );
+
+    assert_eq!(affected_rows, 2);
     let result = runner
         .execute_select(&SQLiteStatement::new(
             "SELECT id, title FROM post ORDER BY id",
@@ -868,6 +942,35 @@ fn delete_pipeline_executes_related_filter_from_query_text() {
     assert_eq!(
         result.rows(),
         &[vec![SQLiteCellValue::Text("post-3".to_string())]]
+    );
+}
+
+#[test]
+fn delete_pipeline_executes_not_in_membership_select_filter() {
+    let mut runner = setup_blog_database();
+
+    let affected_rows = execute_delete(
+        &mut runner,
+        r#"delete Post
+        filter .author.id not in (
+            select User { id }
+            filter .email = "alice@example.com"
+        )"#,
+    );
+
+    assert_eq!(affected_rows, 1);
+    let result = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT id FROM post ORDER BY id",
+            vec![],
+        ))
+        .expect("remaining posts should be readable");
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![SQLiteCellValue::Text("post-1".to_string())],
+            vec![SQLiteCellValue::Text("post-2".to_string())],
+        ]
     );
 }
 
