@@ -758,15 +758,7 @@ fn collect_root_path_aliases_from_expr(expr: &Expr, aliases: &mut Vec<String>) {
         Expr::IsNull(value) | Expr::IsNotNull(value) => {
             collect_root_path_aliases_from_value(value, aliases);
         }
-        Expr::In(in_expr) => {
-            collect_root_path_aliases_from_value(in_expr.left(), aliases);
-
-            if let query_ir::InRhs::List(values) = in_expr.right() {
-                for value in values {
-                    collect_root_path_aliases_from_value(value, aliases);
-                }
-            }
-        }
+        Expr::In(in_expr) => collect_root_path_aliases_from_value(in_expr.left(), aliases),
         Expr::And(left, right) | Expr::Or(left, right) => {
             collect_root_path_aliases_from_expr(left, aliases);
             collect_root_path_aliases_from_expr(right, aliases);
@@ -1727,19 +1719,14 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
         }
         Expr::In(in_expr) => {
             let left = plan_value_expr(in_expr.left(), "root", false, join_aliases);
-            let mut joins = left.joins;
+            let joins = left.joins;
             let right = match in_expr.right() {
-                query_ir::InRhs::List(values) => {
-                    let mut right = Vec::new();
-
-                    for value in values {
-                        let planned = plan_value_expr(value, "root", false, join_aliases);
-                        joins.extend(planned.joins);
-                        right.push(planned.value);
-                    }
-
-                    SQLiteInRhs::List(right)
-                }
+                query_ir::InRhs::List(values) => SQLiteInRhs::List(
+                    values
+                        .iter()
+                        .map(|value| plan_value_expr(value, "root", false, join_aliases).value)
+                        .collect(),
+                ),
                 query_ir::InRhs::Select(select) => {
                     SQLiteInRhs::Select(Box::new(plan_select(select)))
                 }
