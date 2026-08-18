@@ -1,10 +1,18 @@
 use crate::{
     ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, DeleteQuery,
-    Expr, FunctionCallExpr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr, Path,
-    PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
+    Expr, FunctionCallExpr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderDirection, OrderExpr,
+    Path, PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
 };
 use alloc::string::ToString;
 use alloc::vec;
+
+fn assert_in_list(in_expr: &InExpr) -> &[Expr] {
+    let InRhs::List(values) = in_expr.right() else {
+        panic!("membership right side should be a list");
+    };
+
+    values
+}
 
 #[test]
 fn assignment_can_store_field_name_and_literal_value() {
@@ -360,10 +368,10 @@ fn in_expr_can_reference_path_and_literal_list() {
     let expr = Expr::In(InExpr::new(
         Expr::Path(left_path),
         InOp::In,
-        vec![
+        InRhs::List(vec![
             Expr::Literal(Literal::String("draft".to_string())),
             Expr::Literal(Literal::String("published".to_string())),
-        ],
+        ]),
     ));
 
     match expr {
@@ -375,14 +383,15 @@ fn in_expr_can_reference_path_and_literal_list() {
             assert_eq!(left.steps()[0].field_name(), "status");
             assert_eq!(in_expr.op(), InOp::In);
 
-            assert_eq!(in_expr.right().len(), 2);
-            match &in_expr.right()[0] {
+            let right = assert_in_list(&in_expr);
+            assert_eq!(right.len(), 2);
+            match &right[0] {
                 Expr::Literal(Literal::String(value)) => {
                     assert_eq!(value, "draft");
                 }
                 _ => panic!("expected first in expression item to be a string literal"),
             }
-            match &in_expr.right()[1] {
+            match &right[1] {
                 Expr::Literal(Literal::String(value)) => {
                     assert_eq!(value, "published");
                 }
@@ -400,10 +409,10 @@ fn not_in_expr_can_store_membership_operator() {
     let expr = Expr::In(InExpr::new(
         Expr::Path(left_path),
         InOp::NotIn,
-        vec![
+        InRhs::List(vec![
             Expr::Literal(Literal::String("draft".to_string())),
             Expr::Literal(Literal::String("published".to_string())),
-        ],
+        ]),
     ));
 
     match expr {
@@ -415,14 +424,15 @@ fn not_in_expr_can_store_membership_operator() {
             assert_eq!(left.steps()[0].field_name(), "status");
             assert_eq!(in_expr.op(), InOp::NotIn);
 
-            assert_eq!(in_expr.right().len(), 2);
-            match &in_expr.right()[0] {
+            let right = assert_in_list(&in_expr);
+            assert_eq!(right.len(), 2);
+            match &right[0] {
                 Expr::Literal(Literal::String(value)) => {
                     assert_eq!(value, "draft");
                 }
                 _ => panic!("expected first in expression item to be a string literal"),
             }
-            match &in_expr.right()[1] {
+            match &right[1] {
                 Expr::Literal(Literal::String(value)) => {
                     assert_eq!(value, "published");
                 }

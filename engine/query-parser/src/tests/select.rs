@@ -11,6 +11,14 @@ use query_ast::{
     ArithmeticOp, CompareOp, Expr, InOp, InRhs, Literal, OrderDirection, UnaryArithmeticOp,
 };
 
+fn assert_in_list(in_expr: &query_ast::InExpr) -> &[Expr] {
+    let InRhs::List(values) = in_expr.right() else {
+        panic!("membership right side should be a list");
+    };
+
+    values
+}
+
 #[test]
 fn lexer_can_tokenize_select_shape() {
     let tokens = lex("select Post { title }").expect("query should lex");
@@ -856,8 +864,9 @@ fn parser_parses_i64_min_literal_after_unary_minus_in_value_expr_positions() {
         Expr::In(in_expr) => {
             assert_path_expr(in_expr.left(), &["view_count"]);
             assert_eq!(in_expr.op(), InOp::In);
-            assert_eq!(in_expr.right().len(), 1);
-            assert_literal_expr(&in_expr.right()[0], &Literal::Int64(i64::MIN));
+            let right = assert_in_list(in_expr);
+            assert_eq!(right.len(), 1);
+            assert_literal_expr(&right[0], &Literal::Int64(i64::MIN));
         }
         _ => panic!("filter should be in expression"),
     }
@@ -1186,8 +1195,9 @@ fn parser_can_parse_arithmetic_in_membership_left_side() {
                 other => panic!("left side should be arithmetic expression, got {other:?}"),
             }
             assert_eq!(in_expr.op(), InOp::In);
-            assert_literal_expr(&in_expr.right()[0], &Literal::Int64(0));
-            assert_literal_expr(&in_expr.right()[1], &Literal::Int64(5));
+            let right = assert_in_list(in_expr);
+            assert_literal_expr(&right[0], &Literal::Int64(0));
+            assert_literal_expr(&right[1], &Literal::Int64(5));
         }
         _ => panic!("filter should be compare expression"),
     }
@@ -1211,8 +1221,9 @@ fn parser_can_parse_arithmetic_in_not_in_membership_left_side() {
                 other => panic!("left side should be arithmetic expression, got {other:?}"),
             }
             assert_eq!(in_expr.op(), InOp::NotIn);
-            assert_literal_expr(&in_expr.right()[0], &Literal::Int64(0));
-            assert_literal_expr(&in_expr.right()[1], &Literal::Int64(5));
+            let right = assert_in_list(in_expr);
+            assert_literal_expr(&right[0], &Literal::Int64(0));
+            assert_literal_expr(&right[1], &Literal::Int64(5));
         }
         _ => panic!("filter should be compare expression"),
     }
@@ -1229,7 +1240,8 @@ fn parser_preserves_arithmetic_in_membership_rhs_for_resolver() {
         Expr::In(in_expr) => {
             assert_path_expr(in_expr.left(), &["view_count"]);
             assert_eq!(in_expr.op(), InOp::In);
-            match &in_expr.right()[0] {
+            let right = assert_in_list(in_expr);
+            match &right[0] {
                 Expr::Arithmetic(arithmetic) => {
                     assert_literal_expr(arithmetic.left(), &Literal::Int64(1));
                     assert_eq!(arithmetic.op(), ArithmeticOp::Add);
@@ -1253,13 +1265,12 @@ fn parser_preserves_unary_arithmetic_in_membership_rhs_for_resolver() {
         Expr::In(in_expr) => {
             assert_path_expr(in_expr.left(), &["view_count"]);
             assert_eq!(in_expr.op(), InOp::In);
+            let right = assert_in_list(in_expr);
 
-            let operand =
-                assert_unary_arithmetic_expr(&in_expr.right()[0], UnaryArithmeticOp::Minus);
+            let operand = assert_unary_arithmetic_expr(&right[0], UnaryArithmeticOp::Minus);
             assert_literal_expr(operand, &Literal::Int64(1));
 
-            let operand =
-                assert_unary_arithmetic_expr(&in_expr.right()[1], UnaryArithmeticOp::Plus);
+            let operand = assert_unary_arithmetic_expr(&right[1], UnaryArithmeticOp::Plus);
             assert_literal_expr(operand, &Literal::Int64(2));
         }
         _ => panic!("filter should be membership expression"),
@@ -1387,12 +1398,10 @@ fn parser_can_parse_filter_in_literal_list() {
         Expr::In(in_expr) => {
             assert_path_expr(in_expr.left(), &["status"]);
             assert_eq!(in_expr.op(), InOp::In);
-            assert_eq!(in_expr.right().len(), 2);
-            assert_literal_expr(&in_expr.right()[0], &Literal::String("draft".to_string()));
-            assert_literal_expr(
-                &in_expr.right()[1],
-                &Literal::String("published".to_string()),
-            );
+            let right = assert_in_list(in_expr);
+            assert_eq!(right.len(), 2);
+            assert_literal_expr(&right[0], &Literal::String("draft".to_string()));
+            assert_literal_expr(&right[1], &Literal::String("published".to_string()));
         }
         _ => panic!("filter should be an in expression"),
     }
@@ -1409,11 +1418,9 @@ fn parser_can_parse_filter_not_in_literal_list() {
         Expr::In(in_expr) => {
             assert_path_expr(in_expr.left(), &["status"]);
             assert_eq!(in_expr.op(), InOp::NotIn);
-            assert_eq!(in_expr.right().len(), 1);
-            assert_literal_expr(
-                &in_expr.right()[0],
-                &Literal::String("archived".to_string()),
-            );
+            let right = assert_in_list(in_expr);
+            assert_eq!(right.len(), 1);
+            assert_literal_expr(&right[0], &Literal::String("archived".to_string()));
         }
         _ => panic!("filter should be a not in expression"),
     }
@@ -1496,7 +1503,7 @@ fn parser_can_parse_filter_in_empty_list() {
         Expr::In(in_expr) => {
             assert_path_expr(in_expr.left(), &["status"]);
             assert_eq!(in_expr.op(), InOp::In);
-            assert!(in_expr.right().is_empty());
+            assert!(assert_in_list(in_expr).is_empty());
         }
         _ => panic!("filter should be an in expression"),
     }
@@ -1513,9 +1520,10 @@ fn parser_preserves_null_and_path_membership_items_for_resolver() {
         Expr::In(in_expr) => {
             assert_path_expr(in_expr.left(), &["status"]);
             assert_eq!(in_expr.op(), InOp::In);
-            assert_eq!(in_expr.right().len(), 2);
-            assert_literal_expr(&in_expr.right()[0], &Literal::Null);
-            assert_path_expr(&in_expr.right()[1], &["other_status"]);
+            let right = assert_in_list(in_expr);
+            assert_eq!(right.len(), 2);
+            assert_literal_expr(&right[0], &Literal::Null);
+            assert_path_expr(&right[1], &["other_status"]);
         }
         _ => panic!("filter should be an in expression"),
     }

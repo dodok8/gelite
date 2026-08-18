@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use alloc::{string::String, vec};
 use query_ast::{
     ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, DeleteQuery,
-    Expr, InExpr, InOp, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape,
+    Expr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape,
     ShapeItem, TransactionCommand, UpdateQuery,
 };
 
@@ -401,7 +401,18 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_in_rhs(&mut self) -> Result<Vec<Expr>, ParseError> {
+    fn parse_in_rhs(&mut self) -> Result<InRhs, ParseError> {
+        if self
+            .peek()
+            .is_some_and(|token| token.kind() == &TokenKind::LParen)
+        {
+            self.expect_lparen()?;
+            let select = self.parse_select_query()?;
+            self.expect_rparen()?;
+
+            return Ok(InRhs::Select(Box::new(select)));
+        }
+
         self.expect_lbracket()?;
 
         let mut values = vec![];
@@ -410,7 +421,7 @@ impl<'a> Parser<'a> {
             .is_some_and(|token| token.kind() == &TokenKind::RBracket)
         {
             self.expect_rbracket()?;
-            return Ok(values);
+            return Ok(InRhs::List(values));
         }
 
         values.push(self.parse_expr()?);
@@ -419,7 +430,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_rbracket()?;
-        Ok(values)
+        return Ok(InRhs::List(values));
     }
 
     fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
@@ -783,6 +794,10 @@ impl<'a> Parser<'a> {
                 None,
             )),
         }
+    }
+
+    fn expect_lparen(&mut self) -> Result<(), ParseError> {
+        self.expect_token(TokenKind::LParen)
     }
 
     fn expect_rparen(&mut self) -> Result<(), ParseError> {
