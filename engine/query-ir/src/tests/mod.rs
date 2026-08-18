@@ -2,7 +2,7 @@ mod fixtures;
 
 use crate::{
     ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CastExpr, CompareExpr, CompareOp,
-    DeleteQuery, Expr, InExpr, InOp, InsertQuery, Literal, OrderDirection, OrderExpr,
+    DeleteQuery, Expr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderDirection, OrderExpr,
     ResolvedComputedField, ResolvedPath, ResolvedPathError, ResolvedPathStep, ResolvedPathStepKind,
     ResolvedShape, ResolvedShapeField, ResolvedShapeItem, SelectQuery, StringFunctionArg,
     StringFunctionExpr, StringFunctionKind, UnaryArithmeticExpr, UnaryArithmeticOp, UpdateQuery,
@@ -681,10 +681,10 @@ fn resolved_select_query_can_store_filter_in_expr() {
     let filter = Expr::In(InExpr::new(
         post_title_path_value(),
         InOp::In,
-        vec![
+        InRhs::List(vec![
             ValueExpr::Literal(Literal::String("Draft".to_string())),
             ValueExpr::Literal(Literal::String("Published".to_string())),
-        ],
+        ]),
     ));
 
     let query = SelectQuery::new(
@@ -716,13 +716,17 @@ fn resolved_select_query_can_store_filter_in_expr() {
     }
 
     assert_eq!(in_expr.op(), InOp::In);
-    assert_eq!(in_expr.right().len(), 2);
+    let InRhs::List(right) = in_expr.right() else {
+        panic!("filter right side should be a membership list");
+    };
+
+    assert_eq!(right.len(), 2);
     assert_eq!(
-        in_expr.right()[0],
+        right[0],
         ValueExpr::Literal(Literal::String("Draft".to_string()))
     );
     assert_eq!(
-        in_expr.right()[1],
+        right[1],
         ValueExpr::Literal(Literal::String("Published".to_string()))
     );
 }
@@ -732,7 +736,9 @@ fn resolved_select_query_can_store_filter_not_in_expr() {
     let filter = Expr::In(InExpr::new(
         post_title_path_value(),
         InOp::NotIn,
-        vec![ValueExpr::Literal(Literal::String("Archived".to_string()))],
+        InRhs::List(vec![ValueExpr::Literal(Literal::String(
+            "Archived".to_string(),
+        ))]),
     ));
 
     let query = SelectQuery::new(

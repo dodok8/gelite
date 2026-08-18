@@ -12,15 +12,16 @@ use super::fixtures::{
     user_score_field, user_type,
 };
 use crate::{
-    SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteInOp, SQLiteJoinKind,
-    SQLiteJoinReason, SQLiteLiteral, SQLiteOrder, SQLiteOrderDirection, SQLiteStringFunctionKind,
-    SQLiteUnaryArithmeticOp, SQLiteValueExpr, SQLiteValueRole, SQLiteWhereExpr, plan_select,
+    SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteInExpr, SQLiteInOp, SQLiteInRhs,
+    SQLiteJoinKind, SQLiteJoinReason, SQLiteLiteral, SQLiteOrder, SQLiteOrderDirection,
+    SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteValueExpr, SQLiteValueRole,
+    SQLiteWhereExpr, plan_select,
 };
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::vec;
 use query_ir::{
-    Literal, ResolvedComputedField, ResolvedShape, ResolvedShapeField, ResolvedShapeItem,
+    InRhs, Literal, ResolvedComputedField, ResolvedShape, ResolvedShapeField, ResolvedShapeItem,
     SelectQuery, UnaryArithmeticExpr, UnaryArithmeticOp,
 };
 
@@ -50,6 +51,14 @@ fn assert_column_value(value: &SQLiteValueExpr, source_alias: &str, column_name:
         SQLiteValueExpr::Cast(_) => panic!("value should be a column"),
         SQLiteValueExpr::StringFunction(_) => panic!("value should be a column"),
     }
+}
+
+fn assert_in_list(in_expr: &SQLiteInExpr) -> &[SQLiteValueExpr] {
+    let SQLiteInRhs::List(values) = in_expr.right() else {
+        panic!("membership right side should be a list");
+    };
+
+    values
 }
 
 fn assert_int_literal_value(value: &SQLiteValueExpr, expected: i64) {
@@ -1744,10 +1753,10 @@ fn sqlite_select_plan_can_filter_root_scalar_field_in_literal_list() {
     let expr = query_ir::Expr::In(query_ir::InExpr::new(
         post_title_path_value(),
         query_ir::InOp::In,
-        vec![
+        InRhs::List(vec![
             query_ir::ValueExpr::Literal(Literal::String("Draft".to_string())),
             query_ir::ValueExpr::Literal(Literal::String("Published".to_string())),
-        ],
+        ]),
     ));
 
     let ir = SelectQuery::new(
@@ -1782,7 +1791,7 @@ fn sqlite_select_plan_can_filter_root_scalar_field_in_literal_list() {
 
             assert_eq!(in_expr.op(), SQLiteInOp::In);
             assert_eq!(
-                in_expr.right(),
+                assert_in_list(in_expr),
                 &[
                     SQLiteValueExpr::Literal(SQLiteLiteral::String("Draft".to_string())),
                     SQLiteValueExpr::Literal(SQLiteLiteral::String("Published".to_string()))
@@ -1798,7 +1807,7 @@ fn sqlite_select_plan_can_filter_path_in_unary_arithmetic_literal_list() {
     let expr = query_ir::Expr::In(query_ir::InExpr::new(
         post_view_count_path_value(),
         query_ir::InOp::In,
-        vec![
+        InRhs::List(vec![
             query_ir::ValueExpr::UnaryArithmetic(UnaryArithmeticExpr::new(
                 UnaryArithmeticOp::Minus,
                 query_ir::ValueExpr::Literal(Literal::Int64(1)),
@@ -1809,7 +1818,7 @@ fn sqlite_select_plan_can_filter_path_in_unary_arithmetic_literal_list() {
                 query_ir::ValueExpr::Literal(Literal::Int64(2)),
                 schema_model::ScalarType::Int64,
             )),
-        ],
+        ]),
     ));
 
     let ir = SelectQuery::new(
@@ -1829,12 +1838,13 @@ fn sqlite_select_plan_can_filter_path_in_unary_arithmetic_literal_list() {
 
     assert_column_value(in_expr.left(), "root", "view_count");
     assert_eq!(in_expr.op(), SQLiteInOp::In);
-    assert_eq!(in_expr.right().len(), 2);
+    let right = assert_in_list(in_expr);
+    assert_eq!(right.len(), 2);
 
-    let operand = assert_unary_value(&in_expr.right()[0], SQLiteUnaryArithmeticOp::Minus);
+    let operand = assert_unary_value(&right[0], SQLiteUnaryArithmeticOp::Minus);
     assert_int_literal_value(operand, 1);
 
-    let operand = assert_unary_value(&in_expr.right()[1], SQLiteUnaryArithmeticOp::Plus);
+    let operand = assert_unary_value(&right[1], SQLiteUnaryArithmeticOp::Plus);
     assert_int_literal_value(operand, 2);
 }
 
@@ -1843,9 +1853,9 @@ fn sqlite_select_plan_can_filter_single_link_scalar_path_not_in_literal_list() {
     let expr = query_ir::Expr::In(query_ir::InExpr::new(
         post_author_name_path_value(),
         query_ir::InOp::NotIn,
-        vec![query_ir::ValueExpr::Literal(Literal::String(
+        InRhs::List(vec![query_ir::ValueExpr::Literal(Literal::String(
             "Sheri".to_string(),
-        ))],
+        ))]),
     ));
 
     let ir = SelectQuery::new(
@@ -1880,7 +1890,7 @@ fn sqlite_select_plan_can_filter_single_link_scalar_path_not_in_literal_list() {
 
             assert_eq!(in_expr.op(), SQLiteInOp::NotIn);
             assert_eq!(
-                in_expr.right(),
+                assert_in_list(in_expr),
                 &[SQLiteValueExpr::Literal(SQLiteLiteral::String(
                     "Sheri".to_string()
                 ))]

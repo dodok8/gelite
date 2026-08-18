@@ -18,8 +18,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_query_plan::{
     SQLiteArithmeticOp, SQLiteAssignmentValue, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
-    SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInsertPlan, SQLiteJoin, SQLiteJoinKind,
-    SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteSelectPlan,
+    SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInRhs, SQLiteInsertPlan, SQLiteJoin,
+    SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteSelectPlan,
     SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr,
     SQLiteWhereExpr,
 };
@@ -276,14 +276,20 @@ fn render_where_expr(expr: &SQLiteWhereExpr, bind_values: &mut Vec<SQLiteBindVal
         SQLiteWhereExpr::In(in_expr) => {
             let left_sql = render_value_expr(in_expr.left(), bind_values);
             let op_sql = render_in_op(in_expr.op());
-            let placeholders = in_expr
-                .right()
-                .iter()
-                .map(|value| render_value_expr(value, bind_values))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let right_sql = match in_expr.right() {
+                SQLiteInRhs::List(values) => values
+                    .iter()
+                    .map(|value| render_value_expr(value, bind_values))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                SQLiteInRhs::Select(plan) => {
+                    let statement = render_select(plan);
+                    bind_values.extend_from_slice(statement.bind_values());
+                    statement.sql().to_string()
+                }
+            };
 
-            format!("{left_sql} {op_sql} ({placeholders})")
+            format!("{left_sql} {op_sql} ({right_sql})")
         }
         SQLiteWhereExpr::And(left, right) => {
             let left_sql = render_where_expr(left, bind_values);

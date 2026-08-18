@@ -613,10 +613,10 @@ fn sqlite_sqlgen_can_render_root_scalar_in_filter() {
     let filter = query_ir::Expr::In(query_ir::InExpr::new(
         post_title_path_value(),
         query_ir::InOp::In,
-        vec![
+        query_ir::InRhs::List(vec![
             query_ir::ValueExpr::Literal(query_ir::Literal::String("Draft".to_string())),
             query_ir::ValueExpr::Literal(query_ir::Literal::String("Published".to_string())),
-        ],
+        ]),
     ));
 
     let ir = post_query_with_filter(filter);
@@ -649,7 +649,7 @@ fn sqlite_sqlgen_can_render_root_scalar_in_arithmetic_value_filter() {
     let filter = query_ir::Expr::In(query_ir::InExpr::new(
         post_view_count_path_value(),
         query_ir::InOp::In,
-        vec![arithmetic],
+        query_ir::InRhs::List(vec![arithmetic]),
     ));
 
     let ir = post_query_with_filter(filter);
@@ -673,9 +673,9 @@ fn sqlite_sqlgen_can_render_single_link_scalar_not_in_filter() {
     let filter = query_ir::Expr::In(query_ir::InExpr::new(
         post_author_name_path_value(),
         query_ir::InOp::NotIn,
-        vec![query_ir::ValueExpr::Literal(query_ir::Literal::String(
-            "Sheri".to_string(),
-        ))],
+        query_ir::InRhs::List(vec![query_ir::ValueExpr::Literal(
+            query_ir::Literal::String("Sheri".to_string()),
+        )]),
     ));
 
     let ir = post_query_with_filter(filter);

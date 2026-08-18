@@ -760,8 +760,11 @@ fn collect_root_path_aliases_from_expr(expr: &Expr, aliases: &mut Vec<String>) {
         }
         Expr::In(in_expr) => {
             collect_root_path_aliases_from_value(in_expr.left(), aliases);
-            for value in in_expr.right() {
-                collect_root_path_aliases_from_value(value, aliases);
+
+            if let query_ir::InRhs::List(values) = in_expr.right() {
+                for value in values {
+                    collect_root_path_aliases_from_value(value, aliases);
+                }
             }
         }
         Expr::And(left, right) | Expr::Or(left, right) => {
@@ -1359,7 +1362,7 @@ impl SQLiteUnaryArithmeticOp {
 pub struct SQLiteInExpr {
     left: SQLiteValueExpr,
     op: SQLiteInOp,
-    right: Vec<SQLiteValueExpr>,
+    right: SQLiteInRhs,
 }
 
 impl SQLiteInExpr {
@@ -1371,9 +1374,15 @@ impl SQLiteInExpr {
         self.op
     }
 
-    pub fn right(&self) -> &[SQLiteValueExpr] {
+    pub fn right(&self) -> &SQLiteInRhs {
         &self.right
     }
+}
+
+/// Backend-specific membership right-hand side.
+pub enum SQLiteInRhs {
+    List(Vec<SQLiteValueExpr>),
+    Select(Box<SQLiteSelectPlan>),
 }
 
 /// Backend-specific membership operators.
@@ -1718,18 +1727,23 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
         }
         Expr::In(in_expr) => {
             let left = plan_value_expr(in_expr.left(), "root", false, join_aliases);
-            let planned_right = in_expr
-                .right()
-                .iter()
-                .map(|value| plan_value_expr(value, "root", false, join_aliases))
-                .collect::<Vec<_>>();
             let mut joins = left.joins;
-            let mut right = Vec::new();
+            let right = match in_expr.right() {
+                query_ir::InRhs::List(values) => {
+                    let mut right = Vec::new();
 
-            for planned in planned_right {
-                joins.extend(planned.joins);
-                right.push(planned.value);
-            }
+                    for value in values {
+                        let planned = plan_value_expr(value, "root", false, join_aliases);
+                        joins.extend(planned.joins);
+                        right.push(planned.value);
+                    }
+
+                    SQLiteInRhs::List(right)
+                }
+                query_ir::InRhs::Select(select) => {
+                    SQLiteInRhs::Select(Box::new(plan_select(select)))
+                }
+            };
 
             PlannedWhereExpr {
                 expr: SQLiteWhereExpr::In(SQLiteInExpr {
