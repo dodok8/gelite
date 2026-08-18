@@ -174,6 +174,8 @@ Supported filter expressions:
 - comparisons
 - bracketed-list `in`
 - bracketed-list `not in`
+- select-subquery `in`
+- select-subquery `not in`
 - `and`
 - `or`
 - `not`

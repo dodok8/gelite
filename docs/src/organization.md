@@ -96,12 +96,19 @@ select Employee {
   }
 }
 filter .active = true
-  and .department.code in ["INVESTIGATION", "ARCHIVE"]
+  and .department.id in (
+    select Department { id }
+    filter .code in ["INVESTIGATION", "ARCHIVE"]
+  )
   and .employee_no not in ["MG-999"]
 order by .salary desc, .name asc
 limit 10
 offset 0
 ```
+
+The nested select finds matching department identities in its own query scope.
+The employee-number condition keeps a literal-list membership example beside
+it.
 
 Find top-level employees whose optional manager link is absent:
 
