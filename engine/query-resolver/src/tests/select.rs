@@ -1,23 +1,51 @@
 use super::fixtures::{
     arithmetic_expr, filter_compare_int, filter_eq_bool, filter_eq_int, filter_eq_null,
     filter_eq_string, filter_in_bools, filter_in_empty, filter_in_floats, filter_in_ints,
-    filter_in_null, filter_in_path_item, filter_in_strings, filter_lt_null, filter_ne_null,
-    filter_not_in_strings, filter_null_eq, filter_null_ne, function_call_expr, literal_float_expr,
-    literal_int_expr, literal_null_expr, literal_string_expr, path_expr, post_only_catalog,
-    post_with_author_catalog, post_with_optional_subtitle_catalog, post_with_scalar_fields_catalog,
-    post_with_title_catalog, user_with_posts_catalog,
+    filter_in_null, filter_in_path_item, filter_in_select, filter_in_strings, filter_lt_null,
+    filter_ne_null, filter_not_in_strings, filter_null_eq, filter_null_ne, function_call_expr,
+    literal_float_expr, literal_int_expr, literal_null_expr, literal_string_expr, path_expr,
+    post_only_catalog, post_with_author_catalog, post_with_optional_subtitle_catalog,
+    post_with_scalar_fields_catalog, post_with_title_catalog, user_with_posts_catalog,
 };
 use crate::{ResolveError, resolve_select, tests::fixtures::literal_bool_expr};
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::vec;
+use alloc::vec::Vec;
 use query_ast::{
     ArithmeticExpr, CompareExpr,
     Expr::{self, Compare},
-    InExpr, Path, PathStep, SelectQuery, Shape, ShapeItem, UnaryArithmeticExpr, UnaryArithmeticOp,
+    InExpr, InRhs, Path, PathStep, SelectQuery, Shape, ShapeItem, UnaryArithmeticExpr,
+    UnaryArithmeticOp,
 };
 use query_ir::ValueExpr;
 use schema_model::{Cardinality, ScalarType};
+
+fn in_list_expr(left: Expr, op: query_ast::InOp, right: Vec<Expr>) -> InExpr {
+    InExpr::new(left, op, InRhs::List(right))
+}
+
+fn select_post(filter: Expr) -> SelectQuery {
+    SelectQuery::new(
+        "Post",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("id")]),
+            None,
+        )]),
+        Some(filter),
+        vec![],
+        None,
+        None,
+    )
+}
+
+fn assert_resolved_in_select(in_expr: &query_ir::InExpr) -> &query_ir::SelectQuery {
+    let query_ir::InRhs::Select(select) = in_expr.right() else {
+        panic!("membership right side should resolve to a select");
+    };
+
+    select
+}
 
 #[test]
 fn resolves_select_root_object_type() {
@@ -479,7 +507,7 @@ fn resolves_order_unary_arithmetic_expr() {
 fn resolves_membership_unary_arithmetic_literal_item() {
     let catalog = post_with_scalar_fields_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["view_count"]),
         query_ast::InOp::In,
         vec![
@@ -622,7 +650,7 @@ fn rejects_unary_arithmetic_null_operand() {
 fn rejects_membership_unary_arithmetic_path_item() {
     let catalog = post_with_scalar_fields_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["view_count"]),
         query_ast::InOp::In,
         vec![Expr::UnaryArithmetic(UnaryArithmeticExpr::new(
@@ -2393,7 +2421,7 @@ fn resolves_filter_in_literal_list_to_in_expr() {
 fn resolves_filter_in_concat_literal_item_to_value_expr() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr(
@@ -2430,7 +2458,7 @@ fn resolves_filter_in_concat_literal_item_to_value_expr() {
 fn resolves_filter_in_str_literal_item_to_value_expr() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr("str", vec![literal_bool_expr(true)])],
@@ -2467,7 +2495,7 @@ fn resolves_filter_in_str_literal_item_to_value_expr() {
 fn rejects_filter_in_unknown_function_item() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr(
@@ -2500,7 +2528,7 @@ fn rejects_filter_in_unknown_function_item() {
 fn rejects_filter_in_concat_item_without_at_least_two_arguments() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr(
@@ -2533,7 +2561,7 @@ fn rejects_filter_in_concat_item_without_at_least_two_arguments() {
 fn rejects_filter_in_concat_item_with_null_argument() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr(
@@ -2566,7 +2594,7 @@ fn rejects_filter_in_concat_item_with_null_argument() {
 fn rejects_filter_in_concat_item_with_non_string_argument() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr(
@@ -2600,7 +2628,7 @@ fn rejects_filter_in_concat_item_with_non_string_argument() {
 fn rejects_filter_in_str_item_without_exactly_one_argument() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr("str", vec![])],
@@ -2630,7 +2658,7 @@ fn rejects_filter_in_str_item_without_exactly_one_argument() {
 fn rejects_filter_in_str_null_item() {
     let catalog = post_with_title_catalog();
 
-    let filter = Expr::In(InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["title"]),
         query_ast::InOp::In,
         vec![function_call_expr("str", vec![literal_null_expr()])],
@@ -2724,7 +2752,7 @@ fn resolves_filter_in_float_literal_list_to_in_expr() {
 fn resolves_filter_in_arithmetic_literal_item_to_value_expr() {
     let catalog = post_with_scalar_fields_catalog();
 
-    let filter = Expr::In(query_ast::InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["view_count"]),
         query_ast::InOp::In,
         vec![arithmetic_expr(
@@ -2771,7 +2799,7 @@ fn resolves_filter_in_arithmetic_literal_item_to_value_expr() {
 fn resolves_filter_in_numeric_cast_literal_item_to_value_expr() {
     let catalog = post_with_scalar_fields_catalog();
 
-    let filter = Expr::In(query_ast::InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["rating"]),
         query_ast::InOp::In,
         vec![function_call_expr("f64", vec![literal_int_expr(1)])],
@@ -2799,7 +2827,7 @@ fn resolves_filter_in_numeric_cast_literal_item_to_value_expr() {
 fn resolves_filter_in_overflowing_arithmetic_literal_item_without_folding() {
     let catalog = post_with_scalar_fields_catalog();
 
-    let filter = Expr::In(query_ast::InExpr::new(
+    let filter = Expr::In(in_list_expr(
         path_expr(&["view_count"]),
         query_ast::InOp::In,
         vec![arithmetic_expr(
@@ -2997,6 +3025,139 @@ fn resolves_filter_not_in_literal_list_to_not_in_expr() {
     };
 
     assert_eq!(in_expr.op(), query_ir::InOp::NotIn);
+}
+
+#[test]
+fn resolves_membership_select_with_required_non_unique_scalar() {
+    let catalog = post_with_author_catalog();
+    let query = select_post(filter_in_select(
+        &["author", "score"],
+        "User",
+        &["score"],
+        None,
+    ));
+
+    let resolved = resolve_select(&catalog, &query).expect("membership select should resolve");
+    let query_ir::Expr::In(in_expr) = resolved.filter().expect("filter should resolve") else {
+        panic!("filter should resolve to a membership expression");
+    };
+    let select = assert_resolved_in_select(in_expr);
+
+    assert_eq!(select.root_object_type().name(), "User");
+    assert_eq!(select.shape().items()[0].output_name(), "score");
+}
+
+#[test]
+fn resolves_membership_select_with_implicit_id() {
+    let catalog = post_with_author_catalog();
+    let query = select_post(filter_in_select(&["author", "id"], "User", &["id"], None));
+
+    let resolved = resolve_select(&catalog, &query).expect("membership select should resolve");
+    let query_ir::Expr::In(in_expr) = resolved.filter().expect("filter should resolve") else {
+        panic!("filter should resolve to a membership expression");
+    };
+
+    assert_eq!(
+        assert_resolved_in_select(in_expr).shape().items()[0].output_name(),
+        "id"
+    );
+}
+
+#[test]
+fn rejects_membership_select_with_multiple_projected_fields() {
+    let catalog = post_with_author_catalog();
+    let query = select_post(filter_in_select(
+        &["author", "id"],
+        "User",
+        &["id", "name"],
+        None,
+    ));
+
+    assert_eq!(
+        resolve_select(&catalog, &query),
+        Err(ResolveError::UnsupportedExpr {
+            expr_type: "membership select projection".to_string(),
+        })
+    );
+}
+
+#[test]
+fn rejects_membership_select_with_computed_projection() {
+    let catalog = post_with_author_catalog();
+    let select = SelectQuery::new(
+        "User",
+        Shape::new(vec![ShapeItem::computed(
+            "score_copy",
+            path_expr(&["score"]),
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+    let filter = Expr::In(InExpr::new(
+        path_expr(&["author", "score"]),
+        query_ast::InOp::In,
+        InRhs::Select(Box::new(select)),
+    ));
+
+    assert_eq!(
+        resolve_select(&catalog, &select_post(filter)),
+        Err(ResolveError::UnsupportedExpr {
+            expr_type: "membership select projection".to_string(),
+        })
+    );
+}
+
+#[test]
+fn rejects_membership_select_with_optional_scalar() {
+    let catalog = post_with_optional_subtitle_catalog();
+    let query = select_post(filter_in_select(&["title"], "Post", &["subtitle"], None));
+
+    assert_eq!(
+        resolve_select(&catalog, &query),
+        Err(ResolveError::UnsupportedExpr {
+            expr_type: "membership select projection".to_string(),
+        })
+    );
+}
+
+#[test]
+fn rejects_membership_select_with_incompatible_scalar_type() {
+    let catalog = post_with_author_catalog();
+    let query = select_post(filter_in_select(
+        &["author", "id"],
+        "User",
+        &["score"],
+        None,
+    ));
+
+    assert_eq!(
+        resolve_select(&catalog, &query),
+        Err(ResolveError::IncompatibleOperandTypes {
+            expected: "uuid".to_string(),
+            actual: "int64".to_string(),
+        })
+    );
+}
+
+#[test]
+fn rejects_outer_scope_path_in_membership_select() {
+    let catalog = post_with_author_catalog();
+    let query = select_post(filter_in_select(
+        &["author", "id"],
+        "User",
+        &["id"],
+        Some(filter_eq_string(&["title"], "Draft")),
+    ));
+
+    assert_eq!(
+        resolve_select(&catalog, &query),
+        Err(ResolveError::UnknownField {
+            object_type: "User".to_string(),
+            field: "title".to_string(),
+        })
+    );
 }
 
 #[test]
@@ -3669,7 +3830,7 @@ fn rejects_order_membership_expr() {
     let catalog = post_with_scalar_fields_catalog();
 
     let order = query_ast::OrderExpr::new(
-        Expr::In(InExpr::new(
+        Expr::In(in_list_expr(
             path_expr(&["view_count"]),
             query_ast::InOp::In,
             vec![literal_int_expr(1), literal_int_expr(2)],
