@@ -47,6 +47,14 @@ fn assert_resolved_in_select(in_expr: &query_ir::InExpr) -> &query_ir::SelectQue
     select
 }
 
+fn assert_resolved_in_list(in_expr: &query_ir::InExpr) -> &[ValueExpr] {
+    let query_ir::InRhs::List(values) = in_expr.right() else {
+        panic!("membership right side should resolve to a list");
+    };
+
+    values
+}
+
 #[test]
 fn resolves_select_root_object_type() {
     let query = SelectQuery::new("Post", Shape::new(vec![]), None, vec![], None, None);
@@ -537,9 +545,10 @@ fn resolves_membership_unary_arithmetic_literal_item() {
     };
     assert_eq!(step.field().name(), "view_count");
     assert_eq!(in_expr.op(), query_ir::InOp::In);
-    assert_eq!(in_expr.right().len(), 2);
+    let right = assert_resolved_in_list(in_expr);
+    assert_eq!(right.len(), 2);
 
-    let ValueExpr::UnaryArithmetic(first) = &in_expr.right()[0] else {
+    let ValueExpr::UnaryArithmetic(first) = &right[0] else {
         panic!("first membership item should resolve to unary arithmetic");
     };
     assert_eq!(first.op(), query_ir::UnaryArithmeticOp::Minus);
@@ -549,7 +558,7 @@ fn resolves_membership_unary_arithmetic_literal_item() {
         &ValueExpr::Literal(query_ir::Literal::Int64(1))
     );
 
-    let ValueExpr::UnaryArithmetic(second) = &in_expr.right()[1] else {
+    let ValueExpr::UnaryArithmetic(second) = &right[1] else {
         panic!("second membership item should resolve to unary arithmetic");
     };
     assert_eq!(second.op(), query_ir::UnaryArithmeticOp::Plus);
@@ -2409,7 +2418,7 @@ fn resolves_filter_in_literal_list_to_in_expr() {
 
     assert_eq!(in_expr.op(), query_ir::InOp::In);
     assert_eq!(
-        in_expr.right(),
+        assert_resolved_in_list(in_expr),
         &[
             query_ir::ValueExpr::Literal(query_ir::Literal::String("Draft".to_string())),
             query_ir::ValueExpr::Literal(query_ir::Literal::String("Published".to_string()))
@@ -2447,7 +2456,7 @@ fn resolves_filter_in_concat_literal_item_to_value_expr() {
         panic!("filter should resolve to an in expression");
     };
 
-    let [query_ir::ValueExpr::StringFunction(function)] = in_expr.right() else {
+    let [query_ir::ValueExpr::StringFunction(function)] = assert_resolved_in_list(in_expr) else {
         panic!("membership item should resolve to a string function");
     };
     assert_eq!(function.kind(), query_ir::StringFunctionKind::Concat);
@@ -2481,7 +2490,7 @@ fn resolves_filter_in_str_literal_item_to_value_expr() {
         panic!("filter should resolve to an in expression");
     };
 
-    let [query_ir::ValueExpr::StringFunction(function)] = in_expr.right() else {
+    let [query_ir::ValueExpr::StringFunction(function)] = assert_resolved_in_list(in_expr) else {
         panic!("membership item should resolve to a string function");
     };
     assert_eq!(function.kind(), query_ir::StringFunctionKind::Str);
@@ -2708,7 +2717,7 @@ fn resolves_filter_in_int_literal_list_to_in_expr() {
     };
 
     assert_eq!(
-        in_expr.right(),
+        assert_resolved_in_list(in_expr),
         &[
             query_ir::ValueExpr::Literal(query_ir::Literal::Int64(1)),
             query_ir::ValueExpr::Literal(query_ir::Literal::Int64(2))
@@ -2740,7 +2749,7 @@ fn resolves_filter_in_float_literal_list_to_in_expr() {
     };
 
     assert_eq!(
-        in_expr.right(),
+        assert_resolved_in_list(in_expr),
         &[
             query_ir::ValueExpr::Literal(query_ir::Literal::Float64(1.5)),
             query_ir::ValueExpr::Literal(query_ir::Literal::Float64(2.5))
@@ -2779,7 +2788,7 @@ fn resolves_filter_in_arithmetic_literal_item_to_value_expr() {
         panic!("filter should resolve to an in expression");
     };
 
-    let [query_ir::ValueExpr::Arithmetic(arithmetic)] = in_expr.right() else {
+    let [query_ir::ValueExpr::Arithmetic(arithmetic)] = assert_resolved_in_list(in_expr) else {
         panic!("membership item should resolve to an arithmetic value expression");
     };
 
@@ -2812,7 +2821,7 @@ fn resolves_filter_in_numeric_cast_literal_item_to_value_expr() {
         panic!("filter should resolve to an in expression");
     };
 
-    let [query_ir::ValueExpr::Cast(cast)] = in_expr.right() else {
+    let [query_ir::ValueExpr::Cast(cast)] = assert_resolved_in_list(in_expr) else {
         panic!("membership item should resolve to a cast value expression");
     };
 
@@ -2854,7 +2863,7 @@ fn resolves_filter_in_overflowing_arithmetic_literal_item_without_folding() {
         panic!("filter should resolve to an in expression");
     };
 
-    let [query_ir::ValueExpr::Arithmetic(arithmetic)] = in_expr.right() else {
+    let [query_ir::ValueExpr::Arithmetic(arithmetic)] = assert_resolved_in_list(in_expr) else {
         panic!("membership item should resolve to an arithmetic value expression");
     };
 
@@ -2893,7 +2902,7 @@ fn resolves_filter_in_bool_literal_list_to_in_expr() {
     };
 
     assert_eq!(
-        in_expr.right(),
+        assert_resolved_in_list(in_expr),
         &[
             query_ir::ValueExpr::Literal(query_ir::Literal::Bool(true)),
             query_ir::ValueExpr::Literal(query_ir::Literal::Bool(false))
@@ -2989,7 +2998,7 @@ fn resolves_filter_in_uuid_path_with_string_literal_list() {
     };
 
     assert_eq!(
-        in_expr.right(),
+        assert_resolved_in_list(in_expr),
         &[
             query_ir::ValueExpr::Literal(query_ir::Literal::String(
                 "01987211-d8f1-7b31-8b3e-f5043e6b08f0".to_string()
