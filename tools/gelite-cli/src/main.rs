@@ -6,7 +6,8 @@ use std::{
 
 use clap::{Args, Parser, Subcommand};
 use gelite_commands::{
-    CompiledQuery, QueryKind, SchemaPlanStatement, apply_schema, compile_query, plan_schema,
+    SchemaPlanStatement, apply_schema, compile_query, execute_query, format_query_result,
+    plan_schema,
 };
 use sqlite_runner::native::NativeSQLiteRunner;
 
@@ -49,6 +50,11 @@ enum QueryCommand {
         query_file: PathBuf,
         #[arg(long)]
         schema: PathBuf,
+    },
+    Run {
+        query_file: PathBuf,
+        #[arg(long)]
+        database: PathBuf,
     },
 }
 
@@ -176,32 +182,9 @@ fn execute_request(
     request: repl::ExecutionRequest,
 ) -> Result<Option<sqlite_runner::SQLiteQueryResult>, String> {
     match request {
-        repl::ExecutionRequest::Query(CompiledQuery { kind, statement }) => match kind {
-            QueryKind::Select => runner
-                .execute_select(&statement)
-                .map(Some)
-                .map_err(|error| error.message().to_string()),
-            QueryKind::Insert { generated_id } => {
-                runner
-                    .execute_insert(&statement)
-                    .map_err(|error| error.message().to_string())?;
-
-                Ok(Some(sqlite_runner::SQLiteQueryResult::new(
-                    vec!["id".to_string()],
-                    vec![vec![sqlite_runner::SQLiteCellValue::Text(generated_id)]],
-                )))
-            }
-            QueryKind::Update => runner
-                .execute_update(&statement)
-                .map(affected_rows_result)
-                .map(Some)
-                .map_err(|error| error.message().to_string()),
-            QueryKind::Delete => runner
-                .execute_delete(&statement)
-                .map(affected_rows_result)
-                .map(Some)
-                .map_err(|error| error.message().to_string()),
-        },
+        repl::ExecutionRequest::Query(query) => execute_query(runner, query)
+            .map(Some)
+            .map_err(|error| error.message().to_string()),
         repl::ExecutionRequest::Transaction(command) => match command {
             repl::TransactionCommand::Start => runner.begin_transaction(),
             repl::TransactionCommand::Commit => runner.commit_transaction(),
@@ -212,42 +195,68 @@ fn execute_request(
     }
 }
 
-fn affected_rows_result(affected_rows: i64) -> sqlite_runner::SQLiteQueryResult {
-    sqlite_runner::SQLiteQueryResult::new(
-        vec!["affected_rows".to_string()],
-        vec![vec![sqlite_runner::SQLiteCellValue::Integer(affected_rows)]],
-    )
-}
-
 fn path_to_str(path: &Path) -> Result<&str, String> {
     path.to_str()
         .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))
 }
 
 fn run_query_command(command: QueryCommand) -> Result<(), String> {
-    let QueryCommand::Plan { query_file, schema } = command;
+    match command {
+        QueryCommand::Plan { query_file, schema } => {
+            let schema_source = fs::read_to_string(&schema)
+                .map_err(|error| format!("failed to read {}: {error}", schema.display()))?;
+            let query_source = fs::read_to_string(&query_file)
+                .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
+            let catalog = schema_parser::parse_schema(&schema_source).map_err(|error| {
+                format!("failed to parse schema {}: {error:#?}", schema.display())
+            })?;
+            let compiled = compile_query(&catalog, &query_source)
+                .map_err(|error| error.message().to_string())?;
 
-    let schema_source = fs::read_to_string(&schema)
-        .map_err(|error| format!("failed to read {}: {error}", schema.display()))?;
-    let query_source = fs::read_to_string(&query_file)
-        .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
-    let catalog = schema_parser::parse_schema(&schema_source)
-        .map_err(|error| format!("failed to parse schema {}: {error:#?}", schema.display()))?;
-    let compiled =
-        compile_query(&catalog, &query_source).map_err(|error| error.message().to_string())?;
+            println!("SQL:\n{}", compiled.statement.sql());
+            println!("Bind values: {:?}", compiled.statement.bind_values());
 
-    println!("SQL:\n{}", compiled.statement.sql());
-    println!("Bind values: {:?}", compiled.statement.bind_values());
+            Ok(())
+        }
+        QueryCommand::Run {
+            query_file,
+            database,
+        } => {
+            let query_source = fs::read_to_string(&query_file)
+                .map_err(|error| format!("failed to read {}: {error}", query_file.display()))?;
+            let database_metadata = fs::metadata(&database).map_err(|error| {
+                format!("failed to access database {}: {error}", database.display())
+            })?;
+            if !database_metadata.is_file() {
+                return Err(format!(
+                    "database path is not a file: {}",
+                    database.display()
+                ));
+            }
+            let database = path_to_str(&database)?;
+            let mut runner = NativeSQLiteRunner::open(database)
+                .map_err(|error| format!("failed to open database: {}", error.message()))?;
+            let catalog = runner
+                .load_schema_catalog()
+                .map_err(|error| format!("failed to load catalog: {}", error.message()))?;
+            let compiled = compile_query(&catalog, &query_source)
+                .map_err(|error| error.message().to_string())?;
+            let result = execute_query(&mut runner, compiled)
+                .map_err(|error| error.message().to_string())?;
 
-    Ok(())
+            println!("{}", format_query_result(&result));
+
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{fs, path::PathBuf, process, time::SystemTime};
 
     use clap::Parser;
-    use gelite_commands::{CompiledQuery, QueryKind};
+    use gelite_commands::{CompiledQuery, QueryKind, apply_schema};
     use repl::{ExecutionRequest, TransactionCommand};
     use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
@@ -277,6 +286,32 @@ mod tests {
     }
 
     #[test]
+    fn query_run_accepts_query_file_and_database_option() {
+        let cli = Cli::try_parse_from([
+            "gelite",
+            "query",
+            "run",
+            "query.geliql",
+            "--database",
+            "app.db",
+        ])
+        .expect("query run arguments should parse");
+        let Command::Query {
+            command:
+                QueryCommand::Run {
+                    query_file,
+                    database,
+                },
+        } = cli.command
+        else {
+            panic!("expected query run command");
+        };
+
+        assert_eq!(query_file, PathBuf::from("query.geliql"));
+        assert_eq!(database, PathBuf::from("app.db"));
+    }
+
+    #[test]
     fn query_plan_reports_schema_parse_context() {
         let schema = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         let error = run_query_command(QueryCommand::Plan {
@@ -286,6 +321,55 @@ mod tests {
         .expect_err("invalid schema should fail");
 
         assert!(error.starts_with(&format!("failed to parse schema {}:", schema.display())));
+    }
+
+    #[test]
+    fn query_run_executes_against_an_existing_database() {
+        let directory = temporary_directory("success");
+        let database = directory.join("app.db");
+        let query_file = directory.join("query.geliql");
+        fs::write(&query_file, "select Post { title }").unwrap();
+
+        let mut runner = NativeSQLiteRunner::open(database.to_str().unwrap()).unwrap();
+        apply_schema("type Post {\n  required title: str\n}", &mut runner).unwrap();
+        drop(runner);
+
+        run_query_command(QueryCommand::Run {
+            query_file,
+            database,
+        })
+        .expect("query run should succeed");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn query_run_does_not_create_a_missing_database() {
+        let directory = temporary_directory("missing-database");
+        let database = directory.join("missing.db");
+        let query_file = directory.join("query.geliql");
+        fs::write(&query_file, "select Post { title }").unwrap();
+
+        let error = run_query_command(QueryCommand::Run {
+            query_file,
+            database: database.clone(),
+        })
+        .expect_err("missing database should fail");
+
+        assert!(error.starts_with("failed to access database "));
+        assert!(!database.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn temporary_directory(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("gelite-cli-{label}-{}-{nonce}", process::id()));
+        fs::create_dir(&path).unwrap();
+        path
     }
 
     #[test]

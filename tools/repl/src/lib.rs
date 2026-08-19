@@ -1,4 +1,4 @@
-use gelite_commands::{CompiledQuery, compile_query};
+use gelite_commands::{CompiledQuery, compile_query, format_query_result};
 pub use query_ast::TransactionCommand;
 use query_parser::parse_transaction_command;
 use rustyline::{Cmd, DefaultEditor, KeyCode, KeyEvent, Modifiers, error::ReadlineError};
@@ -6,7 +6,7 @@ use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
     SingleCardinality,
 };
-use sqlite_runner::{SQLiteCellValue, SQLiteQueryResult};
+use sqlite_runner::SQLiteQueryResult;
 
 pub struct ReplOptions {
     pub debug: bool,
@@ -323,31 +323,7 @@ fn compile_input(
 }
 
 fn print_query_result(result: &SQLiteQueryResult) {
-    if !result.columns().is_empty() {
-        println!("{}", result.columns().join("\t"));
-    }
-
-    for row in result.rows() {
-        let values = row
-            .iter()
-            .map(format_cell_value)
-            .collect::<Vec<_>>()
-            .join("\t");
-        println!("{values}");
-    }
-
-    if result.rows().is_empty() {
-        println!("(0 rows)");
-    }
-}
-
-fn format_cell_value(value: &SQLiteCellValue) -> String {
-    match value {
-        SQLiteCellValue::Integer(value) => value.to_string(),
-        SQLiteCellValue::Real(value) => value.to_string(),
-        SQLiteCellValue::Text(value) => value.clone(),
-        SQLiteCellValue::Null => "NULL".to_string(),
-    }
+    println!("{}", format_query_result(result));
 }
 
 fn build_development_schema() -> SchemaCatalog {

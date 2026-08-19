@@ -2,10 +2,16 @@ mod fixtures;
 
 use schema_model::SchemaCatalog;
 use sqlite_query_sqlgen::SQLiteBindValue;
-use sqlite_runner::{SQLiteRunner, SQLiteRunnerError};
+use sqlite_query_sqlgen::SQLiteStatement;
+use sqlite_runner::{
+    SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
+};
 use sqlite_schema_plan::SQLiteValuePlan;
 
-use crate::{QueryKind, SchemaPlanStatement, apply_schema, compile_query, plan_schema};
+use crate::{
+    QueryKind, SchemaPlanStatement, apply_schema, compile_query, execute_query,
+    format_query_result, plan_schema,
+};
 use fixtures::blog_schema_source;
 
 fn blog_catalog() -> SchemaCatalog {
@@ -30,6 +36,43 @@ impl SQLiteRunner for RecordingRunner {
     ) -> Result<(), SQLiteRunnerError> {
         self.calls.push(format!("{sql} {values:?}"));
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RecordingQueryRunner {
+    calls: Vec<&'static str>,
+    fail: bool,
+}
+
+impl SQLiteQueryRunner for RecordingQueryRunner {
+    fn execute_select(
+        &mut self,
+        _statement: &SQLiteStatement,
+    ) -> Result<SQLiteQueryResult, SQLiteRunnerError> {
+        self.calls.push("select");
+        if self.fail {
+            return Err(SQLiteRunnerError::execution_failed("test failure"));
+        }
+        Ok(SQLiteQueryResult::new(
+            vec!["title".to_string()],
+            vec![vec![SQLiteCellValue::Text("Case File".to_string())]],
+        ))
+    }
+
+    fn execute_insert(&mut self, _statement: &SQLiteStatement) -> Result<(), SQLiteRunnerError> {
+        self.calls.push("insert");
+        Ok(())
+    }
+
+    fn execute_update(&mut self, _statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError> {
+        self.calls.push("update");
+        Ok(2)
+    }
+
+    fn execute_delete(&mut self, _statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError> {
+        self.calls.push("delete");
+        Ok(3)
     }
 }
 
@@ -196,7 +239,12 @@ fn query_command_compiles_delete() {
 fn query_command_reports_dispatch_parse_and_resolution_errors() {
     for (source, expected) in [
         ("truncate Post", "query must start"),
+        (
+            "start transaction",
+            "transaction commands require a database-backed interactive REPL",
+        ),
         ("select", "failed to parse query"),
+        ("select Post { title } delete Post", "failed to parse query"),
         ("select Missing { id }", "failed to resolve query"),
     ] {
         let error = match compile_query(&blog_catalog(), source) {
@@ -206,4 +254,59 @@ fn query_command_reports_dispatch_parse_and_resolution_errors() {
 
         assert!(error.message().contains(expected), "{}", error.message());
     }
+}
+
+#[test]
+fn query_command_executes_all_supported_statement_kinds() {
+    let catalog = blog_catalog();
+    let mut runner = RecordingQueryRunner::default();
+
+    let select = execute_query(
+        &mut runner,
+        compile_query(&catalog, "select Post { title }").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        select.rows(),
+        &[vec![SQLiteCellValue::Text("Case File".to_string())]]
+    );
+    assert_eq!(format_query_result(&select), "title\nCase File");
+
+    let insert =
+        compile_query(&catalog, r#"insert User { email := "sheri@example.com" }"#).unwrap();
+    let QueryKind::Insert { generated_id } = &insert.kind else {
+        panic!("expected insert query kind");
+    };
+    let generated_id = generated_id.clone();
+    assert_eq!(
+        execute_query(&mut runner, insert).unwrap().rows(),
+        &[vec![SQLiteCellValue::Text(generated_id)]]
+    );
+
+    let update = compile_query(&catalog, r#"update Post set { title := "Reviewed" }"#).unwrap();
+    assert_eq!(
+        execute_query(&mut runner, update).unwrap().rows(),
+        &[vec![SQLiteCellValue::Integer(2)]]
+    );
+
+    let delete = compile_query(&catalog, "delete Post").unwrap();
+    assert_eq!(
+        execute_query(&mut runner, delete).unwrap().rows(),
+        &[vec![SQLiteCellValue::Integer(3)]]
+    );
+
+    assert_eq!(runner.calls, ["select", "insert", "update", "delete"]);
+}
+
+#[test]
+fn query_command_reports_execution_errors() {
+    let mut runner = RecordingQueryRunner {
+        fail: true,
+        ..Default::default()
+    };
+    let query = compile_query(&blog_catalog(), "select Post { title }").unwrap();
+
+    let error = execute_query(&mut runner, query).expect_err("execution should fail");
+
+    assert_eq!(error.message(), "failed to execute query: test failure");
 }

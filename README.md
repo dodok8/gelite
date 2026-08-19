@@ -165,12 +165,11 @@ as a stable snapshot or reproducible plan artifact.
   inserts.
 - `sqlite-runner`: native schema, query, and transaction execution.
 - `tools/gelite-cli`: top-level command-line binary.
-- `tools/gelite-commands`: command orchestration shared by CLI-facing tools.
+- `tools/gelite-commands`: shared query compilation and execution orchestration.
 - `tools/repl`: inspection tool for running the current pipeline on a query.
 
 ## What is not implemented yet
 
-- `gelite query run`.
 - Migration diffing and migration history.
 - Runtime nested result shaping.
 - HTTP API.
@@ -188,6 +187,12 @@ Open the database-backed REPL:
 
 ```sh
 cargo run -p gelite-cli -- repl --database organization.db
+```
+
+Execute one query file against an existing Gelite database:
+
+```sh
+cargo run -p gelite-cli -- query run query.geliql --database organization.db
 ```
 
 The documentation contains three runnable examples, REPL input notes, and

@@ -14,7 +14,9 @@ use schema_model::{
 };
 use sqlite_schema_plan::SQLiteValuePlan;
 
-use crate::{SQLiteCellValue, SQLiteQueryResult, SQLiteRunner, SQLiteRunnerError};
+use crate::{
+    SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
+};
 
 /// Native SQLite runner backed by an owned SQLite connection.
 ///
@@ -610,5 +612,35 @@ impl SQLiteRunner for NativeSQLiteRunner {
             Ok(result) => Err(self.result_error("step prepared SQL", result)),
             Err(result) => Err(self.result_error("step prepared SQL", result)),
         }
+    }
+}
+
+impl SQLiteQueryRunner for NativeSQLiteRunner {
+    fn execute_select(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+    ) -> Result<SQLiteQueryResult, SQLiteRunnerError> {
+        NativeSQLiteRunner::execute_select(self, statement)
+    }
+
+    fn execute_insert(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+    ) -> Result<(), SQLiteRunnerError> {
+        NativeSQLiteRunner::execute_insert(self, statement)
+    }
+
+    fn execute_update(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+    ) -> Result<i64, SQLiteRunnerError> {
+        NativeSQLiteRunner::execute_update(self, statement)
+    }
+
+    fn execute_delete(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+    ) -> Result<i64, SQLiteRunnerError> {
+        NativeSQLiteRunner::execute_delete(self, statement)
     }
 }
