@@ -53,6 +53,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
             RawTokenKind::LParen => TokenKind::LParen,
             RawTokenKind::RParen => TokenKind::RParen,
             RawTokenKind::Comma => TokenKind::Comma,
+            RawTokenKind::Semicolon => TokenKind::Semicolon,
             RawTokenKind::ColonEq => TokenKind::ColonEq,
             RawTokenKind::Colon => TokenKind::Colon,
             RawTokenKind::Dot => TokenKind::Dot,
@@ -191,6 +192,9 @@ enum RawTokenKind {
     #[token(",")]
     Comma,
 
+    #[token(";")]
+    Semicolon,
+
     #[token(":=")]
     ColonEq,
 
@@ -285,6 +289,7 @@ pub enum TokenKind {
     LParen,
     RParen,
     Comma,
+    Semicolon,
     ColonEq,
     Colon,
     Dot,
@@ -359,7 +364,7 @@ pub struct Span {
 }
 
 impl Span {
-    fn new(start: Position, end: Position) -> Self {
+    pub(crate) fn new(start: Position, end: Position) -> Self {
         Self { start, end }
     }
 

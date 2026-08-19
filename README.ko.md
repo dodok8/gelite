@@ -58,6 +58,8 @@ Gelite의 현재 범위는 다음과 같습니다.
 - query compilation: `select`, `insert`, `update`, `delete` parsing, semantic
   resolution, SQLite query planning, SQL rendering
 - 현재 `select`, `insert`, `update`, `delete` subset의 native query execution
+- 사전 compile과 explicit transaction validation을 적용하는 semicolon 기반
+  multi-statement query file
 - database-backed interactive REPL의 explicit `start transaction`, `commit`,
   `rollback` command
 - initial schema planning: `.geli` parsing, SQLite schema planning, DDL SQL
@@ -178,7 +180,7 @@ Database-backed REPL을 엽니다.
 cargo run -p gelite-cli -- repl --database organization.db
 ```
 
-기존 Gelite database에서 query file 하나를 실행합니다.
+기존 Gelite database에서 query file을 실행합니다.
 
 ```sh
 cargo run -p gelite-cli -- query run query.geliql --database organization.db

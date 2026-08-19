@@ -224,12 +224,11 @@ Pipeline:
 read schema.geli
 -> schema_parser::parse_schema
 read query.geliql
--> dispatch select, insert, update, or delete
--> query_parser parses the statement
--> query_resolver resolves it against the schema catalog
--> sqlite_query_plan creates the statement plan
--> sqlite_query_sqlgen renders SQL and ordered bind values
--> print SQL and bind values
+-> query_parser splits semicolon-terminated statements
+-> parse and resolve every data statement against the schema catalog
+-> validate the complete transaction sequence
+-> sqlite_query_plan and sqlite_query_sqlgen render each data statement
+-> print each data statement's SQL and bind values plus transaction SQL
 ```
 
 This command should support `--debug` later. Without `--debug`, it should print
@@ -248,17 +247,17 @@ Pipeline:
 ```text
 read query.geliql
 -> load schema_model::SchemaCatalog from SQLite metadata
--> dispatch select, insert, update, or delete
--> compile through the shared tools/gelite-commands path
--> execute through the binding-neutral SQLite query runner contract
--> return a structured result
--> print columns and rows
+-> parse, compile, resolve, and transaction-validate the complete script
+-> execute in order through one binding-neutral SQLite runner connection
+-> print results with statement boundaries
 ```
 
-The command opens one connection, executes one data statement, and exits.
-Selects return columns and rows, inserts return the generated UUID, and updates
-and deletes return `affected_rows`. Transaction commands remain exclusive to
-the interactive database-backed REPL.
+The command opens one connection and accepts one legacy unterminated data
+statement or a semicolon-terminated script. Selects return columns and rows,
+inserts return the generated UUID, updates and deletes return `affected_rows`,
+and transaction commands render as `BEGIN TRANSACTION`, `COMMIT`, or `ROLLBACK`
+in plan output. Runtime failure rolls back an active explicit transaction while
+preserving earlier autocommit statements.
 
 The CLI requires the database file to exist before opening it so a misspelled
 path cannot create an empty SQLite database.

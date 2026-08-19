@@ -22,15 +22,17 @@ The MVP supports four data statements:
 - `update`
 - `delete`
 
-The database-backed interactive REPL also supports three transaction-control
-commands:
+Query scripts and the database-backed interactive REPL also support three
+transaction-control commands:
 
 - `start transaction`
 - `commit`
 - `rollback`
 
-Only one statement or transaction command is executed per input in the first
-version.
+One-shot query files may contain one or more semicolon-terminated statements.
+A single data statement without a semicolon remains valid for compatibility.
+Empty statements and trailing whitespace are ignored. Semicolons inside string
+literals do not terminate a statement.
 
 ## Shared Conventions
 
@@ -668,27 +670,32 @@ transaction_command := "start" "transaction"
 ```
 
 Transaction commands are session-level syntax. They are represented in the
-syntax tree and dispatched directly by the REPL; they do not enter Semantic IR,
-SQLite query planning, or SQL generation.
+syntax tree and dispatched directly by the script runner or REPL; they do not
+enter Semantic IR, SQLite query planning, or SQL generation.
 
 ### Session Semantics
 
-- Transaction commands are supported only by a database-backed interactive
-  REPL, where every input uses the same native SQLite connection.
+- Transaction commands are supported by query scripts and database-backed
+  interactive REPL sessions that use one native SQLite connection.
 - `start transaction` begins an explicit SQLite transaction on that connection.
 - `commit` persists successful changes made since `start transaction`.
 - `rollback` discards changes made since `start transaction`.
 - Data statements outside an explicit transaction retain SQLite autocommit
   behavior.
-- Starting a transaction while one is active, or committing or rolling back
-  without an active transaction, returns an execution error.
+- Query scripts reject a nested transaction or an unmatched commit or rollback
+  before execution. The interactive REPL reports the same invalid transitions
+  as execution errors.
+- A script ending with an active transaction is rejected before execution.
+- Query scripts are fully parsed, compiled, resolved, and transaction-validated
+  before the first statement executes.
+- A runtime failure rolls back the active explicit transaction. Earlier changes
+  made outside that transaction remain committed by SQLite autocommit.
 - Closing the REPL or database connection rolls back an active transaction.
-- Compile-only REPL input and one-shot CLI input reject transaction commands.
+- Compile-only REPL input rejects transaction commands.
 
 The MVP does not support transaction modes, savepoints, nested transactions,
-automatic retries, client callback APIs, multi-command scripts, transactions
-across CLI process invocations, WASM transaction execution, or schema-apply
-transaction changes.
+automatic retries, client callback APIs, transactions across CLI process
+invocations, WASM transaction execution, or schema-apply transaction changes.
 
 ## Values
 

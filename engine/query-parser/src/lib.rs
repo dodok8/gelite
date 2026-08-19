@@ -16,8 +16,8 @@ mod parser;
 
 pub use lexer::{Keyword, LexError, LexErrorKind, Position, Span, Token, TokenKind, lex};
 pub use parser::{
-    ParseError, ParseErrorKind, parse_delete, parse_insert, parse_select,
-    parse_transaction_command, parse_update,
+    ParseError, ParseErrorKind, QueryScript, QueryScriptStatement, parse_delete, parse_insert,
+    parse_script, parse_select, parse_transaction_command, parse_update,
 };
 
 #[cfg(test)]

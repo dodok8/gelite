@@ -5,12 +5,13 @@ use sqlite_query_sqlgen::SQLiteBindValue;
 use sqlite_query_sqlgen::SQLiteStatement;
 use sqlite_runner::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
+    SQLiteTransactionRunner,
 };
 use sqlite_schema_plan::SQLiteValuePlan;
 
 use crate::{
-    QueryKind, SchemaPlanStatement, apply_schema, compile_query, execute_query,
-    format_query_result, plan_schema,
+    CompiledScriptStatement, QueryKind, SchemaPlanStatement, apply_schema, compile_query,
+    compile_script, execute_query, execute_script, format_query_result, plan_schema,
 };
 use fixtures::blog_schema_source;
 
@@ -73,6 +74,23 @@ impl SQLiteQueryRunner for RecordingQueryRunner {
     fn execute_delete(&mut self, _statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError> {
         self.calls.push("delete");
         Ok(3)
+    }
+}
+
+impl SQLiteTransactionRunner for RecordingQueryRunner {
+    fn begin_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.calls.push("begin");
+        Ok(())
+    }
+
+    fn commit_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.calls.push("commit");
+        Ok(())
+    }
+
+    fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.calls.push("rollback");
+        Ok(())
     }
 }
 
@@ -309,4 +327,69 @@ fn query_command_reports_execution_errors() {
     let error = execute_query(&mut runner, query).expect_err("execution should fail");
 
     assert_eq!(error.message(), "test failure");
+}
+
+#[test]
+fn query_script_compiles_and_executes_in_order() {
+    let script = compile_script(
+        &blog_catalog(),
+        "start transaction; insert User { email := \"sheri@example.com\" }; commit; select Post { title };",
+    )
+    .expect("script should compile");
+
+    assert_eq!(script.statements().len(), 4);
+    assert_eq!(script.statements()[0].sql(), "BEGIN TRANSACTION");
+    assert!(matches!(
+        script.statements()[1],
+        CompiledScriptStatement::Query(_)
+    ));
+
+    let mut runner = RecordingQueryRunner::default();
+    let results = execute_script(&mut runner, script).expect("script should execute");
+
+    assert_eq!(runner.calls, ["begin", "insert", "commit", "select"]);
+    assert!(results[0].is_none());
+    assert!(results[1].is_some());
+    assert!(results[2].is_none());
+    assert!(results[3].is_some());
+}
+
+#[test]
+fn query_script_validates_all_transactions_before_execution() {
+    for (source, expected) in [
+        ("commit;", "no transaction is active"),
+        (
+            "start transaction; start transaction; commit;",
+            "nested transactions are not supported",
+        ),
+        (
+            "start transaction; select Post { title };",
+            "transaction is still active at end of script",
+        ),
+    ] {
+        let error = match compile_script(&blog_catalog(), source) {
+            Ok(_) => panic!("script should fail"),
+            Err(error) => error,
+        };
+        assert!(error.message().contains(expected), "{}", error.message());
+        assert!(error.message().contains("line 1, column"));
+    }
+}
+
+#[test]
+fn query_script_rolls_back_an_active_transaction_after_runtime_failure() {
+    let script = compile_script(
+        &blog_catalog(),
+        "start transaction; select Post { title }; commit;",
+    )
+    .expect("script should compile");
+    let mut runner = RecordingQueryRunner {
+        fail: true,
+        ..Default::default()
+    };
+
+    let error = execute_script(&mut runner, script).expect_err("script should fail");
+
+    assert_eq!(error.message(), "statement 2: test failure");
+    assert_eq!(runner.calls, ["begin", "select", "rollback"]);
 }

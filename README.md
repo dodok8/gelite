@@ -60,6 +60,8 @@ Gelite's current scope includes:
   resolution, SQLite query planning, and SQL rendering
 - native query execution for the current `select`, `insert`, `update`, and `delete`
   subsets
+- semicolon-terminated multi-statement query files with preflight compilation
+  and explicit transaction validation
 - explicit `start transaction`, `commit`, and `rollback` commands in the
   database-backed interactive REPL
 - initial schema planning: `.geli` parsing, SQLite schema planning, and DDL SQL
@@ -189,7 +191,7 @@ Open the database-backed REPL:
 cargo run -p gelite-cli -- repl --database organization.db
 ```
 
-Execute one query file against an existing Gelite database:
+Execute a query file against an existing Gelite database:
 
 ```sh
 cargo run -p gelite-cli -- query run query.geliql --database organization.db

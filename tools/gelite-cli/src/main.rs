@@ -6,8 +6,8 @@ use std::{
 
 use clap::{Args, Parser, Subcommand};
 use gelite_commands::{
-    SchemaPlanStatement, apply_schema, compile_query, execute_query, format_query_result,
-    plan_schema,
+    SchemaPlanStatement, apply_schema, compile_script, execute_query, execute_script,
+    format_query_result, plan_schema,
 };
 use sqlite_runner::native::NativeSQLiteRunner;
 
@@ -210,11 +210,15 @@ fn run_query_command(command: QueryCommand) -> Result<(), String> {
             let catalog = schema_parser::parse_schema(&schema_source).map_err(|error| {
                 format!("failed to parse schema {}: {error:#?}", schema.display())
             })?;
-            let compiled = compile_query(&catalog, &query_source)
+            let compiled = compile_script(&catalog, &query_source)
                 .map_err(|error| error.message().to_string())?;
 
-            println!("SQL:\n{}", compiled.statement.sql());
-            println!("Bind values: {:?}", compiled.statement.bind_values());
+            for (index, statement) in compiled.statements().iter().enumerate() {
+                println!("Statement {}:\nSQL:\n{}", index + 1, statement.sql());
+                if let Some(statement) = statement.statement() {
+                    println!("Bind values: {:?}", statement.bind_values());
+                }
+            }
 
             Ok(())
         }
@@ -239,12 +243,18 @@ fn run_query_command(command: QueryCommand) -> Result<(), String> {
             let catalog = runner
                 .load_schema_catalog()
                 .map_err(|error| format!("failed to load catalog: {}", error.message()))?;
-            let compiled = compile_query(&catalog, &query_source)
+            let compiled = compile_script(&catalog, &query_source)
                 .map_err(|error| error.message().to_string())?;
-            let result = execute_query(&mut runner, compiled)
-                .map_err(|error| format!("failed to execute query: {}", error.message()))?;
+            let results = execute_script(&mut runner, compiled)
+                .map_err(|error| format!("failed to execute query script: {}", error.message()))?;
 
-            println!("{}", format_query_result(&result));
+            for (index, result) in results.iter().enumerate() {
+                println!("Statement {}:", index + 1);
+                match result {
+                    Some(result) => println!("{}", format_query_result(result)),
+                    None => println!("OK"),
+                }
+            }
 
             Ok(())
         }
@@ -256,7 +266,10 @@ mod tests {
     use std::{fs, path::PathBuf, process, time::SystemTime};
 
     use clap::Parser;
-    use gelite_commands::{CompiledQuery, QueryKind, apply_schema};
+    use gelite_commands::{
+        CompiledQuery, QueryKind, apply_schema, compile_query, compile_script, execute_query,
+        execute_script,
+    };
     use repl::{ExecutionRequest, TransactionCommand};
     use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
@@ -359,6 +372,33 @@ mod tests {
         assert!(error.starts_with("failed to access database "));
         assert!(!database.exists());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn query_script_keeps_autocommit_changes_and_rolls_back_the_active_transaction_on_failure() {
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+        apply_schema("type User {\n  required unique email: str\n}", &mut runner)
+            .expect("schema should apply");
+        let catalog = runner.load_schema_catalog().expect("catalog should load");
+        let script = compile_script(
+            &catalog,
+            "insert User { email := \"persisted@example.com\" }; start transaction; insert User { email := \"persisted@example.com\" }; commit;",
+        )
+        .expect("script should compile");
+
+        let error = execute_script(&mut runner, script).expect_err("duplicate insert should fail");
+        assert!(error.message().starts_with("statement 3:"));
+
+        let result = execute_query(
+            &mut runner,
+            compile_query(&catalog, "select User { email }").unwrap(),
+        )
+        .expect("autocommit insert should remain readable");
+        assert_eq!(result.rows().len(), 1);
+        assert_eq!(
+            result.rows()[0],
+            [SQLiteCellValue::Text("persisted@example.com".to_string())]
+        );
     }
 
     fn temporary_directory(label: &str) -> PathBuf {
