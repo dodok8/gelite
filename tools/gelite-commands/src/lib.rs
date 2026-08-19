@@ -193,7 +193,7 @@ pub fn execute_query(
         QueryKind::Update => runner.execute_update(&statement).map(affected_rows_result),
         QueryKind::Delete => runner.execute_delete(&statement).map(affected_rows_result),
     }
-    .map_err(|error| CommandError::new(format!("failed to execute query: {}", error.message())))
+    .map_err(|error| CommandError::new(error.message().to_string()))
 }
 
 fn affected_rows_result(affected_rows: i64) -> SQLiteQueryResult {

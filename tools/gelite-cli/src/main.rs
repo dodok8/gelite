@@ -242,7 +242,7 @@ fn run_query_command(command: QueryCommand) -> Result<(), String> {
             let compiled = compile_query(&catalog, &query_source)
                 .map_err(|error| error.message().to_string())?;
             let result = execute_query(&mut runner, compiled)
-                .map_err(|error| error.message().to_string())?;
+                .map_err(|error| format!("failed to execute query: {}", error.message()))?;
 
             println!("{}", format_query_result(&result));
 

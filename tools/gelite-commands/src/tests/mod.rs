@@ -308,5 +308,5 @@ fn query_command_reports_execution_errors() {
 
     let error = execute_query(&mut runner, query).expect_err("execution should fail");
 
-    assert_eq!(error.message(), "failed to execute query: test failure");
+    assert_eq!(error.message(), "test failure");
 }
