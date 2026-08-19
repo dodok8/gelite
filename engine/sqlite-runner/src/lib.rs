@@ -2,15 +2,15 @@
 
 //! Runner-facing contracts for executing rendered SQLite statements.
 //!
-//! This crate does not choose a concrete SQLite binding. The first contract is
-//! limited to applying rendered schema statements so command code can execute
-//! schema plans without knowing whether the backend is native, embedded, or
-//! WASM-based.
+//! This crate does not choose a concrete SQLite binding. Its contracts let
+//! command code apply rendered schemas and execute rendered data statements
+//! without knowing whether the backend is native, embedded, or WASM-based.
 
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use sqlite_query_sqlgen::SQLiteStatement;
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
 
@@ -84,6 +84,20 @@ pub enum SQLiteCellValue {
     Real(f64),
     Text(String),
     Null,
+}
+
+/// Binding-neutral execution contract for rendered data statements.
+pub trait SQLiteQueryRunner {
+    fn execute_select(
+        &mut self,
+        statement: &SQLiteStatement,
+    ) -> Result<SQLiteQueryResult, SQLiteRunnerError>;
+
+    fn execute_insert(&mut self, statement: &SQLiteStatement) -> Result<(), SQLiteRunnerError>;
+
+    fn execute_update(&mut self, statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError>;
+
+    fn execute_delete(&mut self, statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError>;
 }
 
 /// Applies rendered schema statements through a runner implementation.

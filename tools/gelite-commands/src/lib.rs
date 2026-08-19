@@ -7,7 +7,10 @@
 use query_parser::{parse_delete, parse_select, parse_update};
 use schema_model::SchemaCatalog;
 use sqlite_query_sqlgen::SQLiteStatement;
-use sqlite_runner::{SQLiteRunner, SQLiteRunnerError, apply_schema_statements};
+use sqlite_runner::{
+    SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
+    apply_schema_statements,
+};
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
 
@@ -158,6 +161,11 @@ pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQu
 
             (QueryKind::Delete, sqlite_query_sqlgen::render_delete(&plan))
         }
+        Some("start" | "commit" | "rollback") => {
+            return Err(CommandError::new(
+                "transaction commands require a database-backed interactive REPL".to_string(),
+            ));
+        }
         _ => {
             return Err(CommandError::new(
                 "query must start with `select`, `insert`, `update`, or `delete`".to_string(),
@@ -166,6 +174,59 @@ pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQu
     };
 
     Ok(CompiledQuery { kind, statement })
+}
+
+pub fn execute_query(
+    runner: &mut impl SQLiteQueryRunner,
+    query: CompiledQuery,
+) -> Result<SQLiteQueryResult, CommandError> {
+    let CompiledQuery { kind, statement } = query;
+
+    match kind {
+        QueryKind::Select => runner.execute_select(&statement),
+        QueryKind::Insert { generated_id } => runner.execute_insert(&statement).map(|()| {
+            SQLiteQueryResult::new(
+                vec!["id".to_string()],
+                vec![vec![SQLiteCellValue::Text(generated_id)]],
+            )
+        }),
+        QueryKind::Update => runner.execute_update(&statement).map(affected_rows_result),
+        QueryKind::Delete => runner.execute_delete(&statement).map(affected_rows_result),
+    }
+    .map_err(|error| CommandError::new(error.message().to_string()))
+}
+
+fn affected_rows_result(affected_rows: i64) -> SQLiteQueryResult {
+    SQLiteQueryResult::new(
+        vec!["affected_rows".to_string()],
+        vec![vec![SQLiteCellValue::Integer(affected_rows)]],
+    )
+}
+
+pub fn format_query_result(result: &SQLiteQueryResult) -> String {
+    let mut lines = Vec::new();
+
+    if !result.columns().is_empty() {
+        lines.push(result.columns().join("\t"));
+    }
+
+    lines.extend(result.rows().iter().map(|row| {
+        row.iter()
+            .map(|value| match value {
+                SQLiteCellValue::Integer(value) => value.to_string(),
+                SQLiteCellValue::Real(value) => value.to_string(),
+                SQLiteCellValue::Text(value) => value.clone(),
+                SQLiteCellValue::Null => "NULL".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\t")
+    }));
+
+    if result.rows().is_empty() {
+        lines.push("(0 rows)".to_string());
+    }
+
+    lines.join("\n")
 }
 
 #[cfg(test)]

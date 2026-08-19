@@ -154,12 +154,11 @@ snapshot이나 재현 가능한 plan artifact로 사용하면 안 됩니다.
   renderer.
 - `sqlite-runner`: native schema, query, transaction execution.
 - `tools/gelite-cli`: top-level command-line binary.
-- `tools/gelite-commands`: CLI-facing tool들이 공유하는 command orchestration.
+- `tools/gelite-commands`: 공유 query compilation 및 execution orchestration.
 - `tools/repl`: 현재 pipeline을 query 하나로 확인하는 inspection tool.
 
 ## 아직 구현되지 않은 것
 
-- `gelite query run`.
 - Migration diffing과 migration history.
 - Runtime nested result shaping.
 - HTTP API.
@@ -177,6 +176,12 @@ Database-backed REPL을 엽니다.
 
 ```sh
 cargo run -p gelite-cli -- repl --database organization.db
+```
+
+기존 Gelite database에서 query file 하나를 실행합니다.
+
+```sh
+cargo run -p gelite-cli -- query run query.geliql --database organization.db
 ```
 
 별도 문서에는 실행 가능한 예제 세 가지, REPL 입력 방법과 현재 출력 제약이

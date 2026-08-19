@@ -248,22 +248,20 @@ Pipeline:
 ```text
 read query.geliql
 -> load schema_model::SchemaCatalog from SQLite metadata
--> query_parser::parse_select
--> query_resolver::resolve_select
--> sqlite_query_plan::plan_select
--> sqlite_query_sqlgen::render_select
--> sqlite_runner::execute_select
--> result shaping
--> print rows
+-> dispatch select, insert, update, or delete
+-> compile through the shared tools/gelite-commands path
+-> execute through the binding-neutral SQLite query runner contract
+-> return a structured result
+-> print columns and rows
 ```
 
-Deferred dependencies:
+The command opens one connection, executes one data statement, and exits.
+Selects return columns and rows, inserts return the generated UUID, and updates
+and deletes return `affected_rows`. Transaction commands remain exclusive to
+the interactive database-backed REPL.
 
-- metadata-to-`SchemaCatalog` loading
-- SELECT execution in `sqlite-runner`
-- result shape reconstruction from flat rows
-
-Do not add `query run` until those contracts are tested.
+The CLI requires the database file to exist before opening it so a misspelled
+path cannot create an empty SQLite database.
 
 ## REPL
 
@@ -355,6 +353,9 @@ The browser demo should reuse engine and command-layer code where possible.
 Avoid putting language parsing or SQL generation logic in TypeScript.
 
 ## Implementation Sequence
+
+Steps 1 through 11 are implemented. WASM runner validation and the browser
+demo remain deferred.
 
 1. Add `sqlite-runner` and define binding-neutral runner traits for DDL and
    metadata inserts.
