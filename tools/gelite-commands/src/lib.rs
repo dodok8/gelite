@@ -317,38 +317,34 @@ pub fn execute_script(
     for (index, statement) in script.statements.into_iter().enumerate() {
         let number = index + 1;
         let result = match statement {
-            CompiledScriptStatement::Query(query) => match execute_query(runner, query) {
-                Ok(result) => Some(result),
-                Err(error) => {
-                    if in_transaction {
-                        let _ = runner.rollback_transaction();
-                    }
-                    return Err(CommandError::new(format!(
-                        "statement {number}: {}",
-                        error.message()
-                    )));
-                }
-            },
+            CompiledScriptStatement::Query(query) => execute_query(runner, query).map(Some),
             CompiledScriptStatement::Transaction(command) => {
                 let transaction_result = match command {
                     TransactionCommand::Start => runner.begin_transaction(),
                     TransactionCommand::Commit => runner.commit_transaction(),
                     TransactionCommand::Rollback => runner.rollback_transaction(),
                 };
-                if let Err(error) = transaction_result {
-                    if in_transaction {
-                        let _ = runner.rollback_transaction();
-                    }
-                    return Err(CommandError::new(format!(
-                        "statement {number}: {}",
-                        error.message()
-                    )));
-                }
-                in_transaction = command == TransactionCommand::Start;
-                None
+                transaction_result
+                    .map(|()| {
+                        in_transaction = command == TransactionCommand::Start;
+                        None
+                    })
+                    .map_err(|error| CommandError::new(error.message().to_string()))
             }
         };
-        results.push(result);
+
+        match result {
+            Ok(result) => results.push(result),
+            Err(error) => {
+                if in_transaction {
+                    let _ = runner.rollback_transaction();
+                }
+                return Err(CommandError::new(format!(
+                    "statement {number}: {}",
+                    error.message()
+                )));
+            }
+        }
     }
 
     Ok(results)
