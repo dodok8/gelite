@@ -21,17 +21,22 @@ a database. `schema apply` creates the initial schema in a new database.
 
 ## Query modes
 
-`query plan` reads query and schema files, then prints the rendered SQL and bind
-values without opening a database or executing the query.
+`query plan` reads query and schema files, compiles the complete script, then
+prints each data statement's rendered SQL and bind values plus transaction SQL
+without opening a database or executing the query.
 
-`query run` reads one `select`, `insert`, `update`, or `delete` statement, loads
-the schema catalog from an existing Gelite database, and executes the statement.
-It prints select columns and rows, the generated UUID for an insert, or
-`affected_rows` for an update or delete. It does not create a missing database.
+`query run` loads the schema catalog from an existing Gelite database, validates
+the complete script, then executes its statements in order on one connection.
+It prints clear statement boundaries, select columns and rows, the generated
+UUID for an insert, `affected_rows` for an update or delete, and `OK` for a
+transaction command. It does not create a missing database.
 
-Transaction commands and files containing multiple statements are rejected.
-Transaction control remains available only in an interactive database-backed
-REPL session.
+Query scripts use semicolons as statement terminators and may contain multiline
+data statements plus `start transaction`, `commit`, and `rollback`. Semicolons
+inside strings are ignored. A single data statement without a semicolon remains
+supported. Nested or unmatched transaction commands and scripts ending inside a
+transaction are rejected before execution. A runtime failure rolls back the
+active transaction while preserving earlier autocommit statements.
 
 ## REPL modes
 
@@ -54,5 +59,5 @@ commit
 rollback
 ```
 
-Transaction commands must be entered separately and are not accepted in
-compile-only or one-shot sessions.
+Transaction commands must be entered separately in the interactive REPL and are
+not accepted in compile-only REPL sessions. Query script files may include them.

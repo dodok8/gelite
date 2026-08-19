@@ -100,6 +100,15 @@ pub trait SQLiteQueryRunner {
     fn execute_delete(&mut self, statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError>;
 }
 
+/// Binding-neutral transaction contract for runners that keep one connection.
+pub trait SQLiteTransactionRunner {
+    fn begin_transaction(&mut self) -> Result<(), SQLiteRunnerError>;
+
+    fn commit_transaction(&mut self) -> Result<(), SQLiteRunnerError>;
+
+    fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError>;
+}
+
 /// Applies rendered schema statements through a runner implementation.
 ///
 /// Statement order is preserved. Raw SQL statements are sent through

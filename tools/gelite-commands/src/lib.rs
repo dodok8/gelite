@@ -4,12 +4,13 @@
 //! renderer, and runner crates into user-facing commands, but it does not own
 //! process argument parsing, stdout/stderr, or process exit codes.
 
-use query_parser::{parse_delete, parse_select, parse_update};
+use query_ast::TransactionCommand;
+use query_parser::{QueryScriptStatement, parse_delete, parse_script, parse_select, parse_update};
 use schema_model::SchemaCatalog;
 use sqlite_query_sqlgen::SQLiteStatement;
 use sqlite_runner::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
-    apply_schema_statements,
+    SQLiteTransactionRunner, apply_schema_statements,
 };
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
@@ -117,6 +118,116 @@ pub struct CompiledQuery {
     pub statement: SQLiteStatement,
 }
 
+pub struct CompiledScript {
+    statements: Vec<CompiledScriptStatement>,
+}
+
+impl CompiledScript {
+    pub fn statements(&self) -> &[CompiledScriptStatement] {
+        &self.statements
+    }
+}
+
+pub enum CompiledScriptStatement {
+    Query(CompiledQuery),
+    Transaction(TransactionCommand),
+}
+
+impl CompiledScriptStatement {
+    pub fn sql(&self) -> &str {
+        match self {
+            Self::Query(query) => query.statement.sql(),
+            Self::Transaction(TransactionCommand::Start) => "BEGIN TRANSACTION",
+            Self::Transaction(TransactionCommand::Commit) => "COMMIT",
+            Self::Transaction(TransactionCommand::Rollback) => "ROLLBACK",
+        }
+    }
+
+    pub fn statement(&self) -> Option<&SQLiteStatement> {
+        match self {
+            Self::Query(query) => Some(&query.statement),
+            Self::Transaction(_) => None,
+        }
+    }
+}
+
+pub fn compile_script(
+    catalog: &SchemaCatalog,
+    source: &str,
+) -> Result<CompiledScript, CommandError> {
+    let script = parse_script(source)
+        .map_err(|error| CommandError::new(format!("failed to parse query script: {error:#?}")))?;
+    let mut statements = Vec::with_capacity(script.statements().len());
+    let mut transaction_start = None;
+
+    for (index, statement) in script.statements().iter().enumerate() {
+        let number = index + 1;
+        let span = statement.span().start();
+        let compiled = match statement {
+            QueryScriptStatement::Query { source, .. } => compile_query(catalog, source)
+                .map(CompiledScriptStatement::Query)
+                .map_err(|error| {
+                    CommandError::new(format!(
+                        "statement {number} at line {}, column {}: {}",
+                        span.line(),
+                        span.column(),
+                        error.message()
+                    ))
+                })?,
+            QueryScriptStatement::Transaction { command, .. } => {
+                match command {
+                    TransactionCommand::Start if transaction_start.is_some() => {
+                        return Err(script_transaction_error(
+                            number,
+                            span.line(),
+                            span.column(),
+                            "nested transactions are not supported",
+                        ));
+                    }
+                    TransactionCommand::Start => transaction_start = Some((number, span)),
+                    TransactionCommand::Commit | TransactionCommand::Rollback
+                        if transaction_start.is_none() =>
+                    {
+                        return Err(script_transaction_error(
+                            number,
+                            span.line(),
+                            span.column(),
+                            "no transaction is active",
+                        ));
+                    }
+                    TransactionCommand::Commit | TransactionCommand::Rollback => {
+                        transaction_start = None;
+                    }
+                }
+                CompiledScriptStatement::Transaction(*command)
+            }
+        };
+        statements.push(compiled);
+    }
+
+    if let Some((number, span)) = transaction_start {
+        return Err(script_transaction_error(
+            number,
+            span.line(),
+            span.column(),
+            "transaction is still active at end of script",
+        ));
+    }
+
+    Ok(CompiledScript { statements })
+}
+
+fn script_transaction_error(
+    number: usize,
+    line: usize,
+    column: usize,
+    message: &str,
+) -> CommandError {
+    CommandError::new(format!(
+        "statement {number} at line {line}, column {column}: {message}"
+    ))
+}
+
 pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQuery, CommandError> {
     let (kind, statement) = match source.split_whitespace().next() {
         Some("select") => {
@@ -194,6 +305,49 @@ pub fn execute_query(
         QueryKind::Delete => runner.execute_delete(&statement).map(affected_rows_result),
     }
     .map_err(|error| CommandError::new(error.message().to_string()))
+}
+
+pub fn execute_script(
+    runner: &mut (impl SQLiteQueryRunner + SQLiteTransactionRunner),
+    script: CompiledScript,
+) -> Result<Vec<Option<SQLiteQueryResult>>, CommandError> {
+    let mut results = Vec::with_capacity(script.statements.len());
+    let mut in_transaction = false;
+
+    for (index, statement) in script.statements.into_iter().enumerate() {
+        let number = index + 1;
+        let result = match statement {
+            CompiledScriptStatement::Query(query) => execute_query(runner, query).map(Some),
+            CompiledScriptStatement::Transaction(command) => {
+                let transaction_result = match command {
+                    TransactionCommand::Start => runner.begin_transaction(),
+                    TransactionCommand::Commit => runner.commit_transaction(),
+                    TransactionCommand::Rollback => runner.rollback_transaction(),
+                };
+                transaction_result
+                    .map(|()| {
+                        in_transaction = command == TransactionCommand::Start;
+                        None
+                    })
+                    .map_err(|error| CommandError::new(error.message().to_string()))
+            }
+        };
+
+        match result {
+            Ok(result) => results.push(result),
+            Err(error) => {
+                if in_transaction {
+                    let _ = runner.rollback_transaction();
+                }
+                return Err(CommandError::new(format!(
+                    "statement {number}: {}",
+                    error.message()
+                )));
+            }
+        }
+    }
+
+    Ok(results)
 }
 
 fn affected_rows_result(affected_rows: i64) -> SQLiteQueryResult {

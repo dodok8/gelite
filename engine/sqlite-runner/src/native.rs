@@ -16,6 +16,7 @@ use sqlite_schema_plan::SQLiteValuePlan;
 
 use crate::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
+    SQLiteTransactionRunner,
 };
 
 /// Native SQLite runner backed by an owned SQLite connection.
@@ -642,5 +643,19 @@ impl SQLiteQueryRunner for NativeSQLiteRunner {
         statement: &sqlite_query_sqlgen::SQLiteStatement,
     ) -> Result<i64, SQLiteRunnerError> {
         NativeSQLiteRunner::execute_delete(self, statement)
+    }
+}
+
+impl SQLiteTransactionRunner for NativeSQLiteRunner {
+    fn begin_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        NativeSQLiteRunner::begin_transaction(self)
+    }
+
+    fn commit_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        NativeSQLiteRunner::commit_transaction(self)
+    }
+
+    fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        NativeSQLiteRunner::rollback_transaction(self)
     }
 }

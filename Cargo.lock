@@ -250,6 +250,7 @@ dependencies = [
 name = "gelite-commands"
 version = "0.1.0"
 dependencies = [
+ "query-ast",
  "query-parser",
  "query-resolver",
  "schema-model",

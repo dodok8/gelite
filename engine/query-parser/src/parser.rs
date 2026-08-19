@@ -1,7 +1,7 @@
 use crate::{Keyword, LexError, Span, Token, TokenKind, lex};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use alloc::{string::String, vec};
+use alloc::{string::String, string::ToString, vec};
 use query_ast::{
     ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, DeleteQuery,
     Expr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape,
@@ -25,6 +25,107 @@ fn parse_select_tokens(tokens: &[Token]) -> Result<query_ast::SelectQuery, Parse
 pub fn parse_transaction_command(input: &str) -> Result<TransactionCommand, ParseError> {
     let tokens = lex(input).map_err(ParseError::from)?;
     Parser::new(&tokens).parse_transaction_command()
+}
+
+/// Parses a query script into data statements and transaction commands.
+///
+/// A single statement may omit its trailing semicolon for compatibility with
+/// the original one-shot CLI. Multi-statement scripts must end every statement
+/// with a semicolon.
+pub fn parse_script(input: &str) -> Result<QueryScript, ParseError> {
+    let tokens = lex(input).map_err(ParseError::from)?;
+    let mut statements = Vec::new();
+    let mut statement_start = 0;
+    let mut saw_semicolon = false;
+
+    for (index, token) in tokens.iter().enumerate() {
+        if token.kind() != &TokenKind::Semicolon {
+            continue;
+        }
+
+        saw_semicolon = true;
+        push_script_statement(input, &tokens[statement_start..index], &mut statements)?;
+        statement_start = index + 1;
+    }
+
+    if statement_start < tokens.len() {
+        if saw_semicolon {
+            return Err(ParseError::new(
+                ParseErrorKind::UnexpectedEof { expected: ";" },
+                tokens.last().map(Token::span),
+            ));
+        }
+        push_script_statement(input, &tokens[statement_start..], &mut statements)?;
+    }
+
+    if statements.is_empty() {
+        return Err(ParseError::new(
+            ParseErrorKind::UnexpectedEof {
+                expected: "query statement",
+            },
+            None,
+        ));
+    }
+
+    Ok(QueryScript { statements })
+}
+
+fn push_script_statement(
+    input: &str,
+    tokens: &[Token],
+    statements: &mut Vec<QueryScriptStatement>,
+) -> Result<(), ParseError> {
+    let Some(first) = tokens.first() else {
+        return Ok(());
+    };
+    let last = tokens.last().unwrap();
+    let span = Span::new(first.span().start(), last.span().end());
+    let statement = match first.kind() {
+        TokenKind::Keyword(Keyword::Start | Keyword::Commit | Keyword::Rollback) => {
+            QueryScriptStatement::Transaction {
+                command: Parser::new(tokens).parse_transaction_command()?,
+                span,
+            }
+        }
+        _ => QueryScriptStatement::Query {
+            source: input[span.start().byte()..span.end().byte()].to_string(),
+            span,
+        },
+    };
+
+    statements.push(statement);
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryScript {
+    statements: Vec<QueryScriptStatement>,
+}
+
+impl QueryScript {
+    pub fn statements(&self) -> &[QueryScriptStatement] {
+        &self.statements
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryScriptStatement {
+    Query {
+        source: String,
+        span: Span,
+    },
+    Transaction {
+        command: TransactionCommand,
+        span: Span,
+    },
+}
+
+impl QueryScriptStatement {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Query { span, .. } | Self::Transaction { span, .. } => *span,
+        }
+    }
 }
 
 /// Parser error with an optional source span.
@@ -979,6 +1080,7 @@ fn token_kind_description(token_kind: &TokenKind) -> &'static str {
         TokenKind::LParen => "(",
         TokenKind::RParen => ")",
         TokenKind::Comma => ",",
+        TokenKind::Semicolon => ";",
         TokenKind::ColonEq => ":=",
         TokenKind::Colon => ":",
         TokenKind::Dot => ".",
