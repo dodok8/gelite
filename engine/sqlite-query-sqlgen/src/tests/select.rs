@@ -144,7 +144,6 @@ fn sqlite_sqlgen_maps_rendered_columns_to_nested_result_shape() {
     let statement = render_select(&sqlite_query_plan::plan_select(&ir));
     let shape = statement
         .result_shape()
-        .clone()
         .expect("rendered select should retain its result shape");
 
     assert_eq!(shape.identity_column_index(), None);
@@ -157,7 +156,6 @@ fn sqlite_sqlgen_maps_rendered_columns_to_nested_result_shape() {
 
     let author_shape = author
         .nested_shape()
-        .clone()
         .expect("author should retain a nested result shape");
     assert_eq!(author_shape.identity_column_index(), Some(1));
     assert_eq!(author_shape.fields()[0].output_name(), "name");

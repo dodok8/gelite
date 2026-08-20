@@ -68,13 +68,11 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
         .map(|value| value.output_name().map(str::to_string))
         .collect();
 
-    let result_shape = Some(render_result_shape(plan.result_shape()));
-
     SQLiteStatement {
         sql: clauses.join(" "),
         bind_values,
         output_names,
-        result_shape,
+        result_shape: Some(render_result_shape(plan.result_shape())),
     }
 }
 
@@ -104,7 +102,6 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
             values.join(", ")
         ),
         bind_values,
-        None,
     )
 }
 
@@ -144,7 +141,7 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement::new(sql, bind_values, None)
+    SQLiteStatement::new(sql, bind_values)
 }
 
 fn render_assignment_value(
@@ -186,7 +183,7 @@ pub fn render_delete(plan: &SQLiteDeletePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement::new(sql, bind_values, None)
+    SQLiteStatement::new(sql, bind_values)
 }
 
 fn append_mutation_filter(
@@ -533,17 +530,18 @@ pub struct SQLiteStatement {
 }
 
 impl SQLiteStatement {
-    pub fn new(
-        sql: impl Into<String>,
-        bind_values: Vec<SQLiteBindValue>,
-        result_shape: Option<SQLiteResultShape>,
-    ) -> Self {
+    pub fn new(sql: impl Into<String>, bind_values: Vec<SQLiteBindValue>) -> Self {
         Self {
             sql: sql.into(),
             bind_values,
             output_names: vec![],
-            result_shape,
+            result_shape: None,
         }
+    }
+
+    pub fn with_result_shape(mut self, result_shape: SQLiteResultShape) -> Self {
+        self.result_shape = Some(result_shape);
+        self
     }
 
     pub fn sql(&self) -> &str {
@@ -558,8 +556,8 @@ impl SQLiteStatement {
         &self.output_names
     }
 
-    pub fn result_shape(&self) -> &Option<SQLiteResultShape> {
-        &self.result_shape
+    pub fn result_shape(&self) -> Option<&SQLiteResultShape> {
+        self.result_shape.as_ref()
     }
 }
 
@@ -573,13 +571,13 @@ pub enum SQLiteBindValue {
     Null,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SQLiteResultShape {
     identity_column_index: Option<usize>,
     fields: Vec<SQLiteResultField>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SQLiteResultField {
     output_name: String,
     column_index: Option<usize>,
@@ -602,13 +600,54 @@ impl SQLiteResultField {
     pub fn column_index(&self) -> Option<usize> {
         self.column_index
     }
-    pub fn nested_shape(&self) -> &Option<SQLiteResultShape> {
-        &self.nested_shape
+    pub fn nested_shape(&self) -> Option<&SQLiteResultShape> {
+        self.nested_shape.as_ref()
     }
 }
 
 fn render_result_shape(plan: &SQLiteResultShapePlan) -> SQLiteResultShape {
-    todo!("Not Implemented!")
+    let mut next_column_index = 0;
+
+    render_result_shape_from(plan, &mut next_column_index)
+}
+
+fn render_result_shape_from(
+    plan: &SQLiteResultShapePlan,
+    next_column_index: &mut usize,
+) -> SQLiteResultShape {
+    let identity_column_index = plan.identity_value().map(|_| {
+        let index = *next_column_index;
+        *next_column_index += 1;
+        index
+    });
+
+    let fields = plan
+        .fields()
+        .iter()
+        .map(|field| match (field.value(), field.nested_shape()) {
+            (Some(_), None) => {
+                let column_index = *next_column_index;
+                *next_column_index += 1;
+
+                SQLiteResultField {
+                    output_name: field.output_name().to_string(),
+                    column_index: Some(column_index),
+                    nested_shape: None,
+                }
+            }
+            (None, Some(nested_plan)) => SQLiteResultField {
+                output_name: field.output_name().to_string(),
+                column_index: None,
+                nested_shape: Some(render_result_shape_from(nested_plan, next_column_index)),
+            },
+            _ => unreachable!("result field must contain either a value or a nested shape"),
+        })
+        .collect();
+
+    SQLiteResultShape {
+        identity_column_index,
+        fields,
+    }
 }
 
 #[cfg(test)]

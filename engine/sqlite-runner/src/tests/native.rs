@@ -491,20 +491,20 @@ fn native_runner_can_execute_select_statement_with_bind_values() {
 #[test]
 fn native_runner_shapes_present_and_missing_single_links() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
-    let statement = SQLiteStatement::with_result_shape(
+    let statement = SQLiteStatement::new(
         "SELECT 'Draft', 'user-1', 'alice@example.com' UNION ALL SELECT 'Orphaned', NULL, NULL",
         vec![],
-        SQLiteResultShape::new(
-            None,
-            vec![
-                SQLiteResultField::value("title", 0),
-                SQLiteResultField::nested(
-                    "author",
-                    SQLiteResultShape::new(Some(1), vec![SQLiteResultField::value("email", 2)]),
-                ),
-            ],
-        ),
-    );
+    )
+    .with_result_shape(SQLiteResultShape::new(
+        None,
+        vec![
+            SQLiteResultField::value("title", 0),
+            SQLiteResultField::nested(
+                "author",
+                SQLiteResultShape::new(Some(1), vec![SQLiteResultField::value("email", 2)]),
+            ),
+        ],
+    ));
 
     let result = runner
         .execute_select(&statement)
