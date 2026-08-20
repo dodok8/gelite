@@ -19,9 +19,9 @@ use alloc::vec::Vec;
 use sqlite_query_plan::{
     SQLiteArithmeticOp, SQLiteAssignmentValue, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
     SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInRhs, SQLiteInsertPlan, SQLiteJoin,
-    SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteSelectPlan,
-    SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr,
-    SQLiteWhereExpr,
+    SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteResultShapePlan,
+    SQLiteSelectPlan, SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan,
+    SQLiteValueExpr, SQLiteWhereExpr,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -68,10 +68,13 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
         .map(|value| value.output_name().map(str::to_string))
         .collect();
 
+    let result_shape = Some(render_result_shape(plan.result_shape()));
+
     SQLiteStatement {
         sql: clauses.join(" "),
         bind_values,
         output_names,
+        result_shape,
     }
 }
 
@@ -101,6 +104,7 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
             values.join(", ")
         ),
         bind_values,
+        None,
     )
 }
 
@@ -140,7 +144,7 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement::new(sql, bind_values)
+    SQLiteStatement::new(sql, bind_values, None)
 }
 
 fn render_assignment_value(
@@ -182,7 +186,7 @@ pub fn render_delete(plan: &SQLiteDeletePlan) -> SQLiteStatement {
         &mut bind_values,
     );
 
-    SQLiteStatement::new(sql, bind_values)
+    SQLiteStatement::new(sql, bind_values, None)
 }
 
 fn append_mutation_filter(
@@ -525,14 +529,20 @@ pub struct SQLiteStatement {
     sql: String,
     bind_values: Vec<SQLiteBindValue>,
     output_names: Vec<Option<String>>,
+    result_shape: Option<SQLiteResultShape>,
 }
 
 impl SQLiteStatement {
-    pub fn new(sql: impl Into<String>, bind_values: Vec<SQLiteBindValue>) -> Self {
+    pub fn new(
+        sql: impl Into<String>,
+        bind_values: Vec<SQLiteBindValue>,
+        result_shape: Option<SQLiteResultShape>,
+    ) -> Self {
         Self {
             sql: sql.into(),
             bind_values,
             output_names: vec![],
+            result_shape,
         }
     }
 
@@ -547,6 +557,10 @@ impl SQLiteStatement {
     pub fn output_names(&self) -> &[Option<String>] {
         &self.output_names
     }
+
+    pub fn result_shape(&self) -> &Option<SQLiteResultShape> {
+        &self.result_shape
+    }
 }
 
 /// Bind value produced while rendering SQL placeholders.
@@ -557,6 +571,44 @@ pub enum SQLiteBindValue {
     Float64(f64),
     Bool(bool),
     Null,
+}
+
+#[derive(Debug, Clone)]
+pub struct SQLiteResultShape {
+    identity_column_index: Option<usize>,
+    fields: Vec<SQLiteResultField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SQLiteResultField {
+    output_name: String,
+    column_index: Option<usize>,
+    nested_shape: Option<SQLiteResultShape>,
+}
+
+impl SQLiteResultShape {
+    pub fn identity_column_index(&self) -> Option<usize> {
+        self.identity_column_index
+    }
+    pub fn fields(&self) -> &[SQLiteResultField] {
+        &self.fields
+    }
+}
+
+impl SQLiteResultField {
+    pub fn output_name(&self) -> &str {
+        &self.output_name
+    }
+    pub fn column_index(&self) -> Option<usize> {
+        self.column_index
+    }
+    pub fn nested_shape(&self) -> &Option<SQLiteResultShape> {
+        &self.nested_shape
+    }
+}
+
+fn render_result_shape(plan: &SQLiteResultShapePlan) -> SQLiteResultShape {
+    todo!("Not Implemented!")
 }
 
 #[cfg(test)]
