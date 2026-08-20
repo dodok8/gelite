@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+use sqlite_query_sqlgen::{SQLiteResultField, SQLiteResultShape, SQLiteStatement};
 use sqlite_schema_plan::SQLiteValuePlan;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -484,6 +485,50 @@ fn native_runner_can_execute_select_statement_with_bind_values() {
     assert_eq!(
         result.rows(),
         &[vec![crate::SQLiteCellValue::Text("Hello".to_string())]]
+    );
+}
+
+#[test]
+fn native_runner_shapes_present_and_missing_single_links() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement = SQLiteStatement::with_result_shape(
+        "SELECT 'Draft', 'user-1', 'alice@example.com' UNION ALL SELECT 'Orphaned', NULL, NULL",
+        vec![],
+        SQLiteResultShape::new(
+            None,
+            vec![
+                SQLiteResultField::value("title", 0),
+                SQLiteResultField::nested(
+                    "author",
+                    SQLiteResultShape::new(Some(1), vec![SQLiteResultField::value("email", 2)]),
+                ),
+            ],
+        ),
+    );
+
+    let result = runner
+        .execute_select(&statement)
+        .expect("select should shape single links");
+
+    assert_eq!(
+        result.columns(),
+        &["title".to_string(), "author".to_string()]
+    );
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![
+                crate::SQLiteCellValue::Text("Draft".to_string()),
+                crate::SQLiteCellValue::Object(vec![(
+                    "email".to_string(),
+                    crate::SQLiteCellValue::Text("alice@example.com".to_string()),
+                )]),
+            ],
+            vec![
+                crate::SQLiteCellValue::Text("Orphaned".to_string()),
+                crate::SQLiteCellValue::Null,
+            ],
+        ]
     );
 }
 

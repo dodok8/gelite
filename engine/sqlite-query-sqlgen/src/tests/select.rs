@@ -139,6 +139,30 @@ fn sqlite_sqlgen_can_render_selected_single_link_join() {
 }
 
 #[test]
+fn sqlite_sqlgen_maps_rendered_columns_to_nested_result_shape() {
+    let ir = post_query_with_shape(vec![post_title_shape_field(), post_author_shape_field()]);
+    let statement = render_select(&sqlite_query_plan::plan_select(&ir));
+    let shape = statement
+        .result_shape()
+        .expect("rendered select should retain its result shape");
+
+    assert_eq!(shape.identity_column_index(), None);
+    assert_eq!(shape.fields()[0].output_name(), "title");
+    assert_eq!(shape.fields()[0].column_index(), Some(0));
+
+    let author = &shape.fields()[1];
+    assert_eq!(author.output_name(), "author");
+    assert_eq!(author.column_index(), None);
+
+    let author_shape = author
+        .nested_shape()
+        .expect("author should retain a nested result shape");
+    assert_eq!(author_shape.identity_column_index(), Some(1));
+    assert_eq!(author_shape.fields()[0].output_name(), "name");
+    assert_eq!(author_shape.fields()[0].column_index(), Some(2));
+}
+
+#[test]
 fn sqlite_sqlgen_can_render_root_scalar_equals_string_filter() {
     let filter = query_ir::Expr::Compare(query_ir::CompareExpr::new(
         post_title_path_value(),
