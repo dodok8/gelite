@@ -237,6 +237,11 @@ pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQu
                 CommandError::new(format!("failed to resolve query: {error:#?}"))
             })?;
             let plan = sqlite_query_plan::plan_select(&resolved);
+            if !plan.follow_up_fetches().is_empty() {
+                return Err(CommandError::new(
+                    "selected multi-link execution is not supported yet".to_string(),
+                ));
+            }
 
             (QueryKind::Select, sqlite_query_sqlgen::render_select(&plan))
         }
