@@ -23,7 +23,9 @@ a database. `schema apply` creates the initial schema in a new database.
 
 `query plan` reads query and schema files, compiles the complete script, then
 prints each data statement's rendered SQL and bind values plus transaction SQL
-without opening a database or executing the query.
+without opening a database or executing the query. Multi-link selects also
+report how many follow-up queries will be rendered after parent identities are
+known at execution time.
 
 `query run` loads the schema catalog from an existing Gelite database, validates
 the complete script, then executes its statements in order on one connection.

@@ -96,10 +96,10 @@ impl ReplRuntime<'_> {
                 }
             }
             None => {
-                let ExecutionRequest::Query(CompiledQuery { statement, .. }) = request else {
+                let ExecutionRequest::Query(query) = request else {
                     unreachable!("transaction commands are rejected without an executor")
                 };
-                println!("{}", statement.sql());
+                print_compiled_query(&query, false);
             }
         }
 
@@ -310,8 +310,7 @@ fn compile_input(
         _ => compile_query(catalog, input)
             .map(|compiled| {
                 if debug {
-                    println!("SQL:\n{}", compiled.statement.sql());
-                    println!("Bind values: {:?}", compiled.statement.bind_values());
+                    print_compiled_query(&compiled, true);
                 }
                 ExecutionRequest::Query(compiled)
             })
@@ -319,6 +318,21 @@ fn compile_input(
                 eprintln!("{}", error.message());
                 ReplError
             }),
+    }
+}
+
+fn print_compiled_query(query: &CompiledQuery, debug: bool) {
+    if debug {
+        println!("SQL:\n{}", query.statement.sql());
+        println!("Bind values: {:?}", query.statement.bind_values());
+    } else {
+        println!("{}", query.statement.sql());
+    }
+    let follow_up_count = query.deferred_follow_up_count();
+    if follow_up_count > 0 {
+        println!(
+            "Deferred follow-up queries: {follow_up_count} (rendered after parent identities are known)"
+        );
     }
 }
 

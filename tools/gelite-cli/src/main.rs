@@ -218,6 +218,12 @@ fn run_query_command(command: QueryCommand) -> Result<(), String> {
                 if let Some(statement) = statement.statement() {
                     println!("Bind values: {:?}", statement.bind_values());
                 }
+                let follow_up_count = statement.deferred_follow_up_count();
+                if follow_up_count > 0 {
+                    println!(
+                        "Deferred follow-up queries: {follow_up_count} (rendered after parent identities are known)"
+                    );
+                }
             }
 
             Ok(())

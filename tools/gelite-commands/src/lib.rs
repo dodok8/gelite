@@ -128,6 +128,20 @@ impl CompiledQuery {
             select_plan: None,
         }
     }
+
+    pub fn deferred_follow_up_count(&self) -> usize {
+        self.select_plan
+            .as_deref()
+            .map(|plan| count_follow_ups(plan.follow_up_fetches()))
+            .unwrap_or(0)
+    }
+}
+
+fn count_follow_ups(fetches: &[SQLiteFollowUpFetchPlan]) -> usize {
+    fetches
+        .iter()
+        .map(|fetch| 1 + count_follow_ups(fetch.follow_up_fetches()))
+        .sum()
 }
 
 pub struct CompiledScript {
@@ -159,6 +173,13 @@ impl CompiledScriptStatement {
         match self {
             Self::Query(query) => Some(&query.statement),
             Self::Transaction(_) => None,
+        }
+    }
+
+    pub fn deferred_follow_up_count(&self) -> usize {
+        match self {
+            Self::Query(query) => query.deferred_follow_up_count(),
+            Self::Transaction(_) => 0,
         }
     }
 }
