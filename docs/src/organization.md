@@ -80,17 +80,60 @@ insert Employee {
 }
 ```
 
-Multi-link mutation syntax is not implemented yet. Populate the independent
-`Department.employees` link from the employee rows with SQLite, then return to
-the database-backed REPL:
+Populate the independent `Department.employees` links with Gelite updates. The
+outer filter selects the department and the nested select chooses the employee
+targets:
 
-```sh
-sqlite3 organization.db 'INSERT INTO department__employees (source_id, target_id) SELECT department_id, id FROM employee'
-cargo run -p gelite-cli -- repl --database organization.db
+```text
+update Department
+filter .code = "INVESTIGATION"
+set {
+  employees += (
+    select Employee { id }
+    filter .department.code = "INVESTIGATION"
+  )
+}
+```
+
+```text
+update Department
+filter .code = "ARCHIVE"
+set {
+  employees += (
+    select Employee { id }
+    filter .department.code = "ARCHIVE"
+  )
+}
 ```
 
 The engine does not infer inverse links: `Employee.department` and
 `Department.employees` are separate stored links in this example.
+
+Use `-=` to remove selected relationships. Adding an existing relationship or
+removing a missing one reports `affected_rows` as `0`. This pair removes and
+then restores the archive employee used below:
+
+```text
+update Department
+filter .code = "ARCHIVE"
+set {
+  employees -= (
+    select Employee { id }
+    filter .employee_no = "MG-002"
+  )
+}
+```
+
+```text
+update Department
+filter .code = "ARCHIVE"
+set {
+  employees += (
+    select Employee { id }
+    filter .employee_no = "MG-002"
+  )
+}
+```
 
 ## Query a multi link
 

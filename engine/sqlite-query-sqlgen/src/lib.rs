@@ -5,10 +5,9 @@
 //! values. It does not resolve schema names, choose joins, or inspect query AST
 //! nodes. Those responsibilities belong to earlier compiler stages.
 //!
-//! The renderer currently emits select statements plus insert and update
-//! statements with literal or supported single-link select assignments.
-//! Literal values are emitted as bind placeholders instead of being
-//! interpolated into SQL strings.
+//! The renderer emits selects, object mutations, and set-based multi-link
+//! add/remove statements. Literal values are emitted as bind placeholders
+//! instead of being interpolated into SQL strings.
 
 extern crate alloc;
 

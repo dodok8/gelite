@@ -59,8 +59,9 @@ Gelite의 현재 범위는 다음과 같습니다.
 
 - query compilation: `select`, `insert`, `update`, `delete` parsing, semantic
   resolution, SQLite query planning, SQL rendering
-- nested single-link result shaping을 포함한 현재 `select`, `insert`, `update`,
-  `delete` subset의 native query execution
+- explicit multi-link add/remove mutation과 nested single/multi-link result
+  shaping을 포함한 현재 `select`, `insert`, `update`, `delete` subset의 native
+  query execution
 - 사전 compile과 explicit transaction validation을 적용하는 semicolon 기반
   multi-statement query file
 - database-backed interactive REPL의 explicit `start transaction`, `commit`,
@@ -249,4 +250,5 @@ foundation에 기대하는 기준을 유지해야 합니다.
 - direct AST-to-SQL shortcut 금지
 - 현재 있는 것과 아직 없는 것을 정확히 말하는 documentation
 
-다음 기술 목표는 선택된 multi link를 fetch하고 shape하는 것입니다.
+선택된 multi link fetching과 shaping, explicit add/remove mutation은 현재
+query pipeline에서 지원합니다.
