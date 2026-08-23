@@ -114,7 +114,7 @@ fn sqlite_sqlgen_renders_batched_multi_link_add_with_conflict_noop() {
 
     assert_eq!(
         statement.sql(),
-        "INSERT INTO \"user__posts\" (\"source_id\", \"target_id\") SELECT \"source\".\"id\", \"target\".\"id\" FROM (SELECT \"root\".\"id\" FROM \"user\" AS \"root\" WHERE \"root\".\"name\" = ?) AS \"source\" CROSS JOIN (SELECT \"root\".\"id\" FROM \"post\" AS \"root\" WHERE \"root\".\"title\" = ?) AS \"target\" ON CONFLICT (\"source_id\", \"target_id\") DO NOTHING"
+        "INSERT INTO \"user__posts\" (\"source_id\", \"target_id\") SELECT \"source\".\"id\", \"target\".\"id\" FROM (SELECT \"root\".\"id\" FROM \"user\" AS \"root\" WHERE \"root\".\"name\" = ?) AS \"source\" CROSS JOIN (SELECT \"root\".\"id\" FROM \"post\" AS \"root\" WHERE \"root\".\"title\" = ?) AS \"target\" WHERE true ON CONFLICT (\"source_id\", \"target_id\") DO NOTHING"
     );
     assert_eq!(
         statement.bind_values(),

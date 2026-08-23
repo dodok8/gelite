@@ -208,7 +208,7 @@ fn render_multi_link_mutation(plan: &SQLiteMultiLinkMutationPlan) -> SQLiteState
 
     let sql = match plan.operation() {
         SQLiteMultiLinkMutationOp::Add => format!(
-            "INSERT INTO {} ({}, {}) SELECT {}, {} FROM ({}) AS {} CROSS JOIN ({}) AS {} ON CONFLICT ({}, {}) DO NOTHING",
+            "INSERT INTO {} ({}, {}) SELECT {}, {} FROM ({}) AS {} CROSS JOIN ({}) AS {} WHERE true ON CONFLICT ({}, {}) DO NOTHING",
             quote_identifier(plan.join_table_name()),
             quote_identifier(plan.source_column()),
             quote_identifier(plan.target_column()),
