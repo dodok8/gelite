@@ -81,7 +81,7 @@ impl SQLiteQueryResult {
         }
     }
 
-    pub(crate) fn with_identities(
+    pub fn with_identities(
         columns: Vec<String>,
         rows: Vec<Vec<SQLiteCellValue>>,
         parent_identities: Vec<Option<String>>,
@@ -103,12 +103,20 @@ impl SQLiteQueryResult {
         &self.rows
     }
 
+    pub fn rows_mut(&mut self) -> &mut [Vec<SQLiteCellValue>] {
+        &mut self.rows
+    }
+
     pub fn parent_identities(&self) -> &[Option<String>] {
         &self.parent_identities
     }
 
     pub fn follow_up_parent_identities(&self) -> &[Vec<Option<String>>] {
         &self.follow_up_parent_identities
+    }
+
+    pub fn into_parent_rows(self) -> Vec<(Option<String>, Vec<SQLiteCellValue>)> {
+        self.parent_identities.into_iter().zip(self.rows).collect()
     }
 }
 
