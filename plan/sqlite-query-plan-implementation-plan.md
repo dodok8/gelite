@@ -842,14 +842,16 @@ Deferred result shaping:
 - reconstruct nested objects instead of returning one flat row
 - use synthesized identities for optional-object null detection and object
   deduplication
-- fetch and shape selected multi-link fields
+- execute follow-up fetches and shape selected multi-link fields
 
-### Selected link detection relies on child shape presence
+### Selected link detection uses child shape and cardinality
 
 Current rule:
 
-- a `ResolvedShapeField` with `child_shape().is_some()` is treated as a selected
-  single-link field
+- a `ResolvedShapeField` with `child_shape().is_some()` and required or optional
+  cardinality is treated as a selected single-link field
+- a field with child shape and many cardinality is planned as a multi-link
+  follow-up fetch
 - a field without child shape is treated as a scalar selected value
 
 Why this is temporary:
@@ -857,7 +859,8 @@ Why this is temporary:
 - `ResolvedShapeField` currently exposes a `FieldRef`, but `FieldRef` does not
   identify whether the field is scalar or link.
 - This rule depends on resolver validation preventing child shapes on scalar
-  fields and preventing missing child shapes on selected link fields.
+  fields and preventing missing child shapes on selected link fields, while
+  cardinality distinguishes single-link and multi-link fields.
 
 Later replacement:
 

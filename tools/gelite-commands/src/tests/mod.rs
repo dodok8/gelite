@@ -204,6 +204,30 @@ fn query_command_compiles_select() {
 }
 
 #[test]
+fn query_command_rejects_unimplemented_multi_link_execution() {
+    let catalog = schema_parser::parse_schema(
+        "type User {
+  multi link posts: Post
+}
+
+type Post {
+  required title: str
+}",
+    )
+    .expect("multi-link schema should parse");
+
+    let error = match compile_query(&catalog, "select User { posts: { title } }") {
+        Ok(_) => panic!("multi-link execution should remain unsupported"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error.message(),
+        "selected multi-link execution is not supported yet"
+    );
+}
+
+#[test]
 fn query_command_compiles_insert_with_generated_id() {
     let compiled = compile_query(
         &blog_catalog(),

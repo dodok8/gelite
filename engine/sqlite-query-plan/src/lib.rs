@@ -12,8 +12,8 @@
 //! The current planner handles select queries plus insert and update assignments
 //! from literals or supported single-link selects. Select and update filters
 //! support direct scalar columns and path traversal through single links.
-//! Multi-link planning and follow-up fetch plans are specified but not
-//! implemented yet.
+//! Selected multi links are lowered to follow-up fetch plans. Rendering and
+//! executing those follow-ups remain responsibilities of later layers.
 
 extern crate alloc;
 
@@ -28,10 +28,20 @@ use schema_model::{Cardinality, FieldRef, ObjectTypeRef};
 /// Lowers a resolved select query to a structured SQLite select plan.
 pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     let root_object_type = ir.root_object_type().clone();
+    let root_identity_required = ir.shape().items().iter().any(|item| {
+        matches!(
+            item,
+            query_ir::ResolvedShapeItem::Field(field)
+                if field.cardinality() == Cardinality::Many
+        )
+    });
 
     // SELECT values and result-shape refs must assign computed aliases in the
     // same shape traversal order so the shaper reads the rendered SQL columns.
-    let selected_column_names = selected_field_column_names(ir.shape());
+    let mut selected_column_names = selected_field_column_names(ir.shape());
+    if root_identity_required {
+        selected_column_names.insert(0, "id".to_string());
+    }
     let mut select_aliases = SQLiteComputedAliasAllocator::new(selected_column_names.clone());
     let mut join_aliases = SQLiteJoinAliasAllocator::new(selected_link_aliases(ir.shape()));
     let root_path_aliases = root_path_aliases(ir);
@@ -47,15 +57,23 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         &mut select_aliases,
         &mut join_aliases,
     );
-    let selected_values = planned_shape_values.values;
+    let mut selected_values = planned_shape_values.values;
+    if root_identity_required {
+        selected_values.insert(
+            0,
+            SQLiteSelectValue::from_field("root", object_identity_field(&root_object_type), None),
+        );
+    }
     let mut result_aliases = SQLiteComputedAliasAllocator::new(selected_column_names);
+    let mut next_follow_up_fetch_index = 0;
     let result_shape = plan_result_shape(
         ir.shape(),
         "root",
-        false,
+        root_identity_required,
         &[],
         &selected_shape_aliases,
         &mut result_aliases,
+        &mut next_follow_up_fetch_index,
     );
 
     let planned_orders: Vec<PlannedOrder> = ir
@@ -87,6 +105,8 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     joins.extend(filter_joins);
     joins.extend(order_joins);
     joins = dedup_joins(joins);
+    let follow_up_fetches =
+        plan_follow_up_fetches(ir.shape(), "root", &[], &selected_shape_aliases);
 
     SQLiteSelectPlan {
         root_source: SQLiteObjectSource {
@@ -102,6 +122,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
         offset: ir.offset(),
         joins,
         result_shape,
+        follow_up_fetches,
     }
 }
 
@@ -176,6 +197,10 @@ fn plan_mutation_filter(
 
 fn sqlite_table_name(object_type: &ObjectTypeRef) -> String {
     object_type.name().to_ascii_lowercase()
+}
+
+fn object_identity_field(object_type: &ObjectTypeRef) -> FieldRef {
+    FieldRef::new(schema_model::FieldId::new(1), object_type.clone(), "id")
 }
 
 fn plan_assignment(assignment: &query_ir::Assignment) -> SQLiteAssignment {
@@ -339,6 +364,7 @@ pub struct SQLiteSelectPlan {
     filter: Option<SQLiteWhereExpr>,
     joins: Vec<SQLiteJoin>,
     result_shape: SQLiteResultShapePlan,
+    follow_up_fetches: Vec<SQLiteFollowUpFetchPlan>,
 }
 
 impl SQLiteSelectPlan {
@@ -372,6 +398,64 @@ impl SQLiteSelectPlan {
 
     pub fn result_shape(&self) -> &SQLiteResultShapePlan {
         &self.result_shape
+    }
+
+    pub fn follow_up_fetches(&self) -> &[SQLiteFollowUpFetchPlan] {
+        &self.follow_up_fetches
+    }
+}
+
+/// Secondary fetch plan for one selected multi link.
+pub struct SQLiteFollowUpFetchPlan {
+    parent_field: FieldRef,
+    parent_identity: SQLiteResultValueRef,
+    join_table_name: String,
+    target_source: SQLiteObjectSource,
+    selected_values: Vec<SQLiteSelectValue>,
+    joins: Vec<SQLiteJoin>,
+    result_shape: SQLiteResultShapePlan,
+    follow_up_fetches: Vec<SQLiteFollowUpFetchPlan>,
+}
+
+impl SQLiteFollowUpFetchPlan {
+    pub fn parent_field(&self) -> &FieldRef {
+        &self.parent_field
+    }
+
+    pub fn parent_identity(&self) -> &SQLiteResultValueRef {
+        &self.parent_identity
+    }
+
+    pub fn join_table_name(&self) -> &str {
+        &self.join_table_name
+    }
+
+    pub fn source_column(&self) -> &str {
+        "source_id"
+    }
+
+    pub fn target_column(&self) -> &str {
+        "target_id"
+    }
+
+    pub fn target_source(&self) -> &SQLiteObjectSource {
+        &self.target_source
+    }
+
+    pub fn selected_values(&self) -> &[SQLiteSelectValue] {
+        &self.selected_values
+    }
+
+    pub fn joins(&self) -> &[SQLiteJoin] {
+        &self.joins
+    }
+
+    pub fn result_shape(&self) -> &SQLiteResultShapePlan {
+        &self.result_shape
+    }
+
+    pub fn follow_up_fetches(&self) -> &[SQLiteFollowUpFetchPlan] {
+        &self.follow_up_fetches
     }
 }
 
@@ -672,9 +756,7 @@ fn root_selected_link_aliases(shape: &query_ir::ResolvedShape) -> Vec<String> {
                 return None;
             };
 
-            field
-                .child_shape()
-                .is_some()
+            (field.cardinality() != Cardinality::Many && field.child_shape().is_some())
                 .then(|| field.output_name().to_string())
         })
         .collect()
@@ -695,6 +777,9 @@ fn collect_selected_shape_aliases(
         let Some(child_shape) = field.child_shape() else {
             continue;
         };
+        if field.cardinality() == Cardinality::Many {
+            continue;
+        }
 
         let mut child_path = shape_path.to_vec();
         child_path.push(index);
@@ -820,9 +905,10 @@ fn collect_selected_field_column_names(
     for item in shape.items() {
         if let query_ir::ResolvedShapeItem::Field(field) = item {
             match field.child_shape() {
-                Some(child_shape) => {
+                Some(child_shape) if field.cardinality() != Cardinality::Many => {
                     collect_selected_field_column_names(child_shape, true, column_names);
                 }
+                Some(_) => {}
                 None => column_names.push(field.field().name().to_string()),
             }
         }
@@ -839,6 +925,7 @@ fn collect_selected_link_aliases(shape: &query_ir::ResolvedShape, aliases: &mut 
     for item in shape.items() {
         if let query_ir::ResolvedShapeItem::Field(field) = item
             && let Some(child_shape) = field.child_shape()
+            && field.cardinality() != Cardinality::Many
         {
             aliases.push(field.output_name().to_string());
             collect_selected_link_aliases(child_shape, aliases);
@@ -861,15 +948,12 @@ fn plan_shape_values(
     for (index, item) in shape.items().iter().enumerate() {
         match item {
             query_ir::ResolvedShapeItem::Field(field) => match field.child_shape() {
+                Some(_) if field.cardinality() == Cardinality::Many => {}
                 Some(child_shape) => {
                     let mut child_path = shape_path.to_vec();
                     child_path.push(index);
                     let nested_alias = selected_shape_aliases.alias_for_path(&child_path);
-                    let child_id_field = FieldRef::new(
-                        schema_model::FieldId::new(1),
-                        child_shape.source_object_type().clone(),
-                        "id",
-                    );
+                    let child_id_field = object_identity_field(child_shape.source_object_type());
 
                     values.push(SQLiteSelectValue::from_field(
                         nested_alias,
@@ -932,6 +1016,9 @@ fn plan_selected_shape_joins(
         let Some(child_shape) = field.child_shape() else {
             continue;
         };
+        if field.cardinality() == Cardinality::Many {
+            continue;
+        }
 
         let mut child_path = shape_path.to_vec();
         child_path.push(index);
@@ -963,6 +1050,7 @@ fn plan_result_shape(
     shape_path: &[usize],
     selected_shape_aliases: &SQLiteSelectedShapeAliases,
     computed_aliases: &mut SQLiteComputedAliasAllocator,
+    next_follow_up_fetch_index: &mut usize,
 ) -> SQLiteResultShapePlan {
     let fields = shape
         .items()
@@ -970,6 +1058,18 @@ fn plan_result_shape(
         .enumerate()
         .map(|(index, item)| match item {
             query_ir::ResolvedShapeItem::Field(field) => match field.child_shape() {
+                Some(_) if field.cardinality() == Cardinality::Many => {
+                    let follow_up_fetch_index = *next_follow_up_fetch_index;
+                    *next_follow_up_fetch_index += 1;
+
+                    SQLiteResultField {
+                        output_name: field.output_name().to_string(),
+                        cardinality: field.cardinality(),
+                        value: None,
+                        nested_shape: None,
+                        follow_up_fetch_index: Some(follow_up_fetch_index),
+                    }
+                }
                 Some(child_shape) => {
                     let mut child_path = shape_path.to_vec();
                     child_path.push(index);
@@ -986,7 +1086,9 @@ fn plan_result_shape(
                             &child_path,
                             selected_shape_aliases,
                             computed_aliases,
+                            next_follow_up_fetch_index,
                         )),
+                        follow_up_fetch_index: None,
                     }
                 }
                 None => SQLiteResultField {
@@ -998,6 +1100,7 @@ fn plan_result_shape(
                         role: SQLiteValueRole::for_field(field.field()),
                     }),
                     nested_shape: None,
+                    follow_up_fetch_index: None,
                 },
             },
             query_ir::ResolvedShapeItem::Computed(computed) => SQLiteResultField {
@@ -1009,6 +1112,7 @@ fn plan_result_shape(
                     role: SQLiteValueRole::Computed,
                 }),
                 nested_shape: None,
+                follow_up_fetch_index: None,
             },
         })
         .collect();
@@ -1020,6 +1124,112 @@ fn plan_result_shape(
             role: SQLiteValueRole::ObjectId,
         }),
         fields,
+    }
+}
+
+fn plan_follow_up_fetches(
+    shape: &query_ir::ResolvedShape,
+    source_alias: &str,
+    shape_path: &[usize],
+    selected_shape_aliases: &SQLiteSelectedShapeAliases,
+) -> Vec<SQLiteFollowUpFetchPlan> {
+    let mut fetches = Vec::new();
+
+    for (index, item) in shape.items().iter().enumerate() {
+        let query_ir::ResolvedShapeItem::Field(field) = item else {
+            continue;
+        };
+        let Some(child_shape) = field.child_shape() else {
+            continue;
+        };
+
+        if field.cardinality() == Cardinality::Many {
+            fetches.push(plan_follow_up_fetch(field, child_shape, source_alias));
+            continue;
+        }
+
+        let mut child_path = shape_path.to_vec();
+        child_path.push(index);
+        fetches.extend(plan_follow_up_fetches(
+            child_shape,
+            selected_shape_aliases.alias_for_path(&child_path),
+            &child_path,
+            selected_shape_aliases,
+        ));
+    }
+
+    fetches
+}
+
+fn plan_follow_up_fetch(
+    field: &query_ir::ResolvedShapeField,
+    target_shape: &query_ir::ResolvedShape,
+    parent_alias: &str,
+) -> SQLiteFollowUpFetchPlan {
+    let target_object_type = target_shape.source_object_type().clone();
+    let mut selected_column_names = selected_field_column_names(target_shape);
+    selected_column_names.insert(0, "id".to_string());
+    let mut select_aliases = SQLiteComputedAliasAllocator::new(selected_column_names.clone());
+    let mut join_aliases = SQLiteJoinAliasAllocator::new(selected_link_aliases(target_shape));
+    let mut root_path_aliases = Vec::new();
+    collect_root_computed_path_aliases(target_shape, &mut root_path_aliases);
+    join_aliases.reserve_aliases(&root_path_aliases);
+    let selected_shape_aliases =
+        plan_selected_shape_aliases(target_shape, root_path_aliases, &mut join_aliases);
+    let planned_values = plan_shape_values(
+        target_shape,
+        "root",
+        false,
+        &[],
+        &selected_shape_aliases,
+        &mut select_aliases,
+        &mut join_aliases,
+    );
+    let mut selected_values = vec![SQLiteSelectValue::from_field(
+        "root",
+        object_identity_field(&target_object_type),
+        None,
+    )];
+    selected_values.extend(planned_values.values);
+    let mut joins =
+        plan_selected_shape_joins(target_shape, "root", false, &[], &selected_shape_aliases);
+    joins.extend(planned_values.joins);
+    let mut result_aliases = SQLiteComputedAliasAllocator::new(selected_column_names);
+    let mut next_follow_up_fetch_index = 0;
+    let result_shape = plan_result_shape(
+        target_shape,
+        "root",
+        true,
+        &[],
+        &selected_shape_aliases,
+        &mut result_aliases,
+        &mut next_follow_up_fetch_index,
+    );
+    let follow_up_fetches =
+        plan_follow_up_fetches(target_shape, "root", &[], &selected_shape_aliases);
+
+    SQLiteFollowUpFetchPlan {
+        parent_field: field.field().clone(),
+        parent_identity: SQLiteResultValueRef {
+            source_alias: parent_alias.to_string(),
+            column_name: "id".to_string(),
+            role: SQLiteValueRole::ObjectId,
+        },
+        join_table_name: format!(
+            "{}__{}",
+            sqlite_table_name(field.field().owner_object_type()),
+            field.field().name()
+        ),
+        target_source: SQLiteObjectSource {
+            object_type: target_object_type.clone(),
+            table_name: sqlite_table_name(&target_object_type),
+            alias: "root".to_string(),
+            id_column: "id".to_string(),
+        },
+        selected_values,
+        joins: dedup_joins(joins),
+        result_shape,
+        follow_up_fetches,
     }
 }
 
@@ -1044,6 +1254,7 @@ pub struct SQLiteResultField {
     cardinality: schema_model::Cardinality,
     value: Option<SQLiteResultValueRef>,
     nested_shape: Option<SQLiteResultShapePlan>,
+    follow_up_fetch_index: Option<usize>,
 }
 
 impl SQLiteResultField {
@@ -1061,6 +1272,12 @@ impl SQLiteResultField {
 
     pub fn nested_shape(&self) -> Option<&SQLiteResultShapePlan> {
         self.nested_shape.as_ref()
+    }
+
+    /// Index into the containing plan's [`SQLiteSelectPlan::follow_up_fetches`]
+    /// or [`SQLiteFollowUpFetchPlan::follow_up_fetches`] list.
+    pub fn follow_up_fetch_index(&self) -> Option<usize> {
+        self.follow_up_fetch_index
     }
 }
 

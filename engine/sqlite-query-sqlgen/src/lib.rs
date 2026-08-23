@@ -658,18 +658,25 @@ fn render_result_shape_from(
     let fields = plan
         .fields()
         .iter()
-        .map(|field| match (field.value(), field.nested_shape()) {
-            (Some(_), None) => {
-                let column_index = *next_column_index;
-                *next_column_index += 1;
-
-                SQLiteResultField::value(field.output_name(), column_index)
+        .filter_map(|field| {
+            // Follow-up fields have no columns in the root SQLite statement.
+            if field.follow_up_fetch_index().is_some() {
+                return None;
             }
-            (None, Some(nested_plan)) => SQLiteResultField::nested(
-                field.output_name(),
-                render_result_shape_from(nested_plan, next_column_index),
-            ),
-            _ => unreachable!("result field must contain either a value or a nested shape"),
+
+            Some(match (field.value(), field.nested_shape()) {
+                (Some(_), None) => {
+                    let column_index = *next_column_index;
+                    *next_column_index += 1;
+
+                    SQLiteResultField::value(field.output_name(), column_index)
+                }
+                (None, Some(nested_plan)) => SQLiteResultField::nested(
+                    field.output_name(),
+                    render_result_shape_from(nested_plan, next_column_index),
+                ),
+                _ => unreachable!("result field must contain either a value or a nested shape"),
+            })
         })
         .collect();
 
