@@ -248,18 +248,30 @@ type Post {
     .expect("multi-link schema should parse");
     let root = SQLiteQueryResult::with_identities(
         vec!["email".to_string(), "posts".to_string()],
-        vec![vec![
-            SQLiteCellValue::Text("sheri@example.com".to_string()),
-            SQLiteCellValue::List(vec![]),
-        ]],
-        vec![None],
-        vec![vec![Some("user-1".to_string())]],
+        vec![
+            vec![
+                SQLiteCellValue::Text("sheri@example.com".to_string()),
+                SQLiteCellValue::List(vec![]),
+            ],
+            vec![
+                SQLiteCellValue::Text("emma@example.com".to_string()),
+                SQLiteCellValue::List(vec![]),
+            ],
+        ],
+        vec![None, None],
+        vec![
+            vec![Some("user-1".to_string())],
+            vec![Some("user-2".to_string())],
+        ],
     );
     let posts = SQLiteQueryResult::with_identities(
         vec!["title".to_string()],
-        vec![vec![SQLiteCellValue::Text("Case File".to_string())]],
-        vec![Some("user-1".to_string())],
-        vec![vec![]],
+        vec![
+            vec![SQLiteCellValue::Text("Case File".to_string())],
+            vec![SQLiteCellValue::Text("Archive".to_string())],
+        ],
+        vec![Some("user-1".to_string()), Some("user-2".to_string())],
+        vec![vec![], vec![]],
     );
     let mut runner = MultiLinkQueryRunner {
         results: vec![root, posts],
@@ -272,18 +284,30 @@ type Post {
 
     assert_eq!(
         result.rows(),
-        &[vec![
-            SQLiteCellValue::Text("sheri@example.com".to_string()),
-            SQLiteCellValue::List(vec![SQLiteCellValue::Object(vec![(
-                "title".to_string(),
-                SQLiteCellValue::Text("Case File".to_string()),
-            )])]),
-        ]]
+        &[
+            vec![
+                SQLiteCellValue::Text("sheri@example.com".to_string()),
+                SQLiteCellValue::List(vec![SQLiteCellValue::Object(vec![(
+                    "title".to_string(),
+                    SQLiteCellValue::Text("Case File".to_string()),
+                )])]),
+            ],
+            vec![
+                SQLiteCellValue::Text("emma@example.com".to_string()),
+                SQLiteCellValue::List(vec![SQLiteCellValue::Object(vec![(
+                    "title".to_string(),
+                    SQLiteCellValue::Text("Archive".to_string()),
+                )])]),
+            ],
+        ]
     );
     assert_eq!(runner.calls.len(), 2);
     assert_eq!(
         runner.calls[1].1,
-        [SQLiteBindValue::String("user-1".to_string())]
+        [
+            SQLiteBindValue::String("user-1".to_string()),
+            SQLiteBindValue::String("user-2".to_string()),
+        ]
     );
 }
 
