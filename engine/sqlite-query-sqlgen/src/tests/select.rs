@@ -5,7 +5,7 @@ use super::fixtures::{
     post_quote_path_value, post_title_path_value, post_title_shape_field, post_type,
     post_view_count_path_value, user_name_field, user_name_shape_field, user_type,
 };
-use crate::{SQLiteBindValue, render_select};
+use crate::{SQLiteBindValue, render_follow_up, render_select};
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::vec;
@@ -200,6 +200,50 @@ fn sqlite_sqlgen_defers_multi_link_result_fields_to_follow_up_rendering() {
             .fields()
             .is_empty()
     );
+}
+
+#[test]
+fn sqlite_sqlgen_batches_multi_link_parent_ids_in_one_follow_up_statement() {
+    let posts_shape = query_ir::ResolvedShape::new(post_type(), vec![post_title_shape_field()]);
+    let posts = query_ir::ResolvedShapeField::new(
+        "posts",
+        schema_model::FieldRef::new(schema_model::FieldId::new(3), user_type(), "posts"),
+        schema_model::Cardinality::Many,
+        Some(posts_shape),
+    );
+    let ir = query_ir::SelectQuery::new(
+        user_type(),
+        query_ir::ResolvedShape::new(user_type(), vec![posts]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+    let plan = sqlite_query_plan::plan_select(&ir);
+
+    let statement = render_follow_up(
+        &plan.follow_up_fetches()[0],
+        &["user-1".to_string(), "user-2".to_string()],
+    );
+
+    assert_eq!(
+        statement.sql(),
+        "SELECT \"user__posts\".\"source_id\", \"root\".\"id\", \"root\".\"title\" FROM \"user__posts\" INNER JOIN \"post\" AS \"root\" ON \"user__posts\".\"target_id\" = \"root\".\"id\" WHERE \"user__posts\".\"source_id\" IN (?, ?)"
+    );
+    assert_eq!(
+        statement.bind_values(),
+        &[
+            SQLiteBindValue::String("user-1".to_string()),
+            SQLiteBindValue::String("user-2".to_string()),
+        ]
+    );
+    assert_eq!(statement.parent_identity_column_index(), Some(0));
+
+    let shape = statement
+        .result_shape()
+        .expect("follow-up statement should retain its target result shape");
+    assert_eq!(shape.identity_column_index(), Some(1));
+    assert_eq!(shape.fields()[0].column_index(), Some(2));
 }
 
 #[test]
