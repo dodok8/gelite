@@ -6,7 +6,7 @@ requiring one large application model.
 
 | Example | Model | Main query cases |
 | --- | --- | --- |
-| [Organization](organization.md) | departments and employees | optional self-links, `null`, nested shapes, membership selects |
+| [Organization](organization.md) | departments and employees | multi-link collections, optional self-links, `null`, nested shapes |
 | [Store](store.md) | customers, products, orders, and line items | association objects, arithmetic, transactions, membership selects |
 | [Music catalog](music.md) | artists, albums, tracks, and playlists | deep path traversal, string functions, ordering, pagination |
 
