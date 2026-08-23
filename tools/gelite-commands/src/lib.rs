@@ -16,6 +16,8 @@ use sqlite_runner::{
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
 
+const SQLITE_MAX_BIND_VALUES: usize = 999;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandError {
     message: String,
@@ -379,29 +381,44 @@ fn execute_follow_ups(
             continue;
         }
 
-        let statement = sqlite_query_sqlgen::render_follow_up(fetch, &parent_ids);
-        let mut children = runner.execute_select(&statement)?;
-        execute_follow_ups(
-            runner,
-            fetch.follow_up_fetches(),
-            statement
-                .result_shape()
-                .expect("rendered follow-up should retain its result shape"),
-            &mut children,
-        )?;
-
-        let columns = children.columns().to_vec();
         let mut children_by_parent =
             std::collections::HashMap::<String, Vec<SQLiteCellValue>>::new();
-        for (parent_identity, row) in children.into_parent_rows() {
-            let parent_identity = parent_identity.ok_or_else(|| {
-                SQLiteRunnerError::execution_failed("follow-up row is missing its parent identity")
+        let fixed_bind_count = sqlite_query_sqlgen::render_follow_up(fetch, &[])
+            .bind_values()
+            .len();
+        let batch_size = SQLITE_MAX_BIND_VALUES
+            .checked_sub(fixed_bind_count)
+            .filter(|size| *size > 0)
+            .ok_or_else(|| {
+                SQLiteRunnerError::execution_failed(
+                    "follow-up projection exceeds SQLite's bind variable limit",
+                )
             })?;
-            let object = SQLiteCellValue::Object(columns.iter().cloned().zip(row).collect());
-            children_by_parent
-                .entry(parent_identity)
-                .or_default()
-                .push(object);
+        for parent_ids in parent_ids.chunks(batch_size) {
+            let statement = sqlite_query_sqlgen::render_follow_up(fetch, parent_ids);
+            let mut children = runner.execute_select(&statement)?;
+            execute_follow_ups(
+                runner,
+                fetch.follow_up_fetches(),
+                statement
+                    .result_shape()
+                    .expect("rendered follow-up should retain its result shape"),
+                &mut children,
+            )?;
+
+            let columns = children.columns().to_vec();
+            for (parent_identity, row) in children.into_parent_rows() {
+                let parent_identity = parent_identity.ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(
+                        "follow-up row is missing its parent identity",
+                    )
+                })?;
+                let object = SQLiteCellValue::Object(columns.iter().cloned().zip(row).collect());
+                children_by_parent
+                    .entry(parent_identity)
+                    .or_default()
+                    .push(object);
+            }
         }
 
         let row_parent_ids = result
