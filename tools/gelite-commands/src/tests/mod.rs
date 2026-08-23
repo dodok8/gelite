@@ -312,6 +312,19 @@ type Post {
 }
 
 #[test]
+fn query_command_reports_deferred_multi_link_plans() {
+    let catalog = schema_parser::parse_schema(
+        "type User {\n  multi link posts: Post\n}\n\ntype Post {\n  required title: str\n}",
+    )
+    .expect("multi-link schema should parse");
+
+    let query = compile_query(&catalog, "select User { posts: { title } }")
+        .expect("multi-link select should compile");
+
+    assert_eq!(query.deferred_follow_up_count(), 1);
+}
+
+#[test]
 fn query_command_compiles_insert_with_generated_id() {
     let compiled = compile_query(
         &blog_catalog(),
