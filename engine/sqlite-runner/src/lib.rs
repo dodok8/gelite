@@ -90,24 +90,6 @@ pub enum SQLiteCellValue {
 }
 
 #[cfg(feature = "native")]
-fn shape_query_result(
-    shape: &SQLiteResultShape,
-    rows: Vec<Vec<SQLiteCellValue>>,
-) -> Result<SQLiteQueryResult, SQLiteRunnerError> {
-    let columns = shape
-        .fields()
-        .iter()
-        .map(|field| field.output_name().into())
-        .collect();
-    let rows = rows
-        .iter()
-        .map(|row| shape_fields(shape, row))
-        .collect::<Result<_, _>>()?;
-
-    Ok(SQLiteQueryResult::new(columns, rows))
-}
-
-#[cfg(feature = "native")]
 fn shape_fields(
     shape: &SQLiteResultShape,
     row: &[SQLiteCellValue],

@@ -655,25 +655,17 @@ fn render_result_shape_from(
                 let column_index = *next_column_index;
                 *next_column_index += 1;
 
-                SQLiteResultField {
-                    output_name: field.output_name().to_string(),
-                    column_index: Some(column_index),
-                    nested_shape: None,
-                }
+                SQLiteResultField::value(field.output_name(), column_index)
             }
-            (None, Some(nested_plan)) => SQLiteResultField {
-                output_name: field.output_name().to_string(),
-                column_index: None,
-                nested_shape: Some(render_result_shape_from(nested_plan, next_column_index)),
-            },
+            (None, Some(nested_plan)) => SQLiteResultField::nested(
+                field.output_name(),
+                render_result_shape_from(nested_plan, next_column_index),
+            ),
             _ => unreachable!("result field must contain either a value or a nested shape"),
         })
         .collect();
 
-    SQLiteResultShape {
-        identity_column_index,
-        fields,
-    }
+    SQLiteResultShape::new(identity_column_index, fields)
 }
 
 #[cfg(test)]
