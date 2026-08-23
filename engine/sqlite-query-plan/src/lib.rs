@@ -179,8 +179,6 @@ pub fn plan_update(ir: &query_ir::UpdateQuery) -> SQLiteUpdatePlan {
                 sqlite_table_name(&target_object_type),
                 assignment.field().name()
             ),
-            source_column: "source_id".to_string(),
-            target_column: "target_id".to_string(),
             sources: Box::new(plan_select(&sources)),
             targets: Box::new(plan_select(targets)),
         })
@@ -384,8 +382,6 @@ pub enum SQLiteMultiLinkMutationOp {
 pub struct SQLiteMultiLinkMutationPlan {
     operation: SQLiteMultiLinkMutationOp,
     join_table_name: String,
-    source_column: String,
-    target_column: String,
     sources: Box<SQLiteSelectPlan>,
     targets: Box<SQLiteSelectPlan>,
 }
@@ -400,11 +396,11 @@ impl SQLiteMultiLinkMutationPlan {
     }
 
     pub fn source_column(&self) -> &str {
-        &self.source_column
+        "source_id"
     }
 
     pub fn target_column(&self) -> &str {
-        &self.target_column
+        "target_id"
     }
 
     pub fn sources(&self) -> &SQLiteSelectPlan {

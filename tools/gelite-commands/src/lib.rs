@@ -113,7 +113,6 @@ pub enum QueryKind {
     Select,
     Insert { generated_id: String },
     Update,
-    MultiLinkMutation,
     Delete,
 }
 
@@ -305,13 +304,8 @@ pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQu
                 CommandError::new(format!("failed to resolve query: {error:#?}"))
             })?;
             let plan = sqlite_query_plan::plan_update(&resolved);
-            let kind = if plan.multi_link_mutation().is_some() {
-                QueryKind::MultiLinkMutation
-            } else {
-                QueryKind::Update
-            };
 
-            (kind, sqlite_query_sqlgen::render_update(&plan))
+            (QueryKind::Update, sqlite_query_sqlgen::render_update(&plan))
         }
         Some("delete") => {
             let query = parse_delete(source)
@@ -370,9 +364,7 @@ pub fn execute_query(
                 vec![vec![SQLiteCellValue::Text(generated_id)]],
             )
         }),
-        QueryKind::Update | QueryKind::MultiLinkMutation => {
-            runner.execute_update(&statement).map(affected_rows_result)
-        }
+        QueryKind::Update => runner.execute_update(&statement).map(affected_rows_result),
         QueryKind::Delete => runner.execute_delete(&statement).map(affected_rows_result),
     }
     .map_err(|error| CommandError::new(error.message().to_string()))
