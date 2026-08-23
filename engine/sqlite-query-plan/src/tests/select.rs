@@ -2574,6 +2574,32 @@ fn sqlite_select_plan_preserves_multi_link_output_position() {
 }
 
 #[test]
+fn sqlite_select_plan_aligns_sibling_multi_link_fetch_indexes() {
+    let featured_posts = ResolvedShapeField::new(
+        "featured_posts",
+        schema_model::FieldRef::new(schema_model::FieldId::new(6), user_type(), "featured_posts"),
+        schema_model::Cardinality::Many,
+        Some(ResolvedShape::new(
+            post_type(),
+            vec![post_title_shape_field()],
+        )),
+    );
+    let ir = user_query_with_shape(vec![user_posts_shape_field(), featured_posts]);
+
+    let plan = plan_select(&ir);
+    let fields = plan.result_shape().fields();
+
+    assert_eq!(plan.follow_up_fetches().len(), 2);
+    assert_eq!(fields[0].follow_up_fetch_index(), Some(0));
+    assert_eq!(fields[1].follow_up_fetch_index(), Some(1));
+    assert_eq!(plan.follow_up_fetches()[0].join_table_name(), "user__posts");
+    assert_eq!(
+        plan.follow_up_fetches()[1].join_table_name(),
+        "user__featured_posts"
+    );
+}
+
+#[test]
 fn sqlite_multi_link_follow_up_reuses_single_link_shape_planning() {
     let ir = user_query_with_shape(vec![user_posts_with_author_shape_field()]);
 
