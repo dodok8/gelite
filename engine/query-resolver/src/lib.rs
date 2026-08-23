@@ -130,6 +130,18 @@ pub fn resolve_insert(
             name: query.root_type_name().to_string(),
         })?;
 
+    if let Some(assignment) = query
+        .assignments()
+        .iter()
+        .find(|assignment| assignment.operator() != query_ast::AssignmentOperator::Assign)
+    {
+        return Err(ResolveError::InvalidMultiLinkMutation {
+            object_type: root_object_type.name().to_string(),
+            field: assignment.field_name().to_string(),
+            reason: "multi-link operations are only valid in updates".to_string(),
+        });
+    }
+
     // Resolve explicit assignments before checking omissions. This preserves a
     // more specific error for an unknown, implicit, or incompatible assignment
     // instead of masking it with a missing-required-field error.

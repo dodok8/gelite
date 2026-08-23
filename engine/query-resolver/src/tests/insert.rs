@@ -10,8 +10,8 @@ use crate::{ResolveError, resolve_insert};
 use alloc::string::ToString;
 use alloc::vec;
 use query_ast::{
-    Assignment as AstAssignment, AssignmentValue, CompareExpr, CompareOp, Expr, InsertQuery,
-    Literal, Path, PathStep,
+    Assignment as AstAssignment, AssignmentOperator, AssignmentValue, CompareExpr, CompareOp, Expr,
+    InsertQuery, Literal, Path, PathStep,
 };
 
 fn assignment(field_name: impl Into<alloc::string::String>, literal: Literal) -> AstAssignment {
@@ -612,4 +612,28 @@ fn rejects_insert_multi_link_assignment() {
             field: "posts".to_string(),
         }
     )
+}
+
+#[test]
+fn rejects_multi_link_operator_in_insert_ast() {
+    let catalog = user_with_only_multi_posts_catalog();
+    let select = select_assignment("posts", "Post", &["id"], None, None);
+    let query = InsertQuery::new(
+        "User",
+        vec![AstAssignment::with_operator(
+            "posts",
+            AssignmentOperator::Add,
+            select.value().clone(),
+        )],
+    );
+
+    let error = resolve_insert(&catalog, &query).expect_err("insert add should not resolve");
+    assert_eq!(
+        error,
+        ResolveError::InvalidMultiLinkMutation {
+            object_type: "User".to_string(),
+            field: "posts".to_string(),
+            reason: "multi-link operations are only valid in updates".to_string(),
+        }
+    );
 }
