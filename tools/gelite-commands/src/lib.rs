@@ -313,6 +313,7 @@ pub fn execute_query(
                 .result_shape()
                 .expect("rendered select should retain its result shape");
             execute_follow_ups(runner, plan.follow_up_fetches(), shape, &mut result)?;
+            result.clear_internal_identities();
 
             Ok(result)
         }),

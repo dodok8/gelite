@@ -118,6 +118,13 @@ impl SQLiteQueryResult {
     pub fn into_parent_rows(self) -> Vec<(Option<String>, Vec<SQLiteCellValue>)> {
         self.parent_identities.into_iter().zip(self.rows).collect()
     }
+
+    pub fn clear_internal_identities(&mut self) {
+        self.parent_identities.fill(None);
+        self.follow_up_parent_identities
+            .iter_mut()
+            .for_each(Vec::clear);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
