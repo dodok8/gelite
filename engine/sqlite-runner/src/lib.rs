@@ -92,17 +92,20 @@ pub enum SQLiteCellValue {
 #[cfg(feature = "native")]
 fn shape_fields(
     shape: &SQLiteResultShape,
-    row: &[SQLiteCellValue],
+    row: &mut [SQLiteCellValue],
 ) -> Result<Vec<SQLiteCellValue>, SQLiteRunnerError> {
     shape
         .fields()
         .iter()
         .map(|field| match (field.column_index(), field.nested_shape()) {
-            (Some(index), None) => row.get(index).cloned().ok_or_else(|| {
-                SQLiteRunnerError::execution_failed(
-                    "result shape column index exceeds SQLite column count",
-                )
-            }),
+            (Some(index), None) => row
+                .get_mut(index)
+                .map(|value| core::mem::replace(value, SQLiteCellValue::Null))
+                .ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(
+                        "result shape column index exceeds SQLite column count",
+                    )
+                }),
             (None, Some(nested_shape)) => shape_object(nested_shape, row),
             _ => Err(SQLiteRunnerError::execution_failed(
                 "result shape field must contain either a column or a nested shape",
@@ -114,7 +117,7 @@ fn shape_fields(
 #[cfg(feature = "native")]
 fn shape_object(
     shape: &SQLiteResultShape,
-    row: &[SQLiteCellValue],
+    row: &mut [SQLiteCellValue],
 ) -> Result<SQLiteCellValue, SQLiteRunnerError> {
     if let Some(index) = shape.identity_column_index() {
         match row.get(index) {

@@ -258,8 +258,8 @@ impl NativeSQLiteRunner {
                     .iter()
                     .map(|field| field.output_name().into())
                     .collect(),
-                rows.iter()
-                    .map(|row| crate::shape_fields(shape, row))
+                rows.into_iter()
+                    .map(|mut row| crate::shape_fields(shape, &mut row))
                     .collect::<Result<_, _>>()?,
             )),
             None => Ok(SQLiteQueryResult::new(columns, rows)),

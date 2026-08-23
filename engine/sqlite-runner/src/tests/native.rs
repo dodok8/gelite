@@ -533,6 +533,22 @@ fn native_runner_shapes_present_and_missing_single_links() {
 }
 
 #[test]
+fn result_shaping_moves_selected_text_without_cloning() {
+    let text = String::from("alice@example.com");
+    let allocation = text.as_ptr();
+    let mut row = vec![crate::SQLiteCellValue::Text(text)];
+    let shape = SQLiteResultShape::new(None, vec![SQLiteResultField::value("email", 0)]);
+
+    let result = crate::shape_fields(&shape, &mut row).expect("result should be shaped");
+
+    assert_eq!(row, [crate::SQLiteCellValue::Null]);
+    let crate::SQLiteCellValue::Text(value) = &result[0] else {
+        panic!("selected text should remain text");
+    };
+    assert_eq!(value.as_ptr(), allocation);
+}
+
+#[test]
 fn native_runner_reports_execution_errors() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
 
