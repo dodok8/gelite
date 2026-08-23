@@ -181,6 +181,20 @@ Notes:
 - Only `multi link` fields produce join tables. Multi-valued scalar storage is
   out of scope for the MVP.
 
+### Multi-Link Mutation Mapping
+
+An add operation inserts the Cartesian product of selected source and target
+identities into `source_id` and `target_id`. Conflict handling applies only to
+the composite primary key: an existing relationship is left unchanged. A
+remove operation deletes rows whose source and target identities belong to the
+selected sets. Both operations are rendered as one set-based SQLite statement,
+not one statement per target.
+
+The reserved `position` column remains `NULL`; mutation syntax does not assign
+or preserve ordering. Foreign keys continue to reject identities that are not
+present in their object tables, although the accepted select-based mutation
+surface can only produce existing identities.
+
 ## Implicit Identity
 
 Every object row has:

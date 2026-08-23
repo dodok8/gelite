@@ -79,6 +79,7 @@ The MVP needs at least these top-level plan families:
 - `SQLiteInsertPlan`
 - `SQLiteUpdatePlan`
 - `SQLiteDeletePlan`
+- `SQLiteMultiLinkMutationPlan`
 - `SQLiteFollowUpFetchPlan`
 
 These names are descriptive, not binding implementation names.
@@ -492,6 +493,22 @@ Minimum fields:
 
 Delete-side cleanup for `multi link` rows is handled by SQLite foreign key
 rules, not by extra logical mutation nodes in the MVP.
+
+### `SQLiteMultiLinkMutationPlan`
+
+Minimum fields:
+
+- operation: add or remove
+- join-table name
+- source identity select plan derived from the outer update target and filter
+- target identity select plan derived from the resolved nested select
+- `source_id` and `target_id` column names
+
+Add rendering uses one `INSERT ... SELECT` over the Cartesian product of the
+source and target identity queries, with a conflict target on the join table's
+composite primary key. Remove rendering uses one `DELETE` constrained by the
+same two identity sets. The plan does not assign the reserved `position`
+column.
 
 ## Boundary With SQL Generation
 

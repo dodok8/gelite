@@ -588,11 +588,21 @@ rejected by the resolver before SQLite planning.
 Minimum fields:
 
 - field reference
+- assignment operation
 - mutation value
 
 `Assignment` is shared by `InsertQuery` and future `UpdateQuery` values. Its
 field reference is resolved against the target object type; it must not retain
 the parsed field name as the semantic source of truth.
+
+Assignment operations are:
+
+- `assign` for scalar and single-link `:=`
+- `add` for multi-link `+=`
+- `remove` for multi-link `-=`
+
+Insert accepts only `assign`. An update containing `add` or `remove` contains
+exactly one assignment in the first multi-link mutation milestone.
 
 ### `MutationValue`
 
@@ -603,6 +613,8 @@ temporary object-ID shorthand, and resolved single-link select assignments:
 - `LinkId` string for the temporary single-link object-id shorthand
 - `LinkSelect` containing a resolved `SelectQuery` that returns the linked
   object's identity
+- `MultiLinkSelect` containing a resolved `SelectQuery` that returns zero or
+  more target identities for an `add` or `remove` operation
 
 `LinkId` deliberately records the relation shorthand separately from a scalar
 string literal. The resolver chooses this variant only for a declared single
@@ -617,12 +629,19 @@ cardinality proof is equality between implicit `id` or a declared `unique`
 scalar field and a compatible non-null scalar literal. `limit 1` alone is not
 a semantic uniqueness proof.
 
+Before constructing `MultiLinkSelect`, the resolver must verify that the
+assignment field is a declared multi link, the nested select root matches the
+link target, and its shape contains exactly the target's implicit `id`.
+Unlike `LinkSelect`, the nested select does not require an at-most-one proof.
+
 MVP constraints:
 
 - assignments may target declared scalar fields
 - assignments may target declared single `link` fields
 - assignments may not target implicit `id`
-- assignments may not target `multi` links
+- `assign` may not target `multi` links
+- `add` and `remove` may target only `multi` links and require
+  `MultiLinkSelect`
 - scalar values must match the resolved scalar type
 - `null` requires an optional resolved field
 - a single-link value is `LinkId`, `LinkSelect`, or, for an optional link,
