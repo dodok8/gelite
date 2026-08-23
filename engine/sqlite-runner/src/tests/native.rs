@@ -549,6 +549,45 @@ fn result_shaping_moves_selected_text_without_cloning() {
 }
 
 #[test]
+fn native_runner_rejects_out_of_range_result_field_column() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement = SQLiteStatement::new("SELECT 'Draft'", vec![]).with_result_shape(
+        SQLiteResultShape::new(None, vec![SQLiteResultField::value("title", 1)]),
+    );
+
+    let error = runner
+        .execute_select(&statement)
+        .expect_err("out-of-range result field should fail");
+
+    assert_eq!(
+        error.message(),
+        "result shape column index exceeds SQLite column count"
+    );
+}
+
+#[test]
+fn native_runner_rejects_out_of_range_nested_identity_column() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement =
+        SQLiteStatement::new("SELECT 'Draft'", vec![]).with_result_shape(SQLiteResultShape::new(
+            None,
+            vec![SQLiteResultField::nested(
+                "author",
+                SQLiteResultShape::new(Some(1), vec![]),
+            )],
+        ));
+
+    let error = runner
+        .execute_select(&statement)
+        .expect_err("out-of-range nested identity should fail");
+
+    assert_eq!(
+        error.message(),
+        "result shape identity index exceeds SQLite column count"
+    );
+}
+
+#[test]
 fn native_runner_reports_execution_errors() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
 
