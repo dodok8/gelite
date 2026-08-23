@@ -592,7 +592,9 @@ set {
 
 ```text
 update_stmt     := "update" type_ref filter_clause? set_clause
-set_clause      := "set" object_literal
+set_clause      := "set" "{" update_item* "}"
+update_item     := IDENT update_op assignment_value ","?
+update_op       := ":=" | "+=" | "-="
 ```
 
 ### Update Semantics
@@ -600,10 +602,46 @@ set_clause      := "set" object_literal
 - The target must be an object type.
 - `filter` is optional, but omitting it updates every row. The CLI and server
   should consider adding safety confirmation later.
-- Only scalar fields and single relations may be updated in the MVP.
-- Multi relations may not be updated in the MVP.
+- `:=` updates scalar fields and single relations.
+- `+=` adds targets to a declared `multi link`; `-=` removes targets from it.
 - Relation assignments must target declared `link` fields.
 - Updating `id` is not allowed.
+
+### Multi-Link Mutation Semantics
+
+A multi-link mutation uses a parenthesized select that projects exactly the
+target object's implicit `id` field:
+
+```text
+update Department
+filter .code = "INVESTIGATION"
+set {
+  employees += (
+    select Employee { id }
+    filter .active = true
+  )
+}
+```
+
+The outer update filter selects source objects. The nested select independently
+selects zero or more target objects. The operation applies to the Cartesian
+product of those source and target identity sets in one set-based mutation.
+
+The first multi-link mutation milestone accepts exactly one `+=` or `-=` item
+per update statement and does not mix it with `:=` assignments. Use separate
+statements when both object fields and relationships must change.
+
+`+=` is idempotent: a relationship that already exists is left unchanged.
+`-=` is also idempotent: removing a relationship that does not exist is a
+no-op. If either the source filter or target select returns no rows, the
+operation is a no-op. Mutation output reports the number of join-table rows
+actually inserted or deleted.
+
+The resolver rejects `+=` and `-=` unless the destination is a declared
+`multi link`, the nested select root is the link target type, and the select
+projects exactly that target's implicit `id`. Literal target identifiers,
+nested inserts, ordered multi links, and mixed assignment operations remain
+unsupported.
 
 ### Single-Link Select Assignment Semantics
 
@@ -627,9 +665,9 @@ outer mutation row. If it returns one row, that row's identity is assigned to
 the link. If it returns no rows, an optional link receives `null` and a
 required link fails during execution.
 
-A select assignment to a scalar field or multi link is invalid. General
-subqueries, correlated subqueries, computed assignment expressions, and
-multi-link assignment syntax remain unsupported.
+A `:=` select assignment to a scalar field or multi link is invalid. General
+subqueries, correlated subqueries, and computed assignment expressions remain
+unsupported.
 
 ## Delete
 
@@ -781,7 +819,7 @@ These are intentionally out of scope until the end-to-end path is stable:
 - aliases
 - `with` bindings
 - nested inserts
-- multi relation mutation syntax
+- multi-link replacement assignment
 - aggregation
 - grouping
 - pagination cursors

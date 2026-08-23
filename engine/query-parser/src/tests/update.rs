@@ -1,6 +1,7 @@
+use alloc::format;
 use alloc::string::ToString;
 
-use query_ast::{AssignmentValue, CompareOp, Literal};
+use query_ast::{AssignmentOperator, AssignmentValue, CompareOp, Literal};
 
 use super::fixtures::{assert_compare_expr, assert_literal_expr, assert_path_expr};
 use crate::{Keyword, ParseErrorKind, TokenKind, lex, parse_insert, parse_select, parse_update};
@@ -26,6 +27,25 @@ fn lexer_can_tokenize_update_statement() {
         &TokenKind::String("Closed Case".to_string())
     );
     assert_eq!(tokens[12].kind(), &TokenKind::RBrace);
+}
+
+#[test]
+fn lexer_can_tokenize_multi_link_assignment_operators() {
+    let tokens = lex("update User set { posts += (select Post { id }) }")
+        .expect("multi-link add should lex");
+    assert!(
+        tokens
+            .iter()
+            .any(|token| token.kind() == &TokenKind::PlusEq)
+    );
+
+    let tokens = lex("update User set { posts -= (select Post { id }) }")
+        .expect("multi-link remove should lex");
+    assert!(
+        tokens
+            .iter()
+            .any(|token| token.kind() == &TokenKind::MinusEq)
+    );
 }
 
 #[test]
@@ -91,6 +111,25 @@ fn parser_can_parse_update_with_single_link_select_assignment() {
         panic!("author should contain a select assignment");
     };
     assert_eq!(select.root_type_name(), "User");
+}
+
+#[test]
+fn parser_can_parse_multi_link_add_and_remove_assignments() {
+    for (operator_source, expected) in [
+        ("+=", AssignmentOperator::Add),
+        ("-=", AssignmentOperator::Remove),
+    ] {
+        let query = parse_update(&format!(
+            "update User set {{ posts {operator_source} (select Post {{ id }}) }}"
+        ))
+        .expect("multi-link mutation should parse");
+
+        assert_eq!(query.assignments()[0].operator(), expected);
+        assert!(matches!(
+            query.assignments()[0].value(),
+            AssignmentValue::Select(_)
+        ));
+    }
 }
 
 #[test]

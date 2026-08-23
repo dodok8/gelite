@@ -34,7 +34,8 @@ cargo run -p gelite-cli -- repl --schema examples/organization.geli --debug \
 
 The `--schema` mode does not open a database or execute the query. The
 `--database` mode loads the catalog stored in the database and executes the
-current `select`, `insert`, `update`, and `delete` subsets.
+current `select`, `insert`, `update`, and `delete` subsets, including explicit
+multi-link add/remove updates.
 
 Continue with the [Examples](examples.md) overview and choose one of the three
 runnable domains.

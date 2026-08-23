@@ -52,7 +52,15 @@ pub struct DeleteQuery {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
     field_name: String,
+    operator: AssignmentOperator,
     value: AssignmentValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentOperator {
+    Assign,
+    Add,
+    Remove,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,14 +131,27 @@ impl DeleteQuery {
 
 impl Assignment {
     pub fn new(field_name: impl Into<String>, value: AssignmentValue) -> Self {
+        Self::with_operator(field_name, AssignmentOperator::Assign, value)
+    }
+
+    pub fn with_operator(
+        field_name: impl Into<String>,
+        operator: AssignmentOperator,
+        value: AssignmentValue,
+    ) -> Self {
         Self {
             field_name: field_name.into(),
+            operator,
             value,
         }
     }
 
     pub fn field_name(&self) -> &str {
         &self.field_name
+    }
+
+    pub fn operator(&self) -> AssignmentOperator {
+        self.operator
     }
 
     pub fn value(&self) -> &AssignmentValue {

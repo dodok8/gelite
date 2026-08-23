@@ -771,16 +771,40 @@ pub enum Literal {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
     field: FieldRef,
+    operator: AssignmentOperator,
     value: AssignmentValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentOperator {
+    Assign,
+    Add,
+    Remove,
 }
 
 impl Assignment {
     pub fn new(field: FieldRef, value: AssignmentValue) -> Self {
-        Self { field, value }
+        Self::with_operator(field, AssignmentOperator::Assign, value)
+    }
+
+    pub fn with_operator(
+        field: FieldRef,
+        operator: AssignmentOperator,
+        value: AssignmentValue,
+    ) -> Self {
+        Self {
+            field,
+            operator,
+            value,
+        }
     }
 
     pub fn field(&self) -> &FieldRef {
         &self.field
+    }
+
+    pub fn operator(&self) -> AssignmentOperator {
+        self.operator
     }
 
     pub fn value(&self) -> &AssignmentValue {
@@ -798,6 +822,7 @@ pub enum AssignmentValue {
     Scalar(Literal),
     LinkId(String),
     LinkSelect(Box<SelectQuery>),
+    MultiLinkSelect(Box<SelectQuery>),
     ScalarNull,
     LinkNull,
 }

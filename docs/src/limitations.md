@@ -12,11 +12,14 @@ limitations are:
   It does not provide a JSON result format.
 - Initial schema application expects a new database. Migration diffing and
   migration history are not implemented.
-- Inserts and updates accept scalar literals, single-link ID strings, and
-  single-link selects narrowed by an implicit `id` or declared `unique` scalar
-  field. Membership filters also accept uncorrelated selects that project one
-  compatible required scalar field. Nested inserts, subqueries in other
-  expression positions, and multi-link mutations are not implemented.
+- Inserts and regular updates accept scalar literals, single-link ID strings,
+  and single-link selects narrowed by an implicit `id` or declared `unique`
+  scalar field. Multi-link updates support one `+=` or `-=` operation per
+  statement with a target select that projects implicit `id`; replacement,
+  literals, and mixed regular assignments are not supported. Membership
+  filters also accept uncorrelated selects that project one compatible required
+  scalar field. Nested inserts and subqueries in other expression positions are
+  not implemented.
 - Composite unique constraints are not available in the current schema syntax.
   Association objects such as `OrderItem` and `PlaylistTrack` rely on the
   application to reject duplicate link pairs when needed.

@@ -1,8 +1,9 @@
 use crate::{
-    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, DeleteQuery,
-    Expr, FunctionCallExpr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderDirection, OrderExpr,
-    Path, PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
+    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentOperator, AssignmentValue, CompareExpr,
+    CompareOp, DeleteQuery, Expr, FunctionCallExpr, InExpr, InOp, InRhs, InsertQuery, Literal,
+    OrderDirection, OrderExpr, Path, PathStep, SelectQuery, Shape, ShapeItem, UpdateQuery,
 };
+use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::vec;
 
@@ -26,6 +27,34 @@ fn assignment_can_store_field_name_and_literal_value() {
         assignment.value(),
         &AssignmentValue::Literal(Literal::String("Sheri".to_string()))
     );
+}
+
+#[test]
+fn assignment_can_store_multi_link_add_and_remove_operators() {
+    let targets = SelectQuery::new(
+        "Employee",
+        Shape::new(vec![ShapeItem::new(
+            Path::new(vec![PathStep::new("id")]),
+            None,
+        )]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+    let add = Assignment::with_operator(
+        "employees",
+        AssignmentOperator::Add,
+        AssignmentValue::Select(Box::new(targets.clone())),
+    );
+    let remove = Assignment::with_operator(
+        "employees",
+        AssignmentOperator::Remove,
+        AssignmentValue::Select(Box::new(targets)),
+    );
+
+    assert_eq!(add.operator(), AssignmentOperator::Add);
+    assert_eq!(remove.operator(), AssignmentOperator::Remove);
 }
 
 #[test]

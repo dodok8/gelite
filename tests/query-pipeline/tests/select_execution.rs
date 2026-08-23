@@ -244,6 +244,110 @@ fn execute_delete(runner: &mut NativeSQLiteRunner, source: &str) -> i64 {
         .expect("delete statement should execute")
 }
 
+fn affected_rows(result: &SQLiteQueryResult) -> i64 {
+    let [row] = result.rows() else {
+        panic!("mutation result should contain one row");
+    };
+    let [SQLiteCellValue::Integer(rows)] = row.as_slice() else {
+        panic!("mutation result should contain one affected_rows value");
+    };
+
+    *rows
+}
+
+#[test]
+fn multi_link_mutation_pipeline_adds_and_removes_target_sets_idempotently() {
+    let mut runner = setup_blog_database();
+    let add = r#"update User
+        filter .email = "carol@example.com"
+        set {
+            posts += (
+                select Post { id }
+                filter .view_count >= 20
+            )
+        }"#;
+    let remove = r#"update User
+        filter .email = "alice@example.com"
+        set {
+            posts -= (
+                select Post { id }
+                filter .view_count >= 20
+            )
+        }"#;
+
+    assert_eq!(affected_rows(&execute_command_query(&mut runner, add)), 2);
+    assert_eq!(affected_rows(&execute_command_query(&mut runner, add)), 0);
+    assert_eq!(
+        affected_rows(&execute_command_query(&mut runner, remove)),
+        1
+    );
+    assert_eq!(
+        affected_rows(&execute_command_query(&mut runner, remove)),
+        0
+    );
+}
+
+#[test]
+fn multi_link_mutation_pipeline_treats_missing_sources_and_targets_as_noops() {
+    let mut runner = setup_blog_database();
+
+    for source in [
+        r#"update User filter .email = "missing@example.com" set {
+            posts += (select Post { id })
+        }"#,
+        r#"update User filter .email = "carol@example.com" set {
+            posts -= (select Post { id } filter .title = "Missing")
+        }"#,
+    ] {
+        assert_eq!(
+            affected_rows(&execute_command_query(&mut runner, source)),
+            0
+        );
+    }
+}
+
+#[test]
+fn multi_link_mutation_pipeline_batches_multiple_sources_and_targets() {
+    let mut runner = setup_blog_database();
+    let result = execute_command_query(
+        &mut runner,
+        r#"update User filter .score >= 0 set {
+            posts += (select Post { id } filter .view_count >= 20)
+        }"#,
+    );
+
+    assert_eq!(affected_rows(&result), 4);
+}
+
+#[test]
+fn multi_link_mutation_pipeline_rolls_back_with_failing_transaction_script() {
+    let mut runner = setup_blog_database();
+    let catalog = runner
+        .load_schema_catalog()
+        .expect("catalog should load from metadata");
+    let script = gelite_commands::compile_script(
+        &catalog,
+        r#"start transaction;
+        update User filter .email = "carol@example.com" set {
+            posts += (select Post { id } filter .view_count >= 20)
+        };
+        insert User { email := "carol@example.com", score := 1 };
+        commit;"#,
+    )
+    .expect("transaction script should compile");
+
+    gelite_commands::execute_script(&mut runner, script)
+        .expect_err("duplicate email should fail and roll back");
+
+    let result = execute_command_query(
+        &mut runner,
+        r#"update User filter .email = "carol@example.com" set {
+            posts += (select Post { id } filter .view_count >= 20)
+        }"#,
+    );
+    assert_eq!(affected_rows(&result), 2);
+}
+
 #[test]
 fn select_pipeline_renders_in_filter_from_query_text() {
     let statement = render_query(

@@ -1,12 +1,12 @@
 mod fixtures;
 
 use crate::{
-    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CastExpr, CompareExpr, CompareOp,
-    DeleteQuery, Expr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderDirection, OrderExpr,
-    ResolvedComputedField, ResolvedPath, ResolvedPathError, ResolvedPathStep, ResolvedPathStepKind,
-    ResolvedShape, ResolvedShapeField, ResolvedShapeItem, SelectQuery, StringFunctionArg,
-    StringFunctionExpr, StringFunctionKind, UnaryArithmeticExpr, UnaryArithmeticOp, UpdateQuery,
-    ValueExpr,
+    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentOperator, AssignmentValue, CastExpr,
+    CompareExpr, CompareOp, DeleteQuery, Expr, InExpr, InOp, InRhs, InsertQuery, Literal,
+    OrderDirection, OrderExpr, ResolvedComputedField, ResolvedPath, ResolvedPathError,
+    ResolvedPathStep, ResolvedPathStepKind, ResolvedShape, ResolvedShapeField, ResolvedShapeItem,
+    SelectQuery, StringFunctionArg, StringFunctionExpr, StringFunctionKind, UnaryArithmeticExpr,
+    UnaryArithmeticOp, UpdateQuery, ValueExpr,
 };
 use alloc::boxed::Box;
 use alloc::string::ToString;
@@ -124,6 +124,29 @@ fn resolved_assignment_can_store_supported_value_kinds() {
     assert!(matches!(link_id.value(), AssignmentValue::LinkId(_)));
     assert_eq!(scalar_null.value(), &AssignmentValue::ScalarNull);
     assert_eq!(link_null.value(), &AssignmentValue::LinkNull);
+}
+
+#[test]
+fn resolved_assignment_can_store_multi_link_operation_and_target_select() {
+    let targets = SelectQuery::new(
+        user_type(),
+        ResolvedShape::new(user_type(), vec![]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+    let assignment = Assignment::with_operator(
+        post_author_field(),
+        AssignmentOperator::Add,
+        AssignmentValue::MultiLinkSelect(Box::new(targets)),
+    );
+
+    assert_eq!(assignment.operator(), AssignmentOperator::Add);
+    assert!(matches!(
+        assignment.value(),
+        AssignmentValue::MultiLinkSelect(_)
+    ));
 }
 
 #[test]

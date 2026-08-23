@@ -61,7 +61,8 @@ Gelite's current scope includes:
 - query compilation: `select`, `insert`, `update`, and `delete` parsing, semantic
   resolution, SQLite query planning, and SQL rendering
 - native query execution for the current `select`, `insert`, `update`, and `delete`
-  subsets, including nested single- and multi-link result shaping
+  subsets, including explicit multi-link add/remove mutations and nested
+  single- and multi-link result shaping
 - semicolon-terminated multi-statement query files with preflight compilation
   and explicit transaction validation
 - explicit `start transaction`, `commit`, and `rollback` commands in the

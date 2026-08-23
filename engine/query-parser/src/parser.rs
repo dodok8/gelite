@@ -3,9 +3,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::{string::String, string::ToString, vec};
 use query_ast::{
-    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentValue, CompareExpr, CompareOp, DeleteQuery,
-    Expr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderExpr, Path, PathStep, SelectQuery, Shape,
-    ShapeItem, TransactionCommand, UpdateQuery,
+    ArithmeticExpr, ArithmeticOp, Assignment, AssignmentOperator, AssignmentValue, CompareExpr,
+    CompareOp, DeleteQuery, Expr, InExpr, InOp, InRhs, InsertQuery, Literal, OrderExpr, Path,
+    PathStep, SelectQuery, Shape, ShapeItem, TransactionCommand, UpdateQuery,
 };
 
 /// Parses one MVP `select` statement from source text.
@@ -1082,6 +1082,8 @@ fn token_kind_description(token_kind: &TokenKind) -> &'static str {
         TokenKind::Comma => ",",
         TokenKind::Semicolon => ";",
         TokenKind::ColonEq => ":=",
+        TokenKind::PlusEq => "+=",
+        TokenKind::MinusEq => "-=",
         TokenKind::Colon => ":",
         TokenKind::Dot => ".",
         TokenKind::Eq => "=",
@@ -1129,13 +1131,16 @@ impl<'a> Parser<'a> {
     fn parse_insert_stmt(&mut self) -> Result<InsertQuery, ParseError> {
         self.expect_keyword(Keyword::Insert)?;
         let root_type_name = self.expect_ident()?;
-        let assignments = self.parse_assignments()?;
+        let assignments = self.parse_assignments(false)?;
         self.ensure_eof()?;
 
         Ok(InsertQuery::new(root_type_name, assignments))
     }
 
-    fn parse_assignments(&mut self) -> Result<Vec<Assignment>, ParseError> {
+    fn parse_assignments(
+        &mut self,
+        allow_multi_link_operators: bool,
+    ) -> Result<Vec<Assignment>, ParseError> {
         let mut results = Vec::new();
         self.expect_lbrace()?;
 
@@ -1147,7 +1152,7 @@ impl<'a> Parser<'a> {
             return Ok(results);
         }
 
-        results.push(self.parse_assignment()?);
+        results.push(self.parse_assignment(allow_multi_link_operators)?);
 
         loop {
             if self.consume_comma_if_present() {
@@ -1158,7 +1163,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
 
-                results.push(self.parse_assignment()?);
+                results.push(self.parse_assignment(allow_multi_link_operators)?);
                 continue;
             }
 
@@ -1184,12 +1189,40 @@ impl<'a> Parser<'a> {
         Ok(results)
     }
 
-    fn parse_assignment(&mut self) -> Result<Assignment, ParseError> {
+    fn parse_assignment(
+        &mut self,
+        allow_multi_link_operators: bool,
+    ) -> Result<Assignment, ParseError> {
         let field_name = self.expect_ident()?;
-        self.expect_token(TokenKind::ColonEq)?;
+        let operator = match self.peek().map(Token::kind) {
+            Some(TokenKind::ColonEq) => {
+                self.expect_token(TokenKind::ColonEq)?;
+                AssignmentOperator::Assign
+            }
+            Some(TokenKind::PlusEq) if allow_multi_link_operators => {
+                self.expect_token(TokenKind::PlusEq)?;
+                AssignmentOperator::Add
+            }
+            Some(TokenKind::MinusEq) if allow_multi_link_operators => {
+                self.expect_token(TokenKind::MinusEq)?;
+                AssignmentOperator::Remove
+            }
+            Some(_) => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedToken { expected: ":=" },
+                    self.peek().map(Token::span),
+                ));
+            }
+            None => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof { expected: ":=" },
+                    None,
+                ));
+            }
+        };
         let value = self.parse_assignment_value()?;
 
-        Ok(Assignment::new(field_name, value))
+        Ok(Assignment::with_operator(field_name, operator, value))
     }
 
     fn parse_assignment_value(&mut self) -> Result<AssignmentValue, ParseError> {
@@ -1227,7 +1260,7 @@ impl Parser<'_> {
         let target_type_name = self.expect_ident()?;
         let filter = self.parse_filter_clause()?;
         self.expect_keyword(Keyword::Set)?;
-        let assignments = self.parse_assignments()?;
+        let assignments = self.parse_assignments(true)?;
         self.ensure_eof()?;
 
         Ok(UpdateQuery::new(target_type_name, filter, assignments))
