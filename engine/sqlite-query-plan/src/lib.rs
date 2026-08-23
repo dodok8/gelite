@@ -218,6 +218,9 @@ fn plan_assignment(assignment: &query_ir::Assignment) -> SQLiteAssignment {
             format!("{}_id", field.name()),
             SQLiteAssignmentValue::Select(Box::new(plan_select(select))),
         ),
+        query_ir::AssignmentValue::MultiLinkSelect(_) => {
+            unreachable!("multi-link select requires a multi-link mutation plan")
+        }
         query_ir::AssignmentValue::ScalarNull => (
             field.name().to_string(),
             SQLiteAssignmentValue::Literal(SQLiteLiteral::Null),
