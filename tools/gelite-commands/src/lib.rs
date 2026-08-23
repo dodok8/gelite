@@ -366,12 +366,7 @@ pub fn format_query_result(result: &SQLiteQueryResult) -> String {
 
     lines.extend(result.rows().iter().map(|row| {
         row.iter()
-            .map(|value| match value {
-                SQLiteCellValue::Integer(value) => value.to_string(),
-                SQLiteCellValue::Real(value) => value.to_string(),
-                SQLiteCellValue::Text(value) => value.clone(),
-                SQLiteCellValue::Null => "NULL".to_string(),
-            })
+            .map(format_cell_value)
             .collect::<Vec<_>>()
             .join("\t")
     }));
@@ -381,6 +376,23 @@ pub fn format_query_result(result: &SQLiteQueryResult) -> String {
     }
 
     lines.join("\n")
+}
+
+fn format_cell_value(value: &SQLiteCellValue) -> String {
+    match value {
+        SQLiteCellValue::Integer(value) => value.to_string(),
+        SQLiteCellValue::Real(value) => value.to_string(),
+        SQLiteCellValue::Text(value) => value.clone(),
+        SQLiteCellValue::Object(fields) => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|(name, value)| format!("{name}: {}", format_cell_value(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        SQLiteCellValue::Null => "NULL".to_string(),
+    }
 }
 
 #[cfg(test)]

@@ -211,7 +211,12 @@ impl NativeSQLiteRunner {
             ));
         }
 
-        let selected_columns: Vec<(i32, String)> = if output_names.is_empty() {
+        let result_shape = statement.result_shape();
+        let selected_columns: Vec<(i32, String)> = if result_shape.is_some() {
+            (0..column_count)
+                .map(|index| (index, String::new()))
+                .collect()
+        } else if output_names.is_empty() {
             (0..column_count)
                 .map(|index| {
                     prepared
@@ -246,7 +251,10 @@ impl NativeSQLiteRunner {
             }
         }
 
-        Ok(SQLiteQueryResult::new(columns, rows))
+        match result_shape {
+            Some(shape) => crate::shape_query_result(shape, rows),
+            None => Ok(SQLiteQueryResult::new(columns, rows)),
+        }
     }
 
     pub fn execute_insert(

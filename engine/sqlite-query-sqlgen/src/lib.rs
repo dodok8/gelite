@@ -585,21 +585,47 @@ pub struct SQLiteResultField {
 }
 
 impl SQLiteResultShape {
+    pub fn new(identity_column_index: Option<usize>, fields: Vec<SQLiteResultField>) -> Self {
+        Self {
+            identity_column_index,
+            fields,
+        }
+    }
+
     pub fn identity_column_index(&self) -> Option<usize> {
         self.identity_column_index
     }
+
     pub fn fields(&self) -> &[SQLiteResultField] {
         &self.fields
     }
 }
 
 impl SQLiteResultField {
+    pub fn value(output_name: impl Into<String>, column_index: usize) -> Self {
+        Self {
+            output_name: output_name.into(),
+            column_index: Some(column_index),
+            nested_shape: None,
+        }
+    }
+
+    pub fn nested(output_name: impl Into<String>, nested_shape: SQLiteResultShape) -> Self {
+        Self {
+            output_name: output_name.into(),
+            column_index: None,
+            nested_shape: Some(nested_shape),
+        }
+    }
+
     pub fn output_name(&self) -> &str {
         &self.output_name
     }
+
     pub fn column_index(&self) -> Option<usize> {
         self.column_index
     }
+
     pub fn nested_shape(&self) -> Option<&SQLiteResultShape> {
         self.nested_shape.as_ref()
     }

@@ -49,6 +49,8 @@ query text
   -> schema-resolved Semantic IR
   -> SQLite-specific plan
   -> SQL text + bind values
+  -> SQLite execution
+  -> logical result shape
 ```
 
 ## 현재 범위
@@ -57,7 +59,8 @@ Gelite의 현재 범위는 다음과 같습니다.
 
 - query compilation: `select`, `insert`, `update`, `delete` parsing, semantic
   resolution, SQLite query planning, SQL rendering
-- 현재 `select`, `insert`, `update`, `delete` subset의 native query execution
+- nested single-link result shaping을 포함한 현재 `select`, `insert`, `update`,
+  `delete` subset의 native query execution
 - 사전 compile과 explicit transaction validation을 적용하는 semicolon 기반
   multi-statement query file
 - database-backed interactive REPL의 explicit `start transaction`, `commit`,
@@ -154,7 +157,8 @@ snapshot이나 재현 가능한 plan artifact로 사용하면 안 됩니다.
 - `sqlite-schema-plan`: SQLite-specific initial schema plan.
 - `sqlite-schema-sqlgen`: initial schema DDL과 metadata insert를 렌더링하는 SQL
   renderer.
-- `sqlite-runner`: native schema, query, transaction execution.
+- `sqlite-runner`: nested single-link result shaping을 포함한 native schema,
+  query, transaction execution.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: 공유 query compilation 및 execution orchestration.
 - `tools/repl`: 현재 pipeline을 query 하나로 확인하는 inspection tool.
@@ -162,7 +166,7 @@ snapshot이나 재현 가능한 plan artifact로 사용하면 안 됩니다.
 ## 아직 구현되지 않은 것
 
 - Migration diffing과 migration history.
-- Runtime nested result shaping.
+- 선택된 multi-link fetching과 result shaping.
 - HTTP API.
 - Web playground.
 
@@ -245,4 +249,4 @@ foundation에 기대하는 기준을 유지해야 합니다.
 - direct AST-to-SQL shortcut 금지
 - 현재 있는 것과 아직 없는 것을 정확히 말하는 documentation
 
-다음 기술 목표는 SQLite 결과를 logical nested object로 shape하는 것입니다.
+다음 기술 목표는 선택된 multi link를 fetch하고 shape하는 것입니다.
