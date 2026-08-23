@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+use sqlite_query_sqlgen::{SQLiteResultField, SQLiteResultShape, SQLiteStatement};
 use sqlite_schema_plan::SQLiteValuePlan;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -484,6 +485,105 @@ fn native_runner_can_execute_select_statement_with_bind_values() {
     assert_eq!(
         result.rows(),
         &[vec![crate::SQLiteCellValue::Text("Hello".to_string())]]
+    );
+}
+
+#[test]
+fn native_runner_shapes_present_and_missing_single_links() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement = SQLiteStatement::new(
+        "SELECT 'Draft', 'user-1', 'alice@example.com' UNION ALL SELECT 'Orphaned', NULL, NULL",
+        vec![],
+    )
+    .with_result_shape(SQLiteResultShape::new(
+        None,
+        vec![
+            SQLiteResultField::value("title", 0),
+            SQLiteResultField::nested(
+                "author",
+                SQLiteResultShape::new(Some(1), vec![SQLiteResultField::value("email", 2)]),
+            ),
+        ],
+    ));
+
+    let result = runner
+        .execute_select(&statement)
+        .expect("select should shape single links");
+
+    assert_eq!(
+        result.columns(),
+        &["title".to_string(), "author".to_string()]
+    );
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![
+                crate::SQLiteCellValue::Text("Draft".to_string()),
+                crate::SQLiteCellValue::Object(vec![(
+                    "email".to_string(),
+                    crate::SQLiteCellValue::Text("alice@example.com".to_string()),
+                )]),
+            ],
+            vec![
+                crate::SQLiteCellValue::Text("Orphaned".to_string()),
+                crate::SQLiteCellValue::Null,
+            ],
+        ]
+    );
+}
+
+#[test]
+fn result_shaping_moves_selected_text_without_cloning() {
+    let text = String::from("alice@example.com");
+    let allocation = text.as_ptr();
+    let mut row = vec![crate::SQLiteCellValue::Text(text)];
+    let shape = SQLiteResultShape::new(None, vec![SQLiteResultField::value("email", 0)]);
+
+    let result = crate::shape_fields(&shape, &mut row).expect("result should be shaped");
+
+    assert_eq!(row, [crate::SQLiteCellValue::Null]);
+    let crate::SQLiteCellValue::Text(value) = &result[0] else {
+        panic!("selected text should remain text");
+    };
+    assert_eq!(value.as_ptr(), allocation);
+}
+
+#[test]
+fn native_runner_rejects_out_of_range_result_field_column() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement = SQLiteStatement::new("SELECT 'Draft'", vec![]).with_result_shape(
+        SQLiteResultShape::new(None, vec![SQLiteResultField::value("title", 1)]),
+    );
+
+    let error = runner
+        .execute_select(&statement)
+        .expect_err("out-of-range result field should fail");
+
+    assert_eq!(
+        error.message(),
+        "result shape column index exceeds SQLite column count"
+    );
+}
+
+#[test]
+fn native_runner_rejects_out_of_range_nested_identity_column() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement =
+        SQLiteStatement::new("SELECT 'Draft'", vec![]).with_result_shape(SQLiteResultShape::new(
+            None,
+            vec![SQLiteResultField::nested(
+                "author",
+                SQLiteResultShape::new(Some(1), vec![]),
+            )],
+        ));
+
+    let error = runner
+        .execute_select(&statement)
+        .expect_err("out-of-range nested identity should fail");
+
+    assert_eq!(
+        error.message(),
+        "result shape identity index exceeds SQLite column count"
     );
 }
 

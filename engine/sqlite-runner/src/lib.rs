@@ -10,6 +10,8 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "native")]
+use sqlite_query_sqlgen::SQLiteResultShape;
 use sqlite_query_sqlgen::SQLiteStatement;
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
@@ -83,7 +85,60 @@ pub enum SQLiteCellValue {
     Integer(i64),
     Real(f64),
     Text(String),
+    Object(Vec<(String, SQLiteCellValue)>),
     Null,
+}
+
+#[cfg(feature = "native")]
+fn shape_fields(
+    shape: &SQLiteResultShape,
+    row: &mut [SQLiteCellValue],
+) -> Result<Vec<SQLiteCellValue>, SQLiteRunnerError> {
+    shape
+        .fields()
+        .iter()
+        .map(|field| match (field.column_index(), field.nested_shape()) {
+            (Some(index), None) => row
+                .get_mut(index)
+                .map(|value| core::mem::replace(value, SQLiteCellValue::Null))
+                .ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(
+                        "result shape column index exceeds SQLite column count",
+                    )
+                }),
+            (None, Some(nested_shape)) => shape_object(nested_shape, row),
+            _ => Err(SQLiteRunnerError::execution_failed(
+                "result shape field must contain either a column or a nested shape",
+            )),
+        })
+        .collect()
+}
+
+#[cfg(feature = "native")]
+fn shape_object(
+    shape: &SQLiteResultShape,
+    row: &mut [SQLiteCellValue],
+) -> Result<SQLiteCellValue, SQLiteRunnerError> {
+    if let Some(index) = shape.identity_column_index() {
+        match row.get(index) {
+            Some(SQLiteCellValue::Null) => return Ok(SQLiteCellValue::Null),
+            Some(_) => {}
+            None => {
+                return Err(SQLiteRunnerError::execution_failed(
+                    "result shape identity index exceeds SQLite column count",
+                ));
+            }
+        }
+    }
+
+    Ok(SQLiteCellValue::Object(
+        shape
+            .fields()
+            .iter()
+            .zip(shape_fields(shape, row)?)
+            .map(|(field, value)| (field.output_name().into(), value))
+            .collect(),
+    ))
 }
 
 /// Binding-neutral execution contract for rendered data statements.

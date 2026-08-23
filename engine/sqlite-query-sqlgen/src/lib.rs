@@ -19,9 +19,9 @@ use alloc::vec::Vec;
 use sqlite_query_plan::{
     SQLiteArithmeticOp, SQLiteAssignmentValue, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
     SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInRhs, SQLiteInsertPlan, SQLiteJoin,
-    SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteSelectPlan,
-    SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr,
-    SQLiteWhereExpr,
+    SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteResultShapePlan,
+    SQLiteSelectPlan, SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan,
+    SQLiteValueExpr, SQLiteWhereExpr,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -72,6 +72,7 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
         sql: clauses.join(" "),
         bind_values,
         output_names,
+        result_shape: Some(render_result_shape(plan.result_shape())),
     }
 }
 
@@ -525,6 +526,7 @@ pub struct SQLiteStatement {
     sql: String,
     bind_values: Vec<SQLiteBindValue>,
     output_names: Vec<Option<String>>,
+    result_shape: Option<SQLiteResultShape>,
 }
 
 impl SQLiteStatement {
@@ -533,7 +535,13 @@ impl SQLiteStatement {
             sql: sql.into(),
             bind_values,
             output_names: vec![],
+            result_shape: None,
         }
+    }
+
+    pub fn with_result_shape(mut self, result_shape: SQLiteResultShape) -> Self {
+        self.result_shape = Some(result_shape);
+        self
     }
 
     pub fn sql(&self) -> &str {
@@ -547,6 +555,10 @@ impl SQLiteStatement {
     pub fn output_names(&self) -> &[Option<String>] {
         &self.output_names
     }
+
+    pub fn result_shape(&self) -> Option<&SQLiteResultShape> {
+        self.result_shape.as_ref()
+    }
 }
 
 /// Bind value produced while rendering SQL placeholders.
@@ -557,6 +569,111 @@ pub enum SQLiteBindValue {
     Float64(f64),
     Bool(bool),
     Null,
+}
+
+/// Execution-time mapping from logical fields to a decoded physical SQLite row.
+///
+/// Identity and field column indexes are absolute positions in the complete
+/// physical row, including synthesized identity columns. Nested shapes share
+/// the same coordinate space. Field column indexes must be unique because
+/// shaping moves each selected value out of its physical slot.
+#[derive(Debug)]
+pub struct SQLiteResultShape {
+    identity_column_index: Option<usize>,
+    fields: Vec<SQLiteResultField>,
+}
+
+/// One logical output field backed by either a physical column or a nested shape.
+#[derive(Debug)]
+pub struct SQLiteResultField {
+    output_name: String,
+    column_index: Option<usize>,
+    nested_shape: Option<SQLiteResultShape>,
+}
+
+impl SQLiteResultShape {
+    /// Creates a result shape using absolute physical-row column indexes.
+    pub fn new(identity_column_index: Option<usize>, fields: Vec<SQLiteResultField>) -> Self {
+        Self {
+            identity_column_index,
+            fields,
+        }
+    }
+
+    pub fn identity_column_index(&self) -> Option<usize> {
+        self.identity_column_index
+    }
+
+    pub fn fields(&self) -> &[SQLiteResultField] {
+        &self.fields
+    }
+}
+
+impl SQLiteResultField {
+    pub fn value(output_name: impl Into<String>, column_index: usize) -> Self {
+        Self {
+            output_name: output_name.into(),
+            column_index: Some(column_index),
+            nested_shape: None,
+        }
+    }
+
+    pub fn nested(output_name: impl Into<String>, nested_shape: SQLiteResultShape) -> Self {
+        Self {
+            output_name: output_name.into(),
+            column_index: None,
+            nested_shape: Some(nested_shape),
+        }
+    }
+
+    pub fn output_name(&self) -> &str {
+        &self.output_name
+    }
+
+    pub fn column_index(&self) -> Option<usize> {
+        self.column_index
+    }
+
+    pub fn nested_shape(&self) -> Option<&SQLiteResultShape> {
+        self.nested_shape.as_ref()
+    }
+}
+
+fn render_result_shape(plan: &SQLiteResultShapePlan) -> SQLiteResultShape {
+    let mut next_column_index = 0;
+
+    render_result_shape_from(plan, &mut next_column_index)
+}
+
+fn render_result_shape_from(
+    plan: &SQLiteResultShapePlan,
+    next_column_index: &mut usize,
+) -> SQLiteResultShape {
+    let identity_column_index = plan.identity_value().map(|_| {
+        let index = *next_column_index;
+        *next_column_index += 1;
+        index
+    });
+
+    let fields = plan
+        .fields()
+        .iter()
+        .map(|field| match (field.value(), field.nested_shape()) {
+            (Some(_), None) => {
+                let column_index = *next_column_index;
+                *next_column_index += 1;
+
+                SQLiteResultField::value(field.output_name(), column_index)
+            }
+            (None, Some(nested_plan)) => SQLiteResultField::nested(
+                field.output_name(),
+                render_result_shape_from(nested_plan, next_column_index),
+            ),
+            _ => unreachable!("result field must contain either a value or a nested shape"),
+        })
+        .collect();
+
+    SQLiteResultShape::new(identity_column_index, fields)
 }
 
 #[cfg(test)]

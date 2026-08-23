@@ -211,23 +211,28 @@ impl NativeSQLiteRunner {
             ));
         }
 
-        let selected_columns: Vec<(i32, String)> = if output_names.is_empty() {
-            (0..column_count)
-                .map(|index| {
-                    prepared
-                        .column_name(index)
-                        .map(|name| (index, name.to_string()))
-                        .map_err(|error| self.result_error("read result column name", error))
-                })
-                .collect::<Result<_, _>>()?
+        let result_shape = statement.result_shape();
+        let (column_indexes, columns): (Vec<_>, Vec<_>) = if result_shape.is_some() {
+            ((0..column_count).collect(), Vec::new())
         } else {
-            (0..column_count)
-                .zip(output_names)
-                .filter_map(|(index, name)| name.as_ref().map(|name| (index, name.clone())))
-                .collect()
-        };
+            let selected_columns: Vec<(i32, String)> = if output_names.is_empty() {
+                (0..column_count)
+                    .map(|index| {
+                        prepared
+                            .column_name(index)
+                            .map(|name| (index, name.to_string()))
+                            .map_err(|error| self.result_error("read result column name", error))
+                    })
+                    .collect::<Result<_, _>>()?
+            } else {
+                (0..column_count)
+                    .zip(output_names)
+                    .filter_map(|(index, name)| name.as_ref().map(|name| (index, name.clone())))
+                    .collect()
+            };
 
-        let (column_indexes, columns): (Vec<_>, Vec<_>) = selected_columns.into_iter().unzip();
+            selected_columns.into_iter().unzip()
+        };
 
         let mut rows = Vec::new();
         loop {
@@ -246,7 +251,19 @@ impl NativeSQLiteRunner {
             }
         }
 
-        Ok(SQLiteQueryResult::new(columns, rows))
+        match result_shape {
+            Some(shape) => Ok(SQLiteQueryResult::new(
+                shape
+                    .fields()
+                    .iter()
+                    .map(|field| field.output_name().into())
+                    .collect(),
+                rows.into_iter()
+                    .map(|mut row| crate::shape_fields(shape, &mut row))
+                    .collect::<Result<_, _>>()?,
+            )),
+            None => Ok(SQLiteQueryResult::new(columns, rows)),
+        }
     }
 
     pub fn execute_insert(

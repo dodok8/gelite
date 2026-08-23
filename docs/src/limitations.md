@@ -3,9 +3,9 @@
 The examples document behavior that exists in the current pipeline. The main
 limitations are:
 
-- The REPL executes the supported queries but prints flat tab-separated rows.
-  Nested select shapes are present in the resolved IR and SQLite plan, but
-  runtime nested result reconstruction is not implemented.
+- The REPL reconstructs selected single links as nested objects while keeping
+  top-level rows tab-separated. Selected multi-link fetching and shaping are
+  not implemented.
 - `gelite repl --schema` compiles and renders queries but cannot execute them.
   Use `--debug` to inspect SQL and bind values.
 - `gelite repl --database` executes `select`, `insert`, `update`, and `delete`.

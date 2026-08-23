@@ -411,18 +411,25 @@ filter .title = "Draft""#,
 
     assert_eq!(
         result.columns(),
-        &[
-            "title".to_string(),
-            "email".to_string(),
-            "email".to_string(),
-        ]
+        &["title".to_string(), "author".to_string()]
     );
     assert_eq!(
         result.rows(),
         &[vec![
             SQLiteCellValue::Text("Draft".to_string()),
-            SQLiteCellValue::Text("alice@example.com".to_string()),
-            SQLiteCellValue::Text("blocked@example.com".to_string()),
+            SQLiteCellValue::Object(vec![
+                (
+                    "email".to_string(),
+                    SQLiteCellValue::Text("alice@example.com".to_string()),
+                ),
+                (
+                    "best_friend".to_string(),
+                    SQLiteCellValue::Object(vec![(
+                        "email".to_string(),
+                        SQLiteCellValue::Text("blocked@example.com".to_string()),
+                    )]),
+                ),
+            ]),
         ]]
     );
 }
@@ -439,13 +446,19 @@ fn select_pipeline_preserves_explicit_nested_id() {
 filter .title = "Draft""#,
     );
 
-    assert_eq!(result.columns(), &["id".to_string(), "email".to_string()]);
+    assert_eq!(result.columns(), &["author".to_string()]);
     assert_eq!(
         result.rows(),
-        &[vec![
-            SQLiteCellValue::Text("user-1".to_string()),
-            SQLiteCellValue::Text("alice@example.com".to_string()),
-        ]]
+        &[vec![SQLiteCellValue::Object(vec![
+            (
+                "id".to_string(),
+                SQLiteCellValue::Text("user-1".to_string()),
+            ),
+            (
+                "email".to_string(),
+                SQLiteCellValue::Text("alice@example.com".to_string()),
+            ),
+        ])]]
     );
 }
 
@@ -466,19 +479,74 @@ filter .email = "alice@example.com""#,
 
     assert_eq!(
         result.columns(),
-        &[
-            "email".to_string(),
-            "email".to_string(),
-            "email".to_string(),
-        ]
+        &["email".to_string(), "best_friend".to_string()]
     );
     assert_eq!(
         result.rows(),
         &[vec![
             SQLiteCellValue::Text("alice@example.com".to_string()),
-            SQLiteCellValue::Text("blocked@example.com".to_string()),
-            SQLiteCellValue::Text("carol@example.com".to_string()),
+            SQLiteCellValue::Object(vec![
+                (
+                    "email".to_string(),
+                    SQLiteCellValue::Text("blocked@example.com".to_string()),
+                ),
+                (
+                    "best_friend".to_string(),
+                    SQLiteCellValue::Object(vec![(
+                        "email".to_string(),
+                        SQLiteCellValue::Text("carol@example.com".to_string()),
+                    )]),
+                ),
+            ]),
         ]]
+    );
+}
+
+#[test]
+fn select_pipeline_shapes_missing_optional_single_link_as_null() {
+    let result = execute_query(
+        r#"select User {
+  email,
+  best_friend: { email }
+}
+filter .email = "carol@example.com""#,
+    );
+
+    assert_eq!(
+        result.columns(),
+        &["email".to_string(), "best_friend".to_string()]
+    );
+    assert_eq!(
+        result.rows(),
+        &[vec![
+            SQLiteCellValue::Text("carol@example.com".to_string()),
+            SQLiteCellValue::Null,
+        ]]
+    );
+}
+
+#[test]
+fn select_pipeline_preserves_nested_computed_output_name_and_order() {
+    let result = execute_query(
+        r#"select Post {
+  author: {
+    email,
+    rank := .score + 1
+  }
+}
+filter .title = "Draft""#,
+    );
+
+    assert_eq!(result.columns(), &["author".to_string()]);
+    assert_eq!(
+        result.rows(),
+        &[vec![SQLiteCellValue::Object(vec![
+            (
+                "email".to_string(),
+                SQLiteCellValue::Text("alice@example.com".to_string()),
+            ),
+            ("rank".to_string(), SQLiteCellValue::Integer(101)),
+        ])]]
     );
 }
 

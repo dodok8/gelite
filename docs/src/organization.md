@@ -118,5 +118,10 @@ filter .manager.id = null
 order by .name asc
 ```
 
-The REPL executes both queries but currently prints nested selections as flat
-tab-separated columns.
+The REPL preserves the top-level field order and renders selected links as
+nested objects. A missing optional link is `NULL`:
+
+```text
+employee_no\tname\ttitle\tdepartment\tmanager
+MG-667\tSheri Tachibana\tChief Investigator\t{code: INVESTIGATION, name: Investigation}\tNULL
+```

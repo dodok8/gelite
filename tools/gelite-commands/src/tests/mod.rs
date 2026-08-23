@@ -317,6 +317,31 @@ fn query_command_executes_all_supported_statement_kinds() {
 }
 
 #[test]
+fn format_query_result_renders_nested_objects_and_null() {
+    let result = SQLiteQueryResult::new(
+        vec!["title".to_string(), "author".to_string()],
+        vec![
+            vec![
+                SQLiteCellValue::Text("Draft".to_string()),
+                SQLiteCellValue::Object(vec![(
+                    "email".to_string(),
+                    SQLiteCellValue::Text("alice@example.com".to_string()),
+                )]),
+            ],
+            vec![
+                SQLiteCellValue::Text("Orphaned".to_string()),
+                SQLiteCellValue::Null,
+            ],
+        ],
+    );
+
+    assert_eq!(
+        format_query_result(&result),
+        "title\tauthor\nDraft\t{email: alice@example.com}\nOrphaned\tNULL"
+    );
+}
+
+#[test]
 fn query_command_reports_execution_errors() {
     let mut runner = RecordingQueryRunner {
         fail: true,
