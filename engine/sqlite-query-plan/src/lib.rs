@@ -28,7 +28,13 @@ use schema_model::{Cardinality, FieldRef, ObjectTypeRef};
 /// Lowers a resolved select query to a structured SQLite select plan.
 pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
     let root_object_type = ir.root_object_type().clone();
-    let root_identity_required = shape_has_direct_multi_link(ir.shape());
+    let root_identity_required = ir.shape().items().iter().any(|item| {
+        matches!(
+            item,
+            query_ir::ResolvedShapeItem::Field(field)
+                if field.cardinality() == Cardinality::Many
+        )
+    });
 
     // SELECT values and result-shape refs must assign computed aliases in the
     // same shape traversal order so the shaper reads the rendered SQL columns.
@@ -404,8 +410,6 @@ pub struct SQLiteFollowUpFetchPlan {
     parent_field: FieldRef,
     parent_identity: SQLiteResultValueRef,
     join_table_name: String,
-    source_column: String,
-    target_column: String,
     target_source: SQLiteObjectSource,
     selected_values: Vec<SQLiteSelectValue>,
     joins: Vec<SQLiteJoin>,
@@ -427,11 +431,11 @@ impl SQLiteFollowUpFetchPlan {
     }
 
     pub fn source_column(&self) -> &str {
-        &self.source_column
+        "source_id"
     }
 
     pub fn target_column(&self) -> &str {
-        &self.target_column
+        "target_id"
     }
 
     pub fn target_source(&self) -> &SQLiteObjectSource {
@@ -1123,16 +1127,6 @@ fn plan_result_shape(
     }
 }
 
-fn shape_has_direct_multi_link(shape: &query_ir::ResolvedShape) -> bool {
-    shape.items().iter().any(|item| {
-        matches!(
-            item,
-            query_ir::ResolvedShapeItem::Field(field)
-                if field.cardinality() == Cardinality::Many
-        )
-    })
-}
-
 fn plan_follow_up_fetches(
     shape: &query_ir::ResolvedShape,
     source_alias: &str,
@@ -1226,8 +1220,6 @@ fn plan_follow_up_fetch(
             sqlite_table_name(field.field().owner_object_type()),
             field.field().name()
         ),
-        source_column: "source_id".to_string(),
-        target_column: "target_id".to_string(),
         target_source: SQLiteObjectSource {
             object_type: target_object_type.clone(),
             table_name: sqlite_table_name(&target_object_type),
