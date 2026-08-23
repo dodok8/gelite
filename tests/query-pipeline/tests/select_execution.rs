@@ -161,6 +161,16 @@ fn insert_blog_fixture_rows(
             ],
         )
         .expect("second multi-link fixture row should insert");
+    runner
+        .execute_with_values(
+            "INSERT INTO user__posts (source_id, target_id, position) VALUES (?, ?, ?)",
+            &[
+                SQLiteValuePlan::Text("user-2".to_string()),
+                SQLiteValuePlan::Text("post-3".to_string()),
+                SQLiteValuePlan::Integer(0),
+            ],
+        )
+        .expect("third multi-link fixture row should insert");
 }
 
 fn execute_insert(
@@ -195,6 +205,15 @@ fn execute_query(source: &str) -> SQLiteQueryResult {
     runner
         .execute_select(&statement)
         .expect("select statement should execute")
+}
+
+fn execute_command_query(runner: &mut NativeSQLiteRunner, source: &str) -> SQLiteQueryResult {
+    let catalog = runner
+        .load_schema_catalog()
+        .expect("catalog should load from metadata");
+    let query = gelite_commands::compile_query(&catalog, source).expect("query should compile");
+
+    gelite_commands::execute_query(runner, query).expect("query should execute")
 }
 
 fn execute_update(runner: &mut NativeSQLiteRunner, source: &str) -> i64 {
@@ -738,42 +757,93 @@ fn select_pipeline_executes_membership_select_for_zero_one_and_multiple_rows() {
 }
 
 #[test]
-fn query_pipeline_executes_multi_link_schema_storage_setup() {
+fn select_pipeline_shapes_multi_links_for_zero_one_many_and_multiple_parents() {
     let mut runner = setup_blog_database();
-
-    assert_eq!(runner.table_exists("user__posts"), Ok(true));
-
-    let statement = SQLiteStatement::new(
-        "SELECT source_id, target_id, position FROM user__posts WHERE source_id = ? ORDER BY position ASC",
-        vec![SQLiteBindValue::String("user-1".to_string())],
+    let result = execute_command_query(
+        &mut runner,
+        "select User { email, posts: { title } } order by .email asc",
     );
-    let result = runner
-        .execute_select(&statement)
-        .expect("multi-link join table query should execute");
 
     assert_eq!(
         result.columns(),
-        &[
-            "source_id".to_string(),
-            "target_id".to_string(),
-            "position".to_string(),
-        ]
+        &["email".to_string(), "posts".to_string()]
     );
+    let lengths = result
+        .rows()
+        .iter()
+        .map(|row| match (&row[0], &row[1]) {
+            (SQLiteCellValue::Text(email), SQLiteCellValue::List(posts)) => {
+                assert!(posts.iter().all(|post| match post {
+                    SQLiteCellValue::Object(fields) => {
+                        fields.len() == 1 && fields[0].0 == "title"
+                    }
+                    _ => false,
+                }));
+                (email.as_str(), posts.len())
+            }
+            values => panic!("expected email and posts collection, got {values:?}"),
+        })
+        .collect::<Vec<_>>();
+
     assert_eq!(
-        result.rows(),
-        &[
-            vec![
-                SQLiteCellValue::Text("user-1".to_string()),
-                SQLiteCellValue::Text("post-1".to_string()),
-                SQLiteCellValue::Integer(0),
-            ],
-            vec![
-                SQLiteCellValue::Text("user-1".to_string()),
-                SQLiteCellValue::Text("post-2".to_string()),
-                SQLiteCellValue::Integer(1),
-            ],
+        lengths,
+        [
+            ("alice@example.com", 2),
+            ("blocked@example.com", 1),
+            ("carol@example.com", 0),
         ]
     );
+    assert!(result.parent_identities().iter().all(Option::is_none));
+    assert!(
+        result
+            .follow_up_parent_identities()
+            .iter()
+            .all(Vec::is_empty)
+    );
+}
+
+#[test]
+fn select_pipeline_recursively_shapes_multi_link_target_fields() {
+    let mut runner = setup_blog_database();
+    let result = execute_command_query(
+        &mut runner,
+        r#"select User {
+  posts: {
+    title,
+    score := .view_count + 1,
+    author: {
+      email,
+      posts: { title }
+    }
+  }
+}
+filter .email = "alice@example.com""#,
+    );
+
+    let SQLiteCellValue::List(posts) = &result.rows()[0][0] else {
+        panic!("posts should be a collection");
+    };
+    assert_eq!(posts.len(), 2);
+    for post in posts {
+        let SQLiteCellValue::Object(fields) = post else {
+            panic!("post should be an object");
+        };
+        assert_eq!(fields[0].0, "title");
+        assert_eq!(fields[1].0, "score");
+        assert!(matches!(fields[1].1, SQLiteCellValue::Integer(_)));
+        let SQLiteCellValue::Object(author) = &fields[2].1 else {
+            panic!("author should be an object");
+        };
+        assert_eq!(author[0].0, "email");
+        assert_eq!(
+            author[0].1,
+            SQLiteCellValue::Text("alice@example.com".to_string())
+        );
+        let SQLiteCellValue::List(nested_posts) = &author[1].1 else {
+            panic!("nested posts should be a collection");
+        };
+        assert_eq!(nested_posts.len(), 2);
+    }
 }
 
 #[test]
@@ -1056,6 +1126,9 @@ fn delete_pipeline_cascades_multi_link_rows() {
         .expect("remaining join rows should be readable");
     assert_eq!(
         result.rows(),
-        &[vec![SQLiteCellValue::Text("post-2".to_string())]]
+        &[
+            vec![SQLiteCellValue::Text("post-2".to_string())],
+            vec![SQLiteCellValue::Text("post-3".to_string())],
+        ]
     );
 }
