@@ -409,6 +409,21 @@ fn query_command_compiles_update() {
 }
 
 #[test]
+fn query_command_classifies_multi_link_mutation() {
+    for operator in ["+=", "-="] {
+        let compiled = compile_query(
+            &blog_catalog(),
+            &format!(
+                "update User filter .email = \"sheri@example.com\" set {{ posts {operator} (select Post {{ id }}) }}"
+            ),
+        )
+        .expect("multi-link mutation should compile");
+
+        assert_eq!(compiled.kind, QueryKind::MultiLinkMutation);
+    }
+}
+
+#[test]
 fn query_command_compiles_delete() {
     let compiled = compile_query(&blog_catalog(), r#"delete Post filter .title = "Draft""#)
         .expect("delete should compile");
