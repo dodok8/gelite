@@ -144,8 +144,52 @@ pub fn plan_insert(ir: &query_ir::InsertQuery) -> SQLiteInsertPlan {
 /// Lowers a resolved update query to a structured SQLite update plan.
 pub fn plan_update(ir: &query_ir::UpdateQuery) -> SQLiteUpdatePlan {
     let target_object_type = ir.target_object_type().clone();
-    let assignments = ir.assignments().iter().map(plan_assignment).collect();
     let (filter, joins) = plan_mutation_filter(ir.filter());
+    let multi_link_mutation = ir.assignments().first().and_then(|assignment| {
+        let operation = match assignment.operator() {
+            query_ir::AssignmentOperator::Assign => return None,
+            query_ir::AssignmentOperator::Add => SQLiteMultiLinkMutationOp::Add,
+            query_ir::AssignmentOperator::Remove => SQLiteMultiLinkMutationOp::Remove,
+        };
+        let query_ir::AssignmentValue::MultiLinkSelect(targets) = assignment.value() else {
+            unreachable!("multi-link operation must contain a resolved target select")
+        };
+        let source_id = object_identity_field(&target_object_type);
+        let sources = query_ir::SelectQuery::new(
+            target_object_type.clone(),
+            query_ir::ResolvedShape::new(
+                target_object_type.clone(),
+                vec![query_ir::ResolvedShapeField::new(
+                    "id",
+                    source_id,
+                    Cardinality::Required,
+                    None,
+                )],
+            ),
+            ir.filter().cloned(),
+            vec![],
+            None,
+            None,
+        );
+
+        Some(SQLiteMultiLinkMutationPlan {
+            operation,
+            join_table_name: format!(
+                "{}__{}",
+                sqlite_table_name(&target_object_type),
+                assignment.field().name()
+            ),
+            source_column: "source_id".to_string(),
+            target_column: "target_id".to_string(),
+            sources: Box::new(plan_select(&sources)),
+            targets: Box::new(plan_select(targets)),
+        })
+    });
+    let assignments = if multi_link_mutation.is_some() {
+        vec![]
+    } else {
+        ir.assignments().iter().map(plan_assignment).collect()
+    };
 
     SQLiteUpdatePlan {
         target: SQLiteObjectSource {
@@ -157,6 +201,7 @@ pub fn plan_update(ir: &query_ir::UpdateQuery) -> SQLiteUpdatePlan {
         assignments,
         filter,
         joins,
+        multi_link_mutation,
     }
 }
 
@@ -305,6 +350,7 @@ pub struct SQLiteUpdatePlan {
     assignments: Vec<SQLiteAssignment>,
     filter: Option<SQLiteWhereExpr>,
     joins: Vec<SQLiteJoin>,
+    multi_link_mutation: Option<SQLiteMultiLinkMutationPlan>,
 }
 
 impl SQLiteUpdatePlan {
@@ -322,6 +368,51 @@ impl SQLiteUpdatePlan {
 
     pub fn joins(&self) -> &[SQLiteJoin] {
         &self.joins
+    }
+
+    pub fn multi_link_mutation(&self) -> Option<&SQLiteMultiLinkMutationPlan> {
+        self.multi_link_mutation.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SQLiteMultiLinkMutationOp {
+    Add,
+    Remove,
+}
+
+pub struct SQLiteMultiLinkMutationPlan {
+    operation: SQLiteMultiLinkMutationOp,
+    join_table_name: String,
+    source_column: String,
+    target_column: String,
+    sources: Box<SQLiteSelectPlan>,
+    targets: Box<SQLiteSelectPlan>,
+}
+
+impl SQLiteMultiLinkMutationPlan {
+    pub fn operation(&self) -> SQLiteMultiLinkMutationOp {
+        self.operation
+    }
+
+    pub fn join_table_name(&self) -> &str {
+        &self.join_table_name
+    }
+
+    pub fn source_column(&self) -> &str {
+        &self.source_column
+    }
+
+    pub fn target_column(&self) -> &str {
+        &self.target_column
+    }
+
+    pub fn sources(&self) -> &SQLiteSelectPlan {
+        &self.sources
+    }
+
+    pub fn targets(&self) -> &SQLiteSelectPlan {
+        &self.targets
     }
 }
 

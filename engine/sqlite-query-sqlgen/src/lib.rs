@@ -19,9 +19,10 @@ use alloc::vec::Vec;
 use sqlite_query_plan::{
     SQLiteArithmeticOp, SQLiteAssignmentValue, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
     SQLiteFollowUpFetchPlan, SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInRhs, SQLiteInsertPlan,
-    SQLiteJoin, SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection,
-    SQLiteResultShapePlan, SQLiteSelectPlan, SQLiteSelectValue, SQLiteStringFunctionKind,
-    SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr, SQLiteWhereExpr,
+    SQLiteJoin, SQLiteJoinKind, SQLiteLiteral, SQLiteMultiLinkMutationOp,
+    SQLiteMultiLinkMutationPlan, SQLiteObjectSource, SQLiteOrderDirection, SQLiteResultShapePlan,
+    SQLiteSelectPlan, SQLiteSelectValue, SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp,
+    SQLiteUpdatePlan, SQLiteValueExpr, SQLiteWhereExpr,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -158,6 +159,10 @@ pub fn render_insert(plan: &SQLiteInsertPlan, generated_id: &str) -> SQLiteState
 
 /// Renders a structured SQLite update plan into SQL text and bind values.
 pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
+    if let Some(mutation) = plan.multi_link_mutation() {
+        return render_multi_link_mutation(mutation);
+    }
+
     let mut bind_values = Vec::new();
     let assignments = plan
         .assignments()
@@ -191,6 +196,40 @@ pub fn render_update(plan: &SQLiteUpdatePlan) -> SQLiteStatement {
         plan.joins(),
         &mut bind_values,
     );
+
+    SQLiteStatement::new(sql, bind_values)
+}
+
+fn render_multi_link_mutation(plan: &SQLiteMultiLinkMutationPlan) -> SQLiteStatement {
+    let sources = render_select(plan.sources());
+    let targets = render_select(plan.targets());
+    let mut bind_values = sources.bind_values().to_vec();
+    bind_values.extend_from_slice(targets.bind_values());
+
+    let sql = match plan.operation() {
+        SQLiteMultiLinkMutationOp::Add => format!(
+            "INSERT INTO {} ({}, {}) SELECT {}, {} FROM ({}) AS {} CROSS JOIN ({}) AS {} ON CONFLICT ({}, {}) DO NOTHING",
+            quote_identifier(plan.join_table_name()),
+            quote_identifier(plan.source_column()),
+            quote_identifier(plan.target_column()),
+            render_qualified_identifier("source", "id"),
+            render_qualified_identifier("target", "id"),
+            sources.sql(),
+            quote_identifier("source"),
+            targets.sql(),
+            quote_identifier("target"),
+            quote_identifier(plan.source_column()),
+            quote_identifier(plan.target_column()),
+        ),
+        SQLiteMultiLinkMutationOp::Remove => format!(
+            "DELETE FROM {} WHERE {} IN ({}) AND {} IN ({})",
+            quote_identifier(plan.join_table_name()),
+            quote_identifier(plan.source_column()),
+            sources.sql(),
+            quote_identifier(plan.target_column()),
+            targets.sql(),
+        ),
+    };
 
     SQLiteStatement::new(sql, bind_values)
 }
