@@ -572,6 +572,7 @@ mod tests {
                 ExecutionRequest::Query(CompiledQuery {
                     kind: QueryKind::Insert { .. },
                     statement,
+                    ..
                 }) => runner
                     .execute_insert(&statement)
                     .map(|()| None)

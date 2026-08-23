@@ -120,6 +120,16 @@ pub struct CompiledQuery {
     select_plan: Option<Box<sqlite_query_plan::SQLiteSelectPlan>>,
 }
 
+impl CompiledQuery {
+    pub fn new(kind: QueryKind, statement: SQLiteStatement) -> Self {
+        Self {
+            kind,
+            statement,
+            select_plan: None,
+        }
+    }
+}
+
 pub struct CompiledScript {
     statements: Vec<CompiledScriptStatement>,
 }
@@ -308,11 +318,12 @@ pub fn execute_query(
 
     match kind {
         QueryKind::Select => runner.execute_select(&statement).and_then(|mut result| {
-            let plan = select_plan.expect("select query should retain its SQLite plan");
-            let shape = statement
-                .result_shape()
-                .expect("rendered select should retain its result shape");
-            execute_follow_ups(runner, plan.follow_up_fetches(), shape, &mut result)?;
+            if let Some(plan) = select_plan {
+                let shape = statement
+                    .result_shape()
+                    .expect("rendered select should retain its result shape");
+                execute_follow_ups(runner, plan.follow_up_fetches(), shape, &mut result)?;
+            }
             result.clear_internal_identities();
 
             Ok(result)
