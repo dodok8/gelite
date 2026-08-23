@@ -307,6 +307,48 @@ fn multi_link_mutation_pipeline_treats_missing_sources_and_targets_as_noops() {
 }
 
 #[test]
+fn multi_link_mutation_pipeline_batches_multiple_sources_and_targets() {
+    let mut runner = setup_blog_database();
+    let result = execute_command_query(
+        &mut runner,
+        r#"update User filter .score >= 0 set {
+            posts += (select Post { id } filter .view_count >= 20)
+        }"#,
+    );
+
+    assert_eq!(affected_rows(&result), 4);
+}
+
+#[test]
+fn multi_link_mutation_pipeline_rolls_back_with_failing_transaction_script() {
+    let mut runner = setup_blog_database();
+    let catalog = runner
+        .load_schema_catalog()
+        .expect("catalog should load from metadata");
+    let script = gelite_commands::compile_script(
+        &catalog,
+        r#"start transaction;
+        update User filter .email = "carol@example.com" set {
+            posts += (select Post { id } filter .view_count >= 20)
+        };
+        insert User { email := "carol@example.com", score := 1 };
+        commit;"#,
+    )
+    .expect("transaction script should compile");
+
+    gelite_commands::execute_script(&mut runner, script)
+        .expect_err("duplicate email should fail and roll back");
+
+    let result = execute_command_query(
+        &mut runner,
+        r#"update User filter .email = "carol@example.com" set {
+            posts += (select Post { id } filter .view_count >= 20)
+        }"#,
+    );
+    assert_eq!(affected_rows(&result), 2);
+}
+
+#[test]
 fn select_pipeline_renders_in_filter_from_query_text() {
     let statement = render_query(
         r#"select Post { title } filter .title in ["Draft", "Published"] order by .title asc limit 20"#,
