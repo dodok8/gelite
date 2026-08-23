@@ -218,9 +218,10 @@ fn run_query_command(command: QueryCommand) -> Result<(), String> {
                 if let Some(statement) = statement.statement() {
                     println!("Bind values: {:?}", statement.bind_values());
                 }
-                if let Some(message) = statement.deferred_follow_up_plan_message() {
-                    println!("{message}");
-                }
+                statement
+                    .deferred_follow_up_plan_message()
+                    .into_iter()
+                    .for_each(|message| println!("{message}"));
             }
 
             Ok(())
