@@ -410,9 +410,14 @@ fn query_command_compiles_update() {
 
 #[test]
 fn query_command_classifies_multi_link_mutation() {
+    let catalog = schema_parser::parse_schema(
+        "type User { required email: str multi link posts: Post } type Post { required title: str }",
+    )
+    .expect("multi-link schema should parse");
+
     for operator in ["+=", "-="] {
         let compiled = compile_query(
-            &blog_catalog(),
+            &catalog,
             &format!(
                 "update User filter .email = \"sheri@example.com\" set {{ posts {operator} (select Post {{ id }}) }}"
             ),
