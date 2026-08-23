@@ -86,6 +86,31 @@ fn rejects_multi_link_mutation_with_wrong_target_type() {
 }
 
 #[test]
+fn rejects_multi_link_mutation_on_single_link() {
+    let catalog = post_with_author_catalog();
+    let select = select_assignment("author", "User", &["id"], None, None);
+    let query = UpdateQuery::new(
+        "Post",
+        None,
+        vec![Assignment::with_operator(
+            "author",
+            AssignmentOperator::Add,
+            select.value().clone(),
+        )],
+    );
+
+    let error = resolve_update(&catalog, &query).expect_err("single link add should fail");
+    assert_eq!(
+        error,
+        ResolveError::InvalidMultiLinkMutation {
+            object_type: "Post".to_string(),
+            field: "author".to_string(),
+            reason: "assignment target is not a multi link".to_string(),
+        }
+    );
+}
+
+#[test]
 fn rejects_multi_link_mutation_that_does_not_project_only_id() {
     let catalog = user_with_posts_catalog();
     let query = UpdateQuery::new(

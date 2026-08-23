@@ -180,6 +180,17 @@ pub fn resolve_update(
         });
     }
 
+    if query.assignments().len() != 1
+        && query
+            .assignments()
+            .iter()
+            .any(|assignment| assignment.operator() != query_ast::AssignmentOperator::Assign)
+    {
+        return Err(ResolveError::MultiLinkMutationMustBeExclusive {
+            object_type: target_object_type.name().to_string(),
+        });
+    }
+
     let filter = query
         .filter()
         .map(|expr| resolve_expr(catalog, &target_object_type, expr))
@@ -258,16 +269,86 @@ fn resolve_assignment(
         .find_field_ref(target_object_type.name(), assignment.field_name())
         .expect("field ref should exist for a field found in the catalog");
 
-    let value = match assignment.value() {
-        query_ast::AssignmentValue::Literal(literal) => {
+    let value = match (assignment.operator(), assignment.value()) {
+        (query_ast::AssignmentOperator::Assign, query_ast::AssignmentValue::Literal(literal)) => {
             resolve_assignment_value(target_object_type, field, literal)?
         }
-        query_ast::AssignmentValue::Select(select) => {
+        (query_ast::AssignmentOperator::Assign, query_ast::AssignmentValue::Select(select)) => {
             resolve_link_select_assignment(catalog, target_object_type, field, select)?
+        }
+        (
+            query_ast::AssignmentOperator::Add | query_ast::AssignmentOperator::Remove,
+            query_ast::AssignmentValue::Select(select),
+        ) => resolve_multi_link_select_assignment(catalog, target_object_type, field, select)?,
+        (
+            query_ast::AssignmentOperator::Add | query_ast::AssignmentOperator::Remove,
+            query_ast::AssignmentValue::Literal(_),
+        ) => {
+            return Err(ResolveError::InvalidMultiLinkMutation {
+                object_type: target_object_type.name().to_string(),
+                field: field.name().to_string(),
+                reason: "mutation value must be a target select".to_string(),
+            });
         }
     };
 
-    Ok(query_ir::Assignment::new(field_ref, value))
+    Ok(query_ir::Assignment::with_operator(
+        field_ref,
+        match assignment.operator() {
+            query_ast::AssignmentOperator::Assign => query_ir::AssignmentOperator::Assign,
+            query_ast::AssignmentOperator::Add => query_ir::AssignmentOperator::Add,
+            query_ast::AssignmentOperator::Remove => query_ir::AssignmentOperator::Remove,
+        },
+        value,
+    ))
+}
+
+fn resolve_multi_link_select_assignment(
+    catalog: &schema_model::SchemaCatalog,
+    target_object_type: &schema_model::ObjectTypeRef,
+    field: &Field,
+    select: &query_ast::SelectQuery,
+) -> Result<query_ir::AssignmentValue, ResolveError> {
+    let invalid = |reason: &str| ResolveError::InvalidMultiLinkMutation {
+        object_type: target_object_type.name().to_string(),
+        field: field.name().to_string(),
+        reason: reason.to_string(),
+    };
+    let Field::Link(link) = field else {
+        return Err(invalid("assignment target is not a multi link"));
+    };
+
+    if link.cardinality() != schema_model::Cardinality::Many {
+        return Err(invalid("assignment target is not a multi link"));
+    }
+    if select.root_type_name() != link.target_type_name() {
+        return Err(invalid("select root does not match the link target"));
+    }
+
+    let resolved = resolve_select(catalog, select)?;
+    if !select_projects_implicit_id(catalog, &resolved) {
+        return Err(invalid("select must project exactly the implicit id"));
+    }
+
+    Ok(query_ir::AssignmentValue::MultiLinkSelect(Box::new(
+        resolved,
+    )))
+}
+
+fn select_projects_implicit_id(
+    catalog: &schema_model::SchemaCatalog,
+    select: &query_ir::SelectQuery,
+) -> bool {
+    let [query_ir::ResolvedShapeItem::Field(selected_field)] = select.shape().items() else {
+        return false;
+    };
+
+    catalog
+        .find_field(
+            select.root_object_type().name(),
+            selected_field.field().name(),
+        )
+        .is_some_and(Field::is_implicit)
 }
 
 fn resolve_link_select_assignment(
@@ -298,17 +379,7 @@ fn resolve_link_select_assignment(
     }
 
     let resolved = resolve_select(catalog, select)?;
-    let [query_ir::ResolvedShapeItem::Field(selected_field)] = resolved.shape().items() else {
-        return Err(invalid("select must project exactly the implicit id"));
-    };
-    let projects_implicit_id = catalog
-        .find_field(
-            resolved.root_object_type().name(),
-            selected_field.field().name(),
-        )
-        .is_some_and(Field::is_implicit);
-
-    if !projects_implicit_id {
+    if !select_projects_implicit_id(catalog, &resolved) {
         return Err(invalid("select must project exactly the implicit id"));
     }
 
@@ -1819,6 +1890,14 @@ pub enum ResolveError {
     MultiLinkAssignmentUnsupported {
         object_type: String,
         field: String,
+    },
+    InvalidMultiLinkMutation {
+        object_type: String,
+        field: String,
+        reason: String,
+    },
+    MultiLinkMutationMustBeExclusive {
+        object_type: String,
     },
     InvalidLinkSelectAssignment {
         object_type: String,
