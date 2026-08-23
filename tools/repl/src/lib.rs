@@ -328,11 +328,8 @@ fn print_compiled_query(query: &CompiledQuery, debug: bool) {
     } else {
         println!("{}", query.statement.sql());
     }
-    let follow_up_count = query.deferred_follow_up_count();
-    if follow_up_count > 0 {
-        println!(
-            "Deferred follow-up queries: {follow_up_count} (rendered after parent identities are known)"
-        );
+    if let Some(message) = query.deferred_follow_up_plan_message() {
+        println!("{message}");
     }
 }
 

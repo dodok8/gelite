@@ -131,11 +131,18 @@ impl CompiledQuery {
         }
     }
 
-    pub fn deferred_follow_up_count(&self) -> usize {
-        self.select_plan
+    pub fn deferred_follow_up_plan_message(&self) -> Option<String> {
+        let count = self
+            .select_plan
             .as_deref()
             .map(|plan| count_follow_ups(plan.follow_up_fetches()))
-            .unwrap_or(0)
+            .unwrap_or(0);
+
+        (count > 0).then(|| {
+            format!(
+                "Deferred follow-up plans: {count} (query batches are determined after parent identities are known)"
+            )
+        })
     }
 }
 
@@ -178,10 +185,10 @@ impl CompiledScriptStatement {
         }
     }
 
-    pub fn deferred_follow_up_count(&self) -> usize {
+    pub fn deferred_follow_up_plan_message(&self) -> Option<String> {
         match self {
-            Self::Query(query) => query.deferred_follow_up_count(),
-            Self::Transaction(_) => 0,
+            Self::Query(query) => query.deferred_follow_up_plan_message(),
+            Self::Transaction(_) => None,
         }
     }
 }
