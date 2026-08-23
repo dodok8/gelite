@@ -8,8 +8,9 @@ use super::fixtures::{
     post_generated_join_name_path_value, post_id_path_value, post_id_shape_field,
     post_query_with_shape, post_title_field, post_title_path_value, post_title_shape_field,
     post_type, post_view_count_path_value, user_best_friend_score_path_value,
-    user_best_friend_with_best_friend_shape_field, user_name_shape_field, user_query_with_shape,
-    user_score_field, user_type,
+    user_best_friend_with_best_friend_shape_field, user_name_shape_field, user_posts_shape_field,
+    user_posts_with_author_shape_field, user_posts_with_nested_posts_shape_field,
+    user_query_with_shape, user_score_field, user_type,
 };
 use crate::{
     SQLiteArithmeticOp, SQLiteCastTarget, SQLiteCompareOp, SQLiteInExpr, SQLiteInOp, SQLiteInRhs,
@@ -2476,11 +2477,109 @@ fn sqlite_select_plan_uses_left_join_for_nested_selected_link_under_optional_sou
 }
 
 #[test]
-#[should_panic(expected = "multi link joins are not supported yet")]
-fn sqlite_select_plan_preserves_multi_link_cardinality_under_optional_source() {
+fn sqlite_select_plan_plans_multi_link_under_optional_source_as_follow_up() {
     let ir = post_query_with_shape(vec![optional_post_author_with_posts_shape_field()]);
 
-    let _ = plan_select(&ir);
+    let plan = plan_select(&ir);
+
+    assert_eq!(plan.joins().len(), 1);
+    assert_eq!(plan.joins()[0].kind(), SQLiteJoinKind::Left);
+
+    let fetch = &plan.follow_up_fetches()[0];
+    assert_eq!(fetch.parent_identity().source_alias(), "author");
+    assert_eq!(fetch.parent_identity().column_name(), "id");
+    assert_eq!(fetch.parent_field().name(), "posts");
+    assert_eq!(fetch.join_table_name(), "user__posts");
+}
+
+#[test]
+fn sqlite_select_plan_plans_root_multi_link_follow_up() {
+    let ir = user_query_with_shape(vec![user_posts_shape_field()]);
+
+    let plan = plan_select(&ir);
+
+    assert!(plan.joins().is_empty());
+    assert_eq!(plan.selected_values().len(), 1);
+    assert_selected_field(
+        &plan.selected_values()[0],
+        "root",
+        "id",
+        None,
+        "id",
+        SQLiteValueRole::ObjectId,
+    );
+
+    let identity = plan
+        .result_shape()
+        .identity_value()
+        .expect("root shape should retain parent identity");
+    assert_eq!(identity.source_alias(), "root");
+    assert_eq!(identity.column_name(), "id");
+
+    let fetch = &plan.follow_up_fetches()[0];
+    assert_eq!(fetch.parent_field().name(), "posts");
+    assert_eq!(fetch.parent_identity().source_alias(), "root");
+    assert_eq!(fetch.parent_identity().column_name(), "id");
+    assert_eq!(fetch.join_table_name(), "user__posts");
+    assert_eq!(fetch.source_column(), "source_id");
+    assert_eq!(fetch.target_column(), "target_id");
+    assert_eq!(fetch.target_source().object_type().name(), "Post");
+    assert_eq!(fetch.target_source().table_name(), "post");
+    assert_eq!(fetch.target_source().alias(), "root");
+
+    assert_eq!(fetch.selected_values().len(), 2);
+    assert_selected_field(
+        &fetch.selected_values()[0],
+        "root",
+        "id",
+        None,
+        "id",
+        SQLiteValueRole::ObjectId,
+    );
+    assert_selected_field(
+        &fetch.selected_values()[1],
+        "root",
+        "title",
+        Some("title"),
+        "title",
+        SQLiteValueRole::Scalar,
+    );
+    assert!(fetch.joins().is_empty());
+    assert!(fetch.follow_up_fetches().is_empty());
+}
+
+#[test]
+fn sqlite_multi_link_follow_up_reuses_single_link_shape_planning() {
+    let ir = user_query_with_shape(vec![user_posts_with_author_shape_field()]);
+
+    let plan = plan_select(&ir);
+    let fetch = &plan.follow_up_fetches()[0];
+
+    assert_eq!(fetch.joins().len(), 1);
+    assert_eq!(fetch.joins()[0].source_alias(), "root");
+    assert_eq!(fetch.joins()[0].target_table(), "user");
+    assert_eq!(fetch.joins()[0].target_alias(), "author");
+    assert_eq!(fetch.selected_values().len(), 4);
+
+    let author = &fetch.result_shape().fields()[1];
+    assert_eq!(author.output_name(), "author");
+    assert_eq!(author.cardinality(), schema_model::Cardinality::Required);
+    assert!(author.nested_shape().is_some());
+}
+
+#[test]
+fn sqlite_multi_link_follow_up_plans_nested_multi_link_recursively() {
+    let ir = user_query_with_shape(vec![user_posts_with_nested_posts_shape_field()]);
+
+    let plan = plan_select(&ir);
+    let posts = &plan.follow_up_fetches()[0];
+
+    assert_eq!(posts.follow_up_fetches().len(), 1);
+    let nested_posts = &posts.follow_up_fetches()[0];
+    assert_eq!(nested_posts.parent_identity().source_alias(), "author");
+    assert_eq!(nested_posts.parent_identity().column_name(), "id");
+    assert_eq!(nested_posts.join_table_name(), "user__posts");
+    assert_eq!(nested_posts.target_source().object_type().name(), "Post");
 }
 
 #[test]

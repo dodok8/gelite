@@ -390,6 +390,49 @@ pub fn optional_post_author_with_posts_shape_field() -> query_ir::ResolvedShapeF
     )
 }
 
+pub fn user_posts_shape_field() -> query_ir::ResolvedShapeField {
+    let posts_shape = query_ir::ResolvedShape::new(post_type(), vec![post_title_shape_field()]);
+
+    query_ir::ResolvedShapeField::new(
+        "posts",
+        user_posts_field(),
+        schema_model::Cardinality::Many,
+        Some(posts_shape),
+    )
+}
+
+pub fn user_posts_with_author_shape_field() -> query_ir::ResolvedShapeField {
+    let posts_shape = query_ir::ResolvedShape::new(
+        post_type(),
+        vec![post_title_shape_field(), post_author_shape_field()],
+    );
+
+    query_ir::ResolvedShapeField::new(
+        "posts",
+        user_posts_field(),
+        schema_model::Cardinality::Many,
+        Some(posts_shape),
+    )
+}
+
+pub fn user_posts_with_nested_posts_shape_field() -> query_ir::ResolvedShapeField {
+    let author_shape = query_ir::ResolvedShape::new(user_type(), vec![user_posts_shape_field()]);
+    let author = query_ir::ResolvedShapeField::new(
+        "author",
+        post_author_field(),
+        schema_model::Cardinality::Required,
+        Some(author_shape),
+    );
+    let posts_shape = query_ir::ResolvedShape::new(post_type(), vec![author]);
+
+    query_ir::ResolvedShapeField::new(
+        "posts",
+        user_posts_field(),
+        schema_model::Cardinality::Many,
+        Some(posts_shape),
+    )
+}
+
 pub fn post_best_friend_shape_field() -> query_ir::ResolvedShapeField {
     let best_friend_shape =
         query_ir::ResolvedShape::new(user_type(), vec![user_name_shape_field()]);
