@@ -2549,6 +2549,31 @@ fn sqlite_select_plan_plans_root_multi_link_follow_up() {
 }
 
 #[test]
+fn sqlite_select_plan_preserves_multi_link_output_position() {
+    let score = ResolvedShapeField::new(
+        "score",
+        user_score_field(),
+        schema_model::Cardinality::Required,
+        None,
+    );
+    let ir = user_query_with_shape(vec![
+        user_name_shape_field(),
+        user_posts_shape_field(),
+        score,
+    ]);
+
+    let plan = plan_select(&ir);
+    let fields = plan.result_shape().fields();
+
+    assert_eq!(fields.len(), 3);
+    assert_eq!(fields[0].output_name(), "name");
+    assert_eq!(fields[1].output_name(), "posts");
+    assert_eq!(fields[1].cardinality(), schema_model::Cardinality::Many);
+    assert_eq!(fields[1].follow_up_fetch_index(), Some(0));
+    assert_eq!(fields[2].output_name(), "score");
+}
+
+#[test]
 fn sqlite_multi_link_follow_up_reuses_single_link_shape_planning() {
     let ir = user_query_with_shape(vec![user_posts_with_author_shape_field()]);
 
@@ -2580,6 +2605,13 @@ fn sqlite_multi_link_follow_up_plans_nested_multi_link_recursively() {
     assert_eq!(nested_posts.parent_identity().column_name(), "id");
     assert_eq!(nested_posts.join_table_name(), "user__posts");
     assert_eq!(nested_posts.target_source().object_type().name(), "Post");
+
+    let author = &posts.result_shape().fields()[0];
+    let author_shape = author
+        .nested_shape()
+        .expect("author should retain its result shape");
+    assert_eq!(author_shape.fields()[0].output_name(), "posts");
+    assert_eq!(author_shape.fields()[0].follow_up_fetch_index(), Some(0));
 }
 
 #[test]

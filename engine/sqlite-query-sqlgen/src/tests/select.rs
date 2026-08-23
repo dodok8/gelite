@@ -163,6 +163,46 @@ fn sqlite_sqlgen_maps_rendered_columns_to_nested_result_shape() {
 }
 
 #[test]
+fn sqlite_sqlgen_defers_multi_link_result_fields_to_follow_up_rendering() {
+    let posts_shape = query_ir::ResolvedShape::new(post_type(), vec![post_title_shape_field()]);
+    let posts = query_ir::ResolvedShapeField::new(
+        "posts",
+        schema_model::FieldRef::new(schema_model::FieldId::new(3), user_type(), "posts"),
+        schema_model::Cardinality::Many,
+        Some(posts_shape),
+    );
+    let ir = query_ir::SelectQuery::new(
+        user_type(),
+        query_ir::ResolvedShape::new(user_type(), vec![posts]),
+        None,
+        vec![],
+        None,
+        None,
+    );
+    let plan = sqlite_query_plan::plan_select(&ir);
+
+    assert_eq!(plan.result_shape().fields()[0].output_name(), "posts");
+    assert_eq!(
+        plan.result_shape().fields()[0].follow_up_fetch_index(),
+        Some(0)
+    );
+
+    let statement = render_select(&plan);
+
+    assert_eq!(
+        statement.sql(),
+        "SELECT \"root\".\"id\" FROM \"user\" AS \"root\""
+    );
+    assert!(
+        statement
+            .result_shape()
+            .expect("root result shape should be rendered")
+            .fields()
+            .is_empty()
+    );
+}
+
+#[test]
 fn sqlite_sqlgen_can_render_root_scalar_equals_string_filter() {
     let filter = query_ir::Expr::Compare(query_ir::CompareExpr::new(
         post_title_path_value(),
