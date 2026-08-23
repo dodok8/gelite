@@ -218,6 +218,10 @@ fn run_query_command(command: QueryCommand) -> Result<(), String> {
                 if let Some(statement) = statement.statement() {
                     println!("Bind values: {:?}", statement.bind_values());
                 }
+                statement
+                    .deferred_follow_up_plan_message()
+                    .into_iter()
+                    .for_each(|message| println!("{message}"));
             }
 
             Ok(())
@@ -421,18 +425,18 @@ mod tests {
 
         let insert = execute_request(
             &mut runner,
-            ExecutionRequest::Query(CompiledQuery {
-                kind: QueryKind::Insert {
+            ExecutionRequest::Query(CompiledQuery::new(
+                QueryKind::Insert {
                     generated_id: "entry-1".to_string(),
                 },
-                statement: SQLiteStatement::new(
+                SQLiteStatement::new(
                     "INSERT INTO entry (id, value) VALUES (?, ?)",
                     vec![
                         SQLiteBindValue::String("entry-1".to_string()),
                         SQLiteBindValue::Int64(1),
                     ],
                 ),
-            }),
+            )),
         )
         .expect("insert should execute")
         .expect("insert should return the generated id");
@@ -443,10 +447,10 @@ mod tests {
 
         let select = execute_request(
             &mut runner,
-            ExecutionRequest::Query(CompiledQuery {
-                kind: QueryKind::Select,
-                statement: SQLiteStatement::new("SELECT value FROM entry", vec![]),
-            }),
+            ExecutionRequest::Query(CompiledQuery::new(
+                QueryKind::Select,
+                SQLiteStatement::new("SELECT value FROM entry", vec![]),
+            )),
         )
         .expect("select should execute")
         .expect("select should return rows");
@@ -461,10 +465,10 @@ mod tests {
         ] {
             let result = execute_request(
                 &mut runner,
-                ExecutionRequest::Query(CompiledQuery {
+                ExecutionRequest::Query(CompiledQuery::new(
                     kind,
-                    statement: SQLiteStatement::new(sql, vec![]),
-                }),
+                    SQLiteStatement::new(sql, vec![]),
+                )),
             )
             .expect("mutation should execute")
             .expect("mutation should return affected rows");
@@ -517,10 +521,10 @@ mod tests {
 
         let result = execute_request(
             &mut runner,
-            ExecutionRequest::Query(CompiledQuery {
-                kind: QueryKind::Select,
-                statement: SQLiteStatement::new("SELECT id FROM entry", vec![]),
-            }),
+            ExecutionRequest::Query(CompiledQuery::new(
+                QueryKind::Select,
+                SQLiteStatement::new("SELECT id FROM entry", vec![]),
+            )),
         )
         .expect("select should execute")
         .expect("select should return rows");

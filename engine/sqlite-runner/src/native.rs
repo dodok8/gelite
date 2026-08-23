@@ -3,6 +3,7 @@ extern crate alloc;
 use alloc::ffi::CString;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 
 use powersync_sqlite_nostd::{
@@ -252,16 +253,43 @@ impl NativeSQLiteRunner {
         }
 
         match result_shape {
-            Some(shape) => Ok(SQLiteQueryResult::new(
-                shape
-                    .fields()
-                    .iter()
-                    .map(|field| field.output_name().into())
-                    .collect(),
-                rows.into_iter()
-                    .map(|mut row| crate::shape_fields(shape, &mut row))
-                    .collect::<Result<_, _>>()?,
-            )),
+            Some(shape) => {
+                let follow_up_fetch_count = crate::follow_up_fetch_count(shape);
+                let shaped = rows
+                    .into_iter()
+                    .map(|mut row| {
+                        let parent_identity =
+                            crate::identity_at(statement.parent_identity_column_index(), &row)?;
+                        let mut follow_up_parent_identities = vec![None; follow_up_fetch_count];
+                        let fields = crate::shape_fields_with_identities(
+                            shape,
+                            &mut row,
+                            &mut follow_up_parent_identities,
+                        )?;
+
+                        Ok((fields, parent_identity, follow_up_parent_identities))
+                    })
+                    .collect::<Result<Vec<_>, SQLiteRunnerError>>()?;
+                let mut result_rows = Vec::with_capacity(shaped.len());
+                let mut parent_identities = Vec::with_capacity(shaped.len());
+                let mut follow_up_parent_identities = Vec::with_capacity(shaped.len());
+                for (row, parent_identity, row_follow_up_parent_identities) in shaped {
+                    result_rows.push(row);
+                    parent_identities.push(parent_identity);
+                    follow_up_parent_identities.push(row_follow_up_parent_identities);
+                }
+
+                Ok(SQLiteQueryResult::with_identities(
+                    shape
+                        .fields()
+                        .iter()
+                        .map(|field| field.output_name().into())
+                        .collect(),
+                    result_rows,
+                    parent_identities,
+                    follow_up_parent_identities,
+                ))
+            }
             None => Ok(SQLiteQueryResult::new(columns, rows)),
         }
     }

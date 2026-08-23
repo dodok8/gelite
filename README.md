@@ -61,7 +61,7 @@ Gelite's current scope includes:
 - query compilation: `select`, `insert`, `update`, and `delete` parsing, semantic
   resolution, SQLite query planning, and SQL rendering
 - native query execution for the current `select`, `insert`, `update`, and `delete`
-  subsets, including nested single-link result shaping
+  subsets, including nested single- and multi-link result shaping
 - semicolon-terminated multi-statement query files with preflight compilation
   and explicit transaction validation
 - explicit `start transaction`, `commit`, and `rollback` commands in the
@@ -168,7 +168,7 @@ as a stable snapshot or reproducible plan artifact.
 - `sqlite-schema-sqlgen`: SQL renderer for initial schema DDL and metadata
   inserts.
 - `sqlite-runner`: native schema, query, and transaction execution, including
-  nested single-link result shaping.
+  nested single- and multi-link result shaping.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: shared query compilation and execution orchestration.
 - `tools/repl`: inspection tool for running the current pipeline on a query.
@@ -176,7 +176,6 @@ as a stable snapshot or reproducible plan artifact.
 ## What is not implemented yet
 
 - Migration diffing and migration history.
-- Selected multi-link fetching and result shaping.
 - HTTP API.
 - Web playground.
 
@@ -260,4 +259,5 @@ standard expected from production foundations:
 - no direct AST-to-SQL shortcuts
 - documentation that says what exists now and what is still missing
 
-The next technical goal is to fetch and shape selected multi links.
+Selected multi links are fetched with batched follow-up queries and merged into
+logical nested result collections.

@@ -104,5 +104,5 @@ limit 20
 offset 0
 ```
 
-The filter and ordering traverse stored single links. Runtime nested result
-reconstruction remains deferred.
+The filter and ordering traverse stored single links, and the selected links
+are reconstructed as nested objects at runtime.

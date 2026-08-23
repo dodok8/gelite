@@ -1,6 +1,7 @@
 type Department {
   required unique code: str
   required name: str
+  multi link employees: Employee
 }
 
 type Employee {

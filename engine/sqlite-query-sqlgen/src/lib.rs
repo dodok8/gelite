@@ -18,10 +18,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_query_plan::{
     SQLiteArithmeticOp, SQLiteAssignmentValue, SQLiteCastTarget, SQLiteCompareOp, SQLiteDeletePlan,
-    SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInRhs, SQLiteInsertPlan, SQLiteJoin,
-    SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection, SQLiteResultShapePlan,
-    SQLiteSelectPlan, SQLiteStringFunctionKind, SQLiteUnaryArithmeticOp, SQLiteUpdatePlan,
-    SQLiteValueExpr, SQLiteWhereExpr,
+    SQLiteFollowUpFetchPlan, SQLiteGeneratedIdStrategy, SQLiteInOp, SQLiteInRhs, SQLiteInsertPlan,
+    SQLiteJoin, SQLiteJoinKind, SQLiteLiteral, SQLiteObjectSource, SQLiteOrderDirection,
+    SQLiteResultShapePlan, SQLiteSelectPlan, SQLiteSelectValue, SQLiteStringFunctionKind,
+    SQLiteUnaryArithmeticOp, SQLiteUpdatePlan, SQLiteValueExpr, SQLiteWhereExpr,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -73,6 +73,57 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
         bind_values,
         output_names,
         result_shape: Some(render_result_shape(plan.result_shape())),
+        parent_identity_column_index: None,
+    }
+}
+
+/// Renders one batched multi-link follow-up statement.
+pub fn render_follow_up(plan: &SQLiteFollowUpFetchPlan, parent_ids: &[String]) -> SQLiteStatement {
+    let mut bind_values = Vec::new();
+    let mut columns = vec![render_qualified_identifier(
+        plan.join_table_name(),
+        plan.source_column(),
+    )];
+    columns.extend(render_select_values(
+        plan.selected_values(),
+        &mut bind_values,
+    ));
+
+    let mut clauses = vec![
+        format!("SELECT {}", columns.join(", ")),
+        format!(
+            "FROM {} INNER JOIN {} AS {} ON {} = {}",
+            quote_identifier(plan.join_table_name()),
+            quote_identifier(plan.target_source().table_name()),
+            quote_identifier(plan.target_source().alias()),
+            render_qualified_identifier(plan.join_table_name(), plan.target_column()),
+            render_qualified_identifier(
+                plan.target_source().alias(),
+                plan.target_source().id_column(),
+            ),
+        ),
+    ];
+    clauses.extend(render_joins(plan.joins()));
+    clauses.push(format!(
+        "WHERE {} IN ({})",
+        render_qualified_identifier(plan.join_table_name(), plan.source_column()),
+        vec!["?"; parent_ids.len()].join(", ")
+    ));
+    bind_values.extend(parent_ids.iter().cloned().map(SQLiteBindValue::String));
+
+    let mut output_names = vec![None];
+    output_names.extend(
+        plan.selected_values()
+            .iter()
+            .map(|value| value.output_name().map(str::to_string)),
+    );
+
+    SQLiteStatement {
+        sql: clauses.join(" "),
+        bind_values,
+        output_names,
+        result_shape: Some(render_result_shape_from_index(plan.result_shape(), 1)),
+        parent_identity_column_index: Some(0),
     }
 }
 
@@ -214,11 +265,19 @@ fn append_mutation_filter(
 
 fn render_select_clause(plan: &SQLiteSelectPlan) -> (String, Vec<SQLiteBindValue>) {
     let mut bind_values = Vec::new();
-    let columns = plan
-        .selected_values()
+    let columns = render_select_values(plan.selected_values(), &mut bind_values).join(", ");
+
+    (format!("SELECT {columns}"), bind_values)
+}
+
+fn render_select_values(
+    selected_values: &[SQLiteSelectValue],
+    bind_values: &mut Vec<SQLiteBindValue>,
+) -> Vec<String> {
+    selected_values
         .iter()
         .map(|value| {
-            let value_sql = render_value_expr(value.value(), &mut bind_values);
+            let value_sql = render_value_expr(value.value(), bind_values);
 
             if let Some(computed) = value.as_computed() {
                 format!("{value_sql} AS {}", quote_identifier(computed.sql_alias()))
@@ -226,10 +285,7 @@ fn render_select_clause(plan: &SQLiteSelectPlan) -> (String, Vec<SQLiteBindValue
                 value_sql
             }
         })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    (format!("SELECT {columns}"), bind_values)
+        .collect()
 }
 
 fn render_from_clause(plan: &SQLiteSelectPlan) -> String {
@@ -527,6 +583,7 @@ pub struct SQLiteStatement {
     bind_values: Vec<SQLiteBindValue>,
     output_names: Vec<Option<String>>,
     result_shape: Option<SQLiteResultShape>,
+    parent_identity_column_index: Option<usize>,
 }
 
 impl SQLiteStatement {
@@ -536,11 +593,17 @@ impl SQLiteStatement {
             bind_values,
             output_names: vec![],
             result_shape: None,
+            parent_identity_column_index: None,
         }
     }
 
     pub fn with_result_shape(mut self, result_shape: SQLiteResultShape) -> Self {
         self.result_shape = Some(result_shape);
+        self
+    }
+
+    pub fn with_parent_identity_column_index(mut self, column_index: usize) -> Self {
+        self.parent_identity_column_index = Some(column_index);
         self
     }
 
@@ -558,6 +621,10 @@ impl SQLiteStatement {
 
     pub fn result_shape(&self) -> Option<&SQLiteResultShape> {
         self.result_shape.as_ref()
+    }
+
+    pub fn parent_identity_column_index(&self) -> Option<usize> {
+        self.parent_identity_column_index
     }
 }
 
@@ -589,6 +656,7 @@ pub struct SQLiteResultField {
     output_name: String,
     column_index: Option<usize>,
     nested_shape: Option<SQLiteResultShape>,
+    follow_up_fetch_index: Option<usize>,
 }
 
 impl SQLiteResultShape {
@@ -615,6 +683,7 @@ impl SQLiteResultField {
             output_name: output_name.into(),
             column_index: Some(column_index),
             nested_shape: None,
+            follow_up_fetch_index: None,
         }
     }
 
@@ -623,6 +692,16 @@ impl SQLiteResultField {
             output_name: output_name.into(),
             column_index: None,
             nested_shape: Some(nested_shape),
+            follow_up_fetch_index: None,
+        }
+    }
+
+    pub fn follow_up(output_name: impl Into<String>, fetch_index: usize) -> Self {
+        Self {
+            output_name: output_name.into(),
+            column_index: None,
+            nested_shape: None,
+            follow_up_fetch_index: Some(fetch_index),
         }
     }
 
@@ -637,10 +716,21 @@ impl SQLiteResultField {
     pub fn nested_shape(&self) -> Option<&SQLiteResultShape> {
         self.nested_shape.as_ref()
     }
+
+    pub fn follow_up_fetch_index(&self) -> Option<usize> {
+        self.follow_up_fetch_index
+    }
 }
 
 fn render_result_shape(plan: &SQLiteResultShapePlan) -> SQLiteResultShape {
-    let mut next_column_index = 0;
+    render_result_shape_from_index(plan, 0)
+}
+
+fn render_result_shape_from_index(
+    plan: &SQLiteResultShapePlan,
+    first_column_index: usize,
+) -> SQLiteResultShape {
+    let mut next_column_index = first_column_index;
 
     render_result_shape_from(plan, &mut next_column_index)
 }
@@ -658,25 +748,27 @@ fn render_result_shape_from(
     let fields = plan
         .fields()
         .iter()
-        .filter_map(|field| {
-            // Follow-up fields have no columns in the root SQLite statement.
-            if field.follow_up_fetch_index().is_some() {
-                return None;
-            }
-
-            Some(match (field.value(), field.nested_shape()) {
-                (Some(_), None) => {
+        .map(|field| {
+            match (
+                field.value(),
+                field.nested_shape(),
+                field.follow_up_fetch_index(),
+            ) {
+                (Some(_), None, None) => {
                     let column_index = *next_column_index;
                     *next_column_index += 1;
 
                     SQLiteResultField::value(field.output_name(), column_index)
                 }
-                (None, Some(nested_plan)) => SQLiteResultField::nested(
+                (None, Some(nested_plan), None) => SQLiteResultField::nested(
                     field.output_name(),
                     render_result_shape_from(nested_plan, next_column_index),
                 ),
+                (None, None, Some(fetch_index)) => {
+                    SQLiteResultField::follow_up(field.output_name(), fetch_index)
+                }
                 _ => unreachable!("result field must contain either a value or a nested shape"),
-            })
+            }
         })
         .collect();
 

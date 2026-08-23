@@ -3,9 +3,9 @@
 The examples document behavior that exists in the current pipeline. The main
 limitations are:
 
-- The REPL reconstructs selected single links as nested objects while keeping
-  top-level rows tab-separated. Selected multi-link fetching and shaping are
-  not implemented.
+- The REPL reconstructs selected single links as nested objects and selected
+  multi links as collections while keeping top-level rows tab-separated.
+  Multi-link collection order is unspecified.
 - `gelite repl --schema` compiles and renders queries but cannot execute them.
   Use `--debug` to inspect SQL and bind values.
 - `gelite repl --database` executes `select`, `insert`, `update`, and `delete`.

@@ -533,13 +533,78 @@ fn native_runner_shapes_present_and_missing_single_links() {
 }
 
 #[test]
+fn native_runner_preserves_hidden_multi_link_parent_identities() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement = SQLiteStatement::new(
+        "SELECT 'user-1', 'alice@example.com' UNION ALL SELECT 'user-2', 'bob@example.com'",
+        vec![],
+    )
+    .with_result_shape(SQLiteResultShape::new(
+        Some(0),
+        vec![
+            SQLiteResultField::value("email", 1),
+            SQLiteResultField::follow_up("posts", 0),
+        ],
+    ));
+
+    let result = runner
+        .execute_select(&statement)
+        .expect("select should retain follow-up identities");
+
+    assert_eq!(
+        result.rows(),
+        &[
+            vec![
+                crate::SQLiteCellValue::Text("alice@example.com".to_string()),
+                crate::SQLiteCellValue::List(vec![]),
+            ],
+            vec![
+                crate::SQLiteCellValue::Text("bob@example.com".to_string()),
+                crate::SQLiteCellValue::List(vec![]),
+            ],
+        ]
+    );
+    assert_eq!(
+        result.follow_up_parent_identities(),
+        &[
+            vec![Some("user-1".to_string())],
+            vec![Some("user-2".to_string())]
+        ]
+    );
+}
+
+#[test]
+fn native_runner_preserves_follow_up_row_grouping_identity() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let statement = SQLiteStatement::new("SELECT 'user-1', 'post-1', 'Draft'", vec![])
+        .with_result_shape(SQLiteResultShape::new(
+            Some(1),
+            vec![SQLiteResultField::value("title", 2)],
+        ))
+        .with_parent_identity_column_index(0);
+
+    let result = runner
+        .execute_select(&statement)
+        .expect("follow-up select should retain its grouping identity");
+
+    assert_eq!(result.parent_identities(), &[Some("user-1".to_string())]);
+    assert_eq!(
+        result.rows(),
+        &[vec![crate::SQLiteCellValue::Text("Draft".to_string())]]
+    );
+}
+
+#[test]
 fn result_shaping_moves_selected_text_without_cloning() {
     let text = String::from("alice@example.com");
     let allocation = text.as_ptr();
     let mut row = vec![crate::SQLiteCellValue::Text(text)];
     let shape = SQLiteResultShape::new(None, vec![SQLiteResultField::value("email", 0)]);
+    let mut follow_up_parent_identities = vec![];
 
-    let result = crate::shape_fields(&shape, &mut row).expect("result should be shaped");
+    let result =
+        crate::shape_fields_with_identities(&shape, &mut row, &mut follow_up_parent_identities)
+            .expect("result should be shaped");
 
     assert_eq!(row, [crate::SQLiteCellValue::Null]);
     let crate::SQLiteCellValue::Text(value) = &result[0] else {

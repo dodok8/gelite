@@ -46,6 +46,36 @@ struct RecordingQueryRunner {
     fail: bool,
 }
 
+struct MultiLinkQueryRunner {
+    results: Vec<SQLiteQueryResult>,
+    calls: Vec<(String, Vec<SQLiteBindValue>)>,
+}
+
+impl SQLiteQueryRunner for MultiLinkQueryRunner {
+    fn execute_select(
+        &mut self,
+        statement: &SQLiteStatement,
+    ) -> Result<SQLiteQueryResult, SQLiteRunnerError> {
+        self.calls.push((
+            statement.sql().to_string(),
+            statement.bind_values().to_vec(),
+        ));
+        Ok(self.results.remove(0))
+    }
+
+    fn execute_insert(&mut self, _statement: &SQLiteStatement) -> Result<(), SQLiteRunnerError> {
+        unreachable!()
+    }
+
+    fn execute_update(&mut self, _statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError> {
+        unreachable!()
+    }
+
+    fn execute_delete(&mut self, _statement: &SQLiteStatement) -> Result<i64, SQLiteRunnerError> {
+        unreachable!()
+    }
+}
+
 impl SQLiteQueryRunner for RecordingQueryRunner {
     fn execute_select(
         &mut self,
@@ -204,9 +234,10 @@ fn query_command_compiles_select() {
 }
 
 #[test]
-fn query_command_rejects_unimplemented_multi_link_execution() {
+fn query_command_batches_and_merges_multi_link_execution() {
     let catalog = schema_parser::parse_schema(
         "type User {
+  required email: str
   multi link posts: Post
 }
 
@@ -215,15 +246,127 @@ type Post {
 }",
     )
     .expect("multi-link schema should parse");
-
-    let error = match compile_query(&catalog, "select User { posts: { title } }") {
-        Ok(_) => panic!("multi-link execution should remain unsupported"),
-        Err(error) => error,
+    let root = SQLiteQueryResult::with_identities(
+        vec!["email".to_string(), "posts".to_string()],
+        vec![
+            vec![
+                SQLiteCellValue::Text("sheri@example.com".to_string()),
+                SQLiteCellValue::List(vec![]),
+            ],
+            vec![
+                SQLiteCellValue::Text("emma@example.com".to_string()),
+                SQLiteCellValue::List(vec![]),
+            ],
+        ],
+        vec![None, None],
+        vec![
+            vec![Some("user-1".to_string())],
+            vec![Some("user-2".to_string())],
+        ],
+    );
+    let posts = SQLiteQueryResult::with_identities(
+        vec!["title".to_string()],
+        vec![
+            vec![SQLiteCellValue::Text("Case File".to_string())],
+            vec![SQLiteCellValue::Text("Archive".to_string())],
+        ],
+        vec![Some("user-1".to_string()), Some("user-2".to_string())],
+        vec![vec![], vec![]],
+    );
+    let mut runner = MultiLinkQueryRunner {
+        results: vec![root, posts],
+        calls: vec![],
     };
 
+    let query = compile_query(&catalog, "select User { email, posts: { title } }")
+        .expect("multi-link select should compile");
+    let result = execute_query(&mut runner, query).expect("multi-link select should execute");
+
     assert_eq!(
-        error.message(),
-        "selected multi-link execution is not supported yet"
+        result.rows(),
+        &[
+            vec![
+                SQLiteCellValue::Text("sheri@example.com".to_string()),
+                SQLiteCellValue::List(vec![SQLiteCellValue::Object(vec![(
+                    "title".to_string(),
+                    SQLiteCellValue::Text("Case File".to_string()),
+                )])]),
+            ],
+            vec![
+                SQLiteCellValue::Text("emma@example.com".to_string()),
+                SQLiteCellValue::List(vec![SQLiteCellValue::Object(vec![(
+                    "title".to_string(),
+                    SQLiteCellValue::Text("Archive".to_string()),
+                )])]),
+            ],
+        ]
+    );
+    assert_eq!(runner.calls.len(), 2);
+    assert_eq!(
+        runner.calls[1].1,
+        [
+            SQLiteBindValue::String("user-1".to_string()),
+            SQLiteBindValue::String("user-2".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn query_command_reports_deferred_multi_link_plans() {
+    let catalog = schema_parser::parse_schema(
+        "type User {\n  multi link posts: Post\n}\n\ntype Post {\n  required title: str\n}",
+    )
+    .expect("multi-link schema should parse");
+
+    let query = compile_query(&catalog, "select User { posts: { title } }")
+        .expect("multi-link select should compile");
+
+    assert_eq!(
+        query.deferred_follow_up_plan_message().as_deref(),
+        Some(
+            "Deferred follow-up plans: 1 (query batches are determined after parent identities are known)"
+        )
+    );
+}
+
+#[test]
+fn query_command_chunks_multi_link_parent_ids_within_sqlite_bind_limit() {
+    let catalog = schema_parser::parse_schema(
+        "type User {\n  multi link posts: Post\n}\n\ntype Post {\n  required view_count: int64\n}",
+    )
+    .expect("multi-link schema should parse");
+    let parent_count = 1_000;
+    let root = SQLiteQueryResult::with_identities(
+        vec!["posts".to_string()],
+        (0..parent_count)
+            .map(|_| vec![SQLiteCellValue::List(vec![])])
+            .collect(),
+        vec![None; parent_count],
+        (0..parent_count)
+            .map(|index| vec![Some(format!("user-{index}"))])
+            .collect(),
+    );
+    let empty_posts = || SQLiteQueryResult::new(vec!["score".to_string()], vec![]);
+    let mut runner = MultiLinkQueryRunner {
+        results: vec![root, empty_posts(), empty_posts()],
+        calls: vec![],
+    };
+
+    let query = compile_query(
+        &catalog,
+        "select User { posts: { score := .view_count + 1 } }",
+    )
+    .expect("multi-link select should compile");
+    execute_query(&mut runner, query).expect("multi-link select should execute");
+
+    assert_eq!(
+        runner
+            .calls
+            .iter()
+            .skip(1)
+            .map(|(_, bind_values)| bind_values.len())
+            .collect::<Vec<_>>(),
+        [999, 3]
     );
 }
 

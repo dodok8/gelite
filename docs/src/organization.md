@@ -1,7 +1,8 @@
 # Organization
 
-This `EMP`/`DEPT`-style example demonstrates a required department link and an
-optional self-referencing manager link.
+This `EMP`/`DEPT`-style example demonstrates a department's multi link to its
+employees, each employee's required department link, and an optional
+self-referencing manager link.
 
 ```text
 {{#include ../../examples/organization.geli}}
@@ -78,6 +79,38 @@ insert Employee {
   manager := null
 }
 ```
+
+Multi-link mutation syntax is not implemented yet. Populate the independent
+`Department.employees` link from the employee rows with SQLite, then return to
+the database-backed REPL:
+
+```sh
+sqlite3 organization.db 'INSERT INTO department__employees (source_id, target_id) SELECT department_id, id FROM employee'
+cargo run -p gelite-cli -- repl --database organization.db
+```
+
+The engine does not infer inverse links: `Employee.department` and
+`Department.employees` are separate stored links in this example.
+
+## Query a multi link
+
+```text
+select Department {
+  code,
+  name,
+  employees: {
+    employee_no,
+    name,
+    title,
+    manager: { name }
+  }
+}
+order by .code asc
+```
+
+The REPL renders `employees` as a collection of nested objects. A department
+without linked employees receives `[]`. Multi-link collection order is not
+defined by the language.
 
 ## Query nested links
 

@@ -509,6 +509,7 @@ dependencies = [
 name = "query-pipeline-tests"
 version = "0.1.0"
 dependencies = [
+ "gelite-commands",
  "query-parser",
  "query-resolver",
  "schema-model",

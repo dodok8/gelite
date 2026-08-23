@@ -7,13 +7,16 @@
 use query_ast::TransactionCommand;
 use query_parser::{QueryScriptStatement, parse_delete, parse_script, parse_select, parse_update};
 use schema_model::SchemaCatalog;
-use sqlite_query_sqlgen::SQLiteStatement;
+use sqlite_query_plan::SQLiteFollowUpFetchPlan;
+use sqlite_query_sqlgen::{SQLiteResultField, SQLiteResultShape, SQLiteStatement};
 use sqlite_runner::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
     SQLiteTransactionRunner, apply_schema_statements,
 };
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
+
+const SQLITE_MAX_BIND_VALUES: usize = 999;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandError {
@@ -116,6 +119,38 @@ pub enum QueryKind {
 pub struct CompiledQuery {
     pub kind: QueryKind,
     pub statement: SQLiteStatement,
+    select_plan: Option<Box<sqlite_query_plan::SQLiteSelectPlan>>,
+}
+
+impl CompiledQuery {
+    pub fn new(kind: QueryKind, statement: SQLiteStatement) -> Self {
+        Self {
+            kind,
+            statement,
+            select_plan: None,
+        }
+    }
+
+    pub fn deferred_follow_up_plan_message(&self) -> Option<String> {
+        let count = self
+            .select_plan
+            .as_deref()
+            .map(|plan| count_follow_ups(plan.follow_up_fetches()))
+            .unwrap_or(0);
+
+        (count > 0).then(|| {
+            format!(
+                "Deferred follow-up plans: {count} (query batches are determined after parent identities are known)"
+            )
+        })
+    }
+}
+
+fn count_follow_ups(fetches: &[SQLiteFollowUpFetchPlan]) -> usize {
+    fetches
+        .iter()
+        .map(|fetch| 1 + count_follow_ups(fetch.follow_up_fetches()))
+        .sum()
 }
 
 pub struct CompiledScript {
@@ -146,6 +181,13 @@ impl CompiledScriptStatement {
     pub fn statement(&self) -> Option<&SQLiteStatement> {
         match self {
             Self::Query(query) => Some(&query.statement),
+            Self::Transaction(_) => None,
+        }
+    }
+
+    pub fn deferred_follow_up_plan_message(&self) -> Option<String> {
+        match self {
+            Self::Query(query) => query.deferred_follow_up_plan_message(),
             Self::Transaction(_) => None,
         }
     }
@@ -229,6 +271,7 @@ fn script_transaction_error(
 }
 
 pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQuery, CommandError> {
+    let mut select_plan = None;
     let (kind, statement) = match source.split_whitespace().next() {
         Some("select") => {
             let query = parse_select(source)
@@ -237,13 +280,10 @@ pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQu
                 CommandError::new(format!("failed to resolve query: {error:#?}"))
             })?;
             let plan = sqlite_query_plan::plan_select(&resolved);
-            if !plan.follow_up_fetches().is_empty() {
-                return Err(CommandError::new(
-                    "selected multi-link execution is not supported yet".to_string(),
-                ));
-            }
+            let statement = sqlite_query_sqlgen::render_select(&plan);
+            select_plan = Some(Box::new(plan));
 
-            (QueryKind::Select, sqlite_query_sqlgen::render_select(&plan))
+            (QueryKind::Select, statement)
         }
         Some("insert") => {
             let query = query_parser::parse_insert(source)
@@ -289,17 +329,35 @@ pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQu
         }
     };
 
-    Ok(CompiledQuery { kind, statement })
+    Ok(CompiledQuery {
+        kind,
+        statement,
+        select_plan,
+    })
 }
 
 pub fn execute_query(
     runner: &mut impl SQLiteQueryRunner,
     query: CompiledQuery,
 ) -> Result<SQLiteQueryResult, CommandError> {
-    let CompiledQuery { kind, statement } = query;
+    let CompiledQuery {
+        kind,
+        statement,
+        select_plan,
+    } = query;
 
     match kind {
-        QueryKind::Select => runner.execute_select(&statement),
+        QueryKind::Select => runner.execute_select(&statement).and_then(|mut result| {
+            if let Some(plan) = select_plan {
+                let shape = statement
+                    .result_shape()
+                    .expect("rendered select should retain its result shape");
+                execute_follow_ups(runner, plan.follow_up_fetches(), shape, &mut result)?;
+            }
+            result.clear_internal_identities();
+
+            Ok(result)
+        }),
         QueryKind::Insert { generated_id } => runner.execute_insert(&statement).map(|()| {
             SQLiteQueryResult::new(
                 vec!["id".to_string()],
@@ -310,6 +368,122 @@ pub fn execute_query(
         QueryKind::Delete => runner.execute_delete(&statement).map(affected_rows_result),
     }
     .map_err(|error| CommandError::new(error.message().to_string()))
+}
+
+fn execute_follow_ups(
+    runner: &mut impl SQLiteQueryRunner,
+    fetches: &[SQLiteFollowUpFetchPlan],
+    shape: &SQLiteResultShape,
+    result: &mut SQLiteQueryResult,
+) -> Result<(), SQLiteRunnerError> {
+    for (fetch_index, fetch) in fetches.iter().enumerate() {
+        let mut parent_ids = result
+            .follow_up_parent_identities()
+            .iter()
+            .filter_map(|identities| identities.get(fetch_index).cloned().flatten())
+            .collect::<Vec<_>>();
+        parent_ids.sort_unstable();
+        parent_ids.dedup();
+        if parent_ids.is_empty() {
+            continue;
+        }
+
+        let mut children_by_parent =
+            std::collections::HashMap::<String, Vec<SQLiteCellValue>>::new();
+        let fixed_bind_count = sqlite_query_sqlgen::render_follow_up(fetch, &[])
+            .bind_values()
+            .len();
+        let batch_size = SQLITE_MAX_BIND_VALUES
+            .checked_sub(fixed_bind_count)
+            .filter(|size| *size > 0)
+            .ok_or_else(|| {
+                SQLiteRunnerError::execution_failed(
+                    "follow-up projection exceeds SQLite's bind variable limit",
+                )
+            })?;
+        for parent_ids in parent_ids.chunks(batch_size) {
+            let statement = sqlite_query_sqlgen::render_follow_up(fetch, parent_ids);
+            let mut children = runner.execute_select(&statement)?;
+            execute_follow_ups(
+                runner,
+                fetch.follow_up_fetches(),
+                statement
+                    .result_shape()
+                    .expect("rendered follow-up should retain its result shape"),
+                &mut children,
+            )?;
+
+            let columns = children.columns().to_vec();
+            for (parent_identity, row) in children.into_parent_rows() {
+                let parent_identity = parent_identity.ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(
+                        "follow-up row is missing its parent identity",
+                    )
+                })?;
+                let object = SQLiteCellValue::Object(columns.iter().cloned().zip(row).collect());
+                children_by_parent
+                    .entry(parent_identity)
+                    .or_default()
+                    .push(object);
+            }
+        }
+
+        let row_parent_ids = result
+            .follow_up_parent_identities()
+            .iter()
+            .map(|identities| identities.get(fetch_index).cloned().flatten())
+            .collect::<Vec<_>>();
+        for (row, parent_identity) in result.rows_mut().iter_mut().zip(row_parent_ids) {
+            let Some(parent_identity) = parent_identity else {
+                continue;
+            };
+            let children = children_by_parent
+                .get(&parent_identity)
+                .cloned()
+                .unwrap_or_default();
+            if !attach_follow_up(row, shape, fetch_index, children) {
+                return Err(SQLiteRunnerError::execution_failed(
+                    "follow-up field is missing from the result shape",
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn attach_follow_up(
+    row: &mut [SQLiteCellValue],
+    shape: &SQLiteResultShape,
+    fetch_index: usize,
+    children: Vec<SQLiteCellValue>,
+) -> bool {
+    shape
+        .fields()
+        .iter()
+        .zip(row)
+        .any(|(field, value)| attach_follow_up_value(field, value, fetch_index, &children))
+}
+
+fn attach_follow_up_value(
+    field: &SQLiteResultField,
+    value: &mut SQLiteCellValue,
+    fetch_index: usize,
+    children: &[SQLiteCellValue],
+) -> bool {
+    if field.follow_up_fetch_index() == Some(fetch_index) {
+        *value = SQLiteCellValue::List(children.to_vec());
+        return true;
+    }
+
+    match (field.nested_shape(), value) {
+        (Some(shape), SQLiteCellValue::Object(fields)) => shape
+            .fields()
+            .iter()
+            .zip(fields)
+            .any(|(field, (_, value))| attach_follow_up_value(field, value, fetch_index, children)),
+        _ => false,
+    }
 }
 
 pub fn execute_script(
@@ -393,6 +567,14 @@ fn format_cell_value(value: &SQLiteCellValue) -> String {
             fields
                 .iter()
                 .map(|(name, value)| format!("{name}: {}", format_cell_value(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        SQLiteCellValue::List(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(format_cell_value)
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
