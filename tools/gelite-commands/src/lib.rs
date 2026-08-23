@@ -117,7 +117,7 @@ pub enum QueryKind {
 pub struct CompiledQuery {
     pub kind: QueryKind,
     pub statement: SQLiteStatement,
-    select_plan: Option<sqlite_query_plan::SQLiteSelectPlan>,
+    select_plan: Option<Box<sqlite_query_plan::SQLiteSelectPlan>>,
 }
 
 pub struct CompiledScript {
@@ -241,7 +241,7 @@ pub fn compile_query(catalog: &SchemaCatalog, source: &str) -> Result<CompiledQu
             })?;
             let plan = sqlite_query_plan::plan_select(&resolved);
             let statement = sqlite_query_sqlgen::render_select(&plan);
-            select_plan = Some(plan);
+            select_plan = Some(Box::new(plan));
 
             (QueryKind::Select, statement)
         }
