@@ -571,12 +571,19 @@ pub enum SQLiteBindValue {
     Null,
 }
 
+/// Execution-time mapping from logical fields to a decoded physical SQLite row.
+///
+/// Identity and field column indexes are absolute positions in the complete
+/// physical row, including synthesized identity columns. Nested shapes share
+/// the same coordinate space. Field column indexes must be unique because
+/// shaping moves each selected value out of its physical slot.
 #[derive(Debug)]
 pub struct SQLiteResultShape {
     identity_column_index: Option<usize>,
     fields: Vec<SQLiteResultField>,
 }
 
+/// One logical output field backed by either a physical column or a nested shape.
 #[derive(Debug)]
 pub struct SQLiteResultField {
     output_name: String,
@@ -585,6 +592,7 @@ pub struct SQLiteResultField {
 }
 
 impl SQLiteResultShape {
+    /// Creates a result shape using absolute physical-row column indexes.
     pub fn new(identity_column_index: Option<usize>, fields: Vec<SQLiteResultField>) -> Self {
         Self {
             identity_column_index,
