@@ -321,7 +321,12 @@ fn query_command_reports_deferred_multi_link_plans() {
     let query = compile_query(&catalog, "select User { posts: { title } }")
         .expect("multi-link select should compile");
 
-    assert_eq!(query.deferred_follow_up_count(), 1);
+    assert_eq!(
+        query.deferred_follow_up_plan_message().as_deref(),
+        Some(
+            "Deferred follow-up plans: 1 (rendered as one or more batched queries after parent identities are known)"
+        )
+    );
 }
 
 #[test]
