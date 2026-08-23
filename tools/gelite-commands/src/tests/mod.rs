@@ -325,6 +325,47 @@ fn query_command_reports_deferred_multi_link_plans() {
 }
 
 #[test]
+fn query_command_chunks_multi_link_parent_ids_within_sqlite_bind_limit() {
+    let catalog = schema_parser::parse_schema(
+        "type User {\n  multi link posts: Post\n}\n\ntype Post {\n  required view_count: int64\n}",
+    )
+    .expect("multi-link schema should parse");
+    let parent_count = 1_000;
+    let root = SQLiteQueryResult::with_identities(
+        vec!["posts".to_string()],
+        (0..parent_count)
+            .map(|_| vec![SQLiteCellValue::List(vec![])])
+            .collect(),
+        vec![None; parent_count],
+        (0..parent_count)
+            .map(|index| vec![Some(format!("user-{index}"))])
+            .collect(),
+    );
+    let empty_posts = || SQLiteQueryResult::new(vec!["score".to_string()], vec![]);
+    let mut runner = MultiLinkQueryRunner {
+        results: vec![root, empty_posts(), empty_posts()],
+        calls: vec![],
+    };
+
+    let query = compile_query(
+        &catalog,
+        "select User { posts: { score := .view_count + 1 } }",
+    )
+    .expect("multi-link select should compile");
+    execute_query(&mut runner, query).expect("multi-link select should execute");
+
+    assert_eq!(
+        runner
+            .calls
+            .iter()
+            .skip(1)
+            .map(|(_, bind_values)| bind_values.len())
+            .collect::<Vec<_>>(),
+        [999, 3]
+    );
+}
+
+#[test]
 fn query_command_compiles_insert_with_generated_id() {
     let compiled = compile_query(
         &blog_catalog(),
