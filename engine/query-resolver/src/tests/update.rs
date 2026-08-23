@@ -2,13 +2,14 @@ use alloc::string::ToString;
 use alloc::vec;
 
 use query_ast::{
-    Assignment, AssignmentValue, CompareExpr, CompareOp, Expr, Literal, Path, PathStep, UpdateQuery,
+    Assignment, AssignmentOperator, AssignmentValue, CompareExpr, CompareOp, Expr, Literal, Path,
+    PathStep, UpdateQuery,
 };
 
 use crate::tests::fixtures::{
     post_with_author_catalog, post_with_author_lookup_catalog, post_with_title_catalog,
     select_assignment, user_only_catalog, user_with_only_multi_posts_catalog,
-    user_with_required_name_catalog,
+    user_with_posts_catalog, user_with_required_name_catalog,
 };
 use crate::{ResolveError, resolve_update};
 
@@ -22,6 +23,111 @@ fn equality_filter(field: &str, literal: Literal) -> Expr {
         CompareOp::Eq,
         Expr::Literal(literal),
     ))
+}
+
+fn multi_link_assignment(
+    operator: AssignmentOperator,
+    root_type_name: &str,
+    projected_fields: &[&str],
+) -> Assignment {
+    let select = select_assignment("posts", root_type_name, projected_fields, None, None);
+    Assignment::with_operator("posts", operator, select.value().clone())
+}
+
+#[test]
+fn resolves_multi_link_add_and_remove_without_at_most_one_proof() {
+    let catalog = user_with_posts_catalog();
+
+    for (operator, expected) in [
+        (AssignmentOperator::Add, query_ir::AssignmentOperator::Add),
+        (
+            AssignmentOperator::Remove,
+            query_ir::AssignmentOperator::Remove,
+        ),
+    ] {
+        let query = UpdateQuery::new(
+            "User",
+            None,
+            vec![multi_link_assignment(operator, "Post", &["id"])],
+        );
+        let resolved = resolve_update(&catalog, &query)
+            .expect("multi-link mutation should accept a many-row target select");
+
+        assert_eq!(resolved.assignments()[0].operator(), expected);
+        assert!(matches!(
+            resolved.assignments()[0].value(),
+            query_ir::AssignmentValue::MultiLinkSelect(_)
+        ));
+    }
+}
+
+#[test]
+fn rejects_multi_link_mutation_with_wrong_target_type() {
+    let catalog = user_with_posts_catalog();
+    let query = UpdateQuery::new(
+        "User",
+        None,
+        vec![multi_link_assignment(
+            AssignmentOperator::Add,
+            "User",
+            &["id"],
+        )],
+    );
+
+    let error = resolve_update(&catalog, &query).expect_err("wrong target type should fail");
+    assert_eq!(
+        error,
+        ResolveError::InvalidMultiLinkMutation {
+            object_type: "User".to_string(),
+            field: "posts".to_string(),
+            reason: "select root does not match the link target".to_string(),
+        }
+    );
+}
+
+#[test]
+fn rejects_multi_link_mutation_that_does_not_project_only_id() {
+    let catalog = user_with_posts_catalog();
+    let query = UpdateQuery::new(
+        "User",
+        None,
+        vec![multi_link_assignment(
+            AssignmentOperator::Remove,
+            "Post",
+            &["view_count"],
+        )],
+    );
+
+    let error = resolve_update(&catalog, &query).expect_err("non-id target shape should fail");
+    assert_eq!(
+        error,
+        ResolveError::InvalidMultiLinkMutation {
+            object_type: "User".to_string(),
+            field: "posts".to_string(),
+            reason: "select must project exactly the implicit id".to_string(),
+        }
+    );
+}
+
+#[test]
+fn rejects_multi_link_mutation_mixed_with_regular_assignment() {
+    let catalog = user_with_posts_catalog();
+    let query = UpdateQuery::new(
+        "User",
+        None,
+        vec![
+            multi_link_assignment(AssignmentOperator::Add, "Post", &["id"]),
+            assignment("name", Literal::String("Sheri".to_string())),
+        ],
+    );
+
+    let error = resolve_update(&catalog, &query).expect_err("mixed mutation should fail");
+    assert_eq!(
+        error,
+        ResolveError::MultiLinkMutationMustBeExclusive {
+            object_type: "User".to_string(),
+        }
+    );
 }
 
 #[test]
