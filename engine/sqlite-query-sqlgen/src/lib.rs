@@ -602,6 +602,11 @@ impl SQLiteStatement {
         self
     }
 
+    pub fn with_parent_identity_column_index(mut self, column_index: usize) -> Self {
+        self.parent_identity_column_index = Some(column_index);
+        self
+    }
+
     pub fn sql(&self) -> &str {
         &self.sql
     }
@@ -651,6 +656,7 @@ pub struct SQLiteResultField {
     output_name: String,
     column_index: Option<usize>,
     nested_shape: Option<SQLiteResultShape>,
+    follow_up_fetch_index: Option<usize>,
 }
 
 impl SQLiteResultShape {
@@ -677,6 +683,7 @@ impl SQLiteResultField {
             output_name: output_name.into(),
             column_index: Some(column_index),
             nested_shape: None,
+            follow_up_fetch_index: None,
         }
     }
 
@@ -685,6 +692,16 @@ impl SQLiteResultField {
             output_name: output_name.into(),
             column_index: None,
             nested_shape: Some(nested_shape),
+            follow_up_fetch_index: None,
+        }
+    }
+
+    pub fn follow_up(output_name: impl Into<String>, fetch_index: usize) -> Self {
+        Self {
+            output_name: output_name.into(),
+            column_index: None,
+            nested_shape: None,
+            follow_up_fetch_index: Some(fetch_index),
         }
     }
 
@@ -698,6 +715,10 @@ impl SQLiteResultField {
 
     pub fn nested_shape(&self) -> Option<&SQLiteResultShape> {
         self.nested_shape.as_ref()
+    }
+
+    pub fn follow_up_fetch_index(&self) -> Option<usize> {
+        self.follow_up_fetch_index
     }
 }
 
@@ -727,25 +748,27 @@ fn render_result_shape_from(
     let fields = plan
         .fields()
         .iter()
-        .filter_map(|field| {
-            // Follow-up fields have no columns in the root SQLite statement.
-            if field.follow_up_fetch_index().is_some() {
-                return None;
-            }
-
-            Some(match (field.value(), field.nested_shape()) {
-                (Some(_), None) => {
+        .map(|field| {
+            match (
+                field.value(),
+                field.nested_shape(),
+                field.follow_up_fetch_index(),
+            ) {
+                (Some(_), None, None) => {
                     let column_index = *next_column_index;
                     *next_column_index += 1;
 
                     SQLiteResultField::value(field.output_name(), column_index)
                 }
-                (None, Some(nested_plan)) => SQLiteResultField::nested(
+                (None, Some(nested_plan), None) => SQLiteResultField::nested(
                     field.output_name(),
                     render_result_shape_from(nested_plan, next_column_index),
                 ),
+                (None, None, Some(fetch_index)) => {
+                    SQLiteResultField::follow_up(field.output_name(), fetch_index)
+                }
                 _ => unreachable!("result field must contain either a value or a nested shape"),
-            })
+            }
         })
         .collect();
 

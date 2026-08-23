@@ -566,7 +566,10 @@ fn native_runner_preserves_hidden_multi_link_parent_identities() {
     );
     assert_eq!(
         result.follow_up_parent_identities(),
-        &[vec![Some("user-1".to_string())], vec![Some("user-2".to_string())]]
+        &[
+            vec![Some("user-1".to_string())],
+            vec![Some("user-2".to_string())]
+        ]
     );
 }
 
@@ -584,10 +587,7 @@ fn native_runner_preserves_follow_up_row_grouping_identity() {
         .execute_select(&statement)
         .expect("follow-up select should retain its grouping identity");
 
-    assert_eq!(
-        result.parent_identities(),
-        &[Some("user-1".to_string())]
-    );
+    assert_eq!(result.parent_identities(), &[Some("user-1".to_string())]);
     assert_eq!(
         result.rows(),
         &[vec![crate::SQLiteCellValue::Text("Draft".to_string())]]
@@ -600,8 +600,11 @@ fn result_shaping_moves_selected_text_without_cloning() {
     let allocation = text.as_ptr();
     let mut row = vec![crate::SQLiteCellValue::Text(text)];
     let shape = SQLiteResultShape::new(None, vec![SQLiteResultField::value("email", 0)]);
+    let mut follow_up_parent_identities = vec![];
 
-    let result = crate::shape_fields(&shape, &mut row).expect("result should be shaped");
+    let result =
+        crate::shape_fields_with_identities(&shape, &mut row, &mut follow_up_parent_identities)
+            .expect("result should be shaped");
 
     assert_eq!(row, [crate::SQLiteCellValue::Null]);
     let crate::SQLiteCellValue::Text(value) = &result[0] else {

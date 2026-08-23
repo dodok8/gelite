@@ -193,13 +193,12 @@ fn sqlite_sqlgen_defers_multi_link_result_fields_to_follow_up_rendering() {
         statement.sql(),
         "SELECT \"root\".\"id\" FROM \"user\" AS \"root\""
     );
-    assert!(
-        statement
-            .result_shape()
-            .expect("root result shape should be rendered")
-            .fields()
-            .is_empty()
-    );
+    let posts = &statement
+        .result_shape()
+        .expect("root result shape should be rendered")
+        .fields()[0];
+    assert_eq!(posts.output_name(), "posts");
+    assert_eq!(posts.follow_up_fetch_index(), Some(0));
 }
 
 #[test]
