@@ -95,7 +95,7 @@ fn initial_schema_plan_defines_catalog_fields_metadata_table() {
     let plan = plan_initial_schema(&catalog);
 
     assert_eq!(plan.metadata_tables()[2].name(), "_engine_catalog_fields");
-    assert_eq!(plan.metadata_tables()[2].columns().len(), 9);
+    assert_eq!(plan.metadata_tables()[2].columns().len(), 10);
 
     let columns = plan.metadata_tables()[2].columns();
     assert_eq!(columns[0].name(), "object_id");
@@ -815,7 +815,7 @@ fn initial_schema_plan_can_plan_catalog_field_inserts() {
     assert_eq!(inserts.len(), 6);
 
     assert_eq!(inserts[0].table_name(), "_engine_catalog_fields");
-    assert_eq!(inserts[0].columns().len(), 9);
+    assert_eq!(inserts[0].columns().len(), 10);
     assert_eq!(inserts[0].columns()[0], "object_id");
     assert_eq!(inserts[0].columns()[1], "field_id");
     assert_eq!(inserts[0].columns()[2], "name");
@@ -826,7 +826,7 @@ fn initial_schema_plan_can_plan_catalog_field_inserts() {
     assert_eq!(inserts[0].columns()[7], "is_implicit");
     assert_eq!(inserts[0].columns()[8], "is_unique");
 
-    assert_eq!(inserts[0].values().len(), 9);
+    assert_eq!(inserts[0].values().len(), 10);
     assert_eq!(inserts[0].values()[0], SQLiteValuePlan::Integer(1));
     assert_eq!(inserts[0].values()[1], SQLiteValuePlan::Integer(1));
     assert_eq!(inserts[0].values()[2], SQLiteValuePlan::Text("id".into()));
