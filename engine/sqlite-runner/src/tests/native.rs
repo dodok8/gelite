@@ -7,6 +7,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_query_sqlgen::{SQLiteResultField, SQLiteResultShape, SQLiteStatement};
 use sqlite_schema_plan::SQLiteValuePlan;
+use sqlite_schema_sqlgen::RenderedSchemaStatement;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -436,6 +437,31 @@ fn native_runner_can_apply_rendered_initial_schema() {
         .expect("catalog object row should be readable");
 
     assert_eq!(row, Some((1, "Post".to_string(), None)));
+}
+
+#[test]
+fn native_schema_apply_rolls_back_after_ddl_failure() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let mut statements = rendered_post_schema_statements();
+
+    let duplicate_ddl = statements[0].sql().to_string();
+    statements.push(RenderedSchemaStatement::Sql(duplicate_ddl));
+
+    let error = apply_schema_statements(&mut runner, &statements)
+        .expect_err("duplicate table creation should fail");
+
+    assert!(error.message().contains("already exists"));
+
+    [
+        "_engine_schema_versions",
+        "_engine_catalog_objects",
+        "_engine_catalog_fields",
+        "post",
+    ]
+    .iter()
+    .for_each(|table| {
+        assert_eq!(runner.table_exists(table), Ok(false), "{table} remains");
+    });
 }
 
 #[test]
