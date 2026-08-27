@@ -597,3 +597,15 @@ placeholder order and alias separation from the enclosing query.
 reverse foreign-key column. Relation aliases must not collide with selected
 link aliases. `SQLiteWhereExpr::Exists` owns a `SQLiteExistsPlan` with its own
 source, joins, and correlated predicate; its joins never enter the outer plan.
+
+Explicit scoped predicates reuse `SQLiteExistsPlan`. Plan the target relation
+path once, then lower the entire boolean body from the resulting child alias.
+Body paths share that alias and the local join allocator. Deduplicate shared
+single-link joins within the existence plan. Correlate its source identity to
+the enclosing row and keep every relation and body join inside the subquery.
+
+Predicate lowering takes the current source alias rather than assuming the
+top-level `root` alias. Reserve the correlation and source aliases so relation
+names cannot shadow them. Existing SQL generation renders the structured
+`EXISTS`, boolean grouping, null tests, and bind values without a new SQL node.
+Select, update, delete, and multi-link update source filters share this lowering.

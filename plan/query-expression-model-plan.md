@@ -1,5 +1,20 @@
 # Query Expression Model Plan
 
+## Scoped Relationship Predicate Follow-Up (#68)
+
+The original sequencing below predates implemented mutation and multi-path
+filters. Explicit same-child predicates now extend the shared filter pipeline:
+
+1. Define `exists .relation { predicate }` and its scope in the query spec.
+2. Add explicit AST and Semantic IR nodes; resolve the body from one target.
+3. Reuse correlated SQLite existence plans and parameterize predicate source
+   aliases so the complete body refers to that target.
+4. Test independent versus same-child conditions, null and negation, stored and
+   inverse relations, pagination, and select/update/delete behavior.
+
+Nested scopes, additional multi traversal inside the body, body subqueries,
+outer references, and returned-child filtering are excluded from this step.
+
 ## Goal
 
 Extend the query pipeline from a path-and-literal filter model to a small
