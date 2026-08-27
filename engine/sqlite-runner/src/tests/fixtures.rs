@@ -9,6 +9,9 @@ use sqlite_schema_sqlgen::{RenderedSchemaStatement, render_initial_schema};
 
 use crate::{SQLiteRunner, SQLiteRunnerError, SQLiteTransactionRunner};
 
+pub const VERSION_ID: &str = "9b496060-9a5c-4c7e-9f32-210f698fe497";
+pub const APPLIED_AT: &str = "2026-08-28T12:34:56.789Z";
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum RecordedCall {
     Execute(String),
@@ -99,6 +102,6 @@ pub fn post_catalog() -> SchemaCatalog {
 
 pub fn rendered_post_schema_statements() -> Vec<RenderedSchemaStatement> {
     let catalog = post_catalog();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     render_initial_schema(&plan)
 }

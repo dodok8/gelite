@@ -15,7 +15,7 @@ use schema_model::{
 fn initial_schema_plan_creates_metadata_tables() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     let table_names = plan
         .metadata_tables()
@@ -36,7 +36,7 @@ fn initial_schema_plan_creates_metadata_tables() {
 #[test]
 fn initial_schema_plan_defines_catalog_objects_metadata_table() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     assert_eq!(plan.metadata_tables()[1].name(), "_engine_catalog_objects");
     assert_eq!(plan.metadata_tables()[1].columns().len(), 2);
@@ -58,7 +58,7 @@ fn initial_schema_plan_defines_catalog_objects_metadata_table() {
 #[test]
 fn initial_schema_plan_defines_schema_versions_metadata_table() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     assert_eq!(plan.metadata_tables()[0].name(), "_engine_schema_versions");
     assert_eq!(plan.metadata_tables()[0].columns().len(), 4);
@@ -92,7 +92,7 @@ fn initial_schema_plan_defines_schema_versions_metadata_table() {
 #[test]
 fn initial_schema_plan_defines_catalog_fields_metadata_table() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     assert_eq!(plan.metadata_tables()[2].name(), "_engine_catalog_fields");
     assert_eq!(plan.metadata_tables()[2].columns().len(), 10);
@@ -161,7 +161,7 @@ fn initial_schema_plan_defines_catalog_fields_metadata_table() {
 #[test]
 fn initial_schema_plan_defines_catalog_fields_foreign_keys() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     let catalog_fields = &plan.metadata_tables()[2];
     assert_eq!(catalog_fields.name(), "_engine_catalog_fields");
@@ -200,7 +200,7 @@ fn initial_schema_plan_creates_object_table_for_scalar_fields() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     assert_eq!(plan.object_tables().len(), 1);
 
     let user = &plan.object_tables()[0];
@@ -260,7 +260,7 @@ fn initial_schema_plan_maps_all_scalar_types_to_sqlite_affinities() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let columns = plan.object_tables()[0].columns();
 
     let expected_affinities = [
@@ -308,7 +308,7 @@ fn initial_schema_plan_creates_required_single_link_foreign_key_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let post = &plan.object_tables()[1];
     assert_eq!(post.name(), "post");
 
@@ -359,7 +359,7 @@ fn initial_schema_plan_creates_optional_single_link_foreign_key_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let post = &plan.object_tables()[1];
     assert_eq!(post.name(), "post");
 
@@ -390,7 +390,7 @@ fn schema_scalar_field_can_be_marked_unique() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     assert_eq!(plan.object_tables().len(), 1);
 
     let user = &plan.object_tables()[0];
@@ -430,7 +430,7 @@ fn initial_schema_plan_allows_optional_unique_scalar_field() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     assert_eq!(plan.object_tables().len(), 1);
 
     let user = &plan.object_tables()[0];
@@ -466,7 +466,7 @@ fn initial_schema_plan_marks_required_unique_single_link_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     let profile = &plan.object_tables()[1];
     assert_eq!(profile.name(), "profile");
@@ -509,7 +509,7 @@ fn initial_schema_plan_marks_optional_unique_single_link_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     let profile = &plan.object_tables()[1];
     assert_eq!(profile.name(), "profile");
@@ -551,7 +551,7 @@ fn initial_schema_plan_creates_multi_link_join_table() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
 
     let relation_tables = plan.relation_tables();
     assert_eq!(relation_tables.len(), 1);
@@ -613,7 +613,7 @@ fn initial_schema_plan_records_catalog_object_rows() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let rows = plan.catalog_object_rows();
 
     assert_eq!(rows.len(), 2);
@@ -659,7 +659,7 @@ fn initial_schema_plan_records_catalog_field_rows() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let rows = plan.catalog_field_rows();
 
     assert_eq!(rows.len(), 6);
@@ -747,7 +747,7 @@ fn initial_schema_plan_can_plan_catalog_object_inserts() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let inserts = plan_catalog_object_inserts(&plan);
 
     assert_eq!(inserts.len(), 2);
@@ -809,7 +809,7 @@ fn initial_schema_plan_can_plan_catalog_field_inserts() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let inserts = plan_catalog_field_inserts(&plan);
 
     assert_eq!(inserts.len(), 6);
@@ -924,7 +924,7 @@ fn initial_schema_plan_creates_single_link_foreign_key_index() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let indexes = plan.indexes();
 
     assert_eq!(indexes.len(), 1);
@@ -958,7 +958,7 @@ fn initial_schema_plan_creates_multi_link_join_table_indexes() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let indexes = plan.indexes();
 
     assert_eq!(indexes.len(), 2);
@@ -999,7 +999,7 @@ fn inverse_schema_owns_no_storage_and_records_source_metadata() {
             ),
         ])
         .expect("valid inverse schema");
-        let plan = plan_initial_schema(&catalog);
+        let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
         assert_eq!(plan.object_tables()[0].columns().len(), 1);
         assert!(plan.object_tables()[0].foreign_keys().is_empty());
         assert!(

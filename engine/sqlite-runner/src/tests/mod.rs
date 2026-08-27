@@ -6,17 +6,15 @@ mod native;
 
 use alloc::string::ToString;
 use alloc::vec;
-use sqlite_schema_plan::{SQLiteValuePlan, plan_initial_schema};
-use sqlite_schema_sqlgen::{RenderedSchemaStatement, render_initial_schema};
+use sqlite_schema_plan::SQLiteValuePlan;
+use sqlite_schema_sqlgen::RenderedSchemaStatement;
 
 use crate::{SQLiteRunnerError, apply_schema_statements};
-use fixtures::{RecordedCall, RecordingRunner, post_catalog, rendered_post_schema_statements};
+use fixtures::{RecordedCall, RecordingRunner, rendered_post_schema_statements};
 
 #[test]
 fn apply_schema_statements_executes_sql_and_insert_statements_in_order() {
-    let catalog = post_catalog();
-    let plan = plan_initial_schema(&catalog);
-    let statements = render_initial_schema(&plan);
+    let statements = rendered_post_schema_statements();
     let mut runner = RecordingRunner::default();
 
     apply_schema_statements(&mut runner, &statements).expect("schema statements should apply");

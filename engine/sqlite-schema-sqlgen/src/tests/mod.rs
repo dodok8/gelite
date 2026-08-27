@@ -16,10 +16,13 @@ use sqlite_schema_plan::{
     plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
 };
 
+const VERSION_ID: &str = "9b496060-9a5c-4c7e-9f32-210f698fe497";
+const APPLIED_AT: &str = "2026-08-28T12:34:56.789Z";
+
 #[test]
 fn render_create_table_for_catalog_fields_uses_composite_primary_key() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let catalog_fields = &plan.metadata_tables()[2];
 
     let sql = render_create_table(catalog_fields);
@@ -107,7 +110,7 @@ fn render_create_index_for_single_link_foreign_key_index() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let index = &plan.indexes()[0];
 
     let sql = render_create_index(index);
@@ -143,7 +146,7 @@ fn render_create_unique_index_uses_create_unique_index() {
 fn render_catalog_object_insert_uses_placeholders() {
     let catalog = SchemaCatalog::try_new(vec![ObjectType::new("User", vec![])]).unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let inserts = plan_catalog_object_inserts(&plan);
     let rendered = render_insert(&inserts[0]);
 
@@ -164,7 +167,7 @@ fn render_catalog_object_insert_uses_placeholders() {
 fn render_catalog_field_insert_uses_placeholders_and_preserves_null_values() {
     let catalog = SchemaCatalog::try_new(vec![ObjectType::new("User", vec![])]).unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let inserts = plan_catalog_field_inserts(&plan);
     let rendered = render_insert(&inserts[0]);
 
@@ -214,7 +217,7 @@ fn render_initial_schema_outputs_deterministic_sql() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let first = render_initial_schema(&plan);
     let second = render_initial_schema(&plan);
 

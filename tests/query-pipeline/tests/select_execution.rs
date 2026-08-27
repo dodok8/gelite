@@ -62,7 +62,11 @@ fn unique_suffix() -> String {
 
 fn setup_blog_database() -> NativeSQLiteRunner {
     let catalog = parse_blog_catalog_from_geli_file();
-    let schema_plan = sqlite_schema_plan::plan_initial_schema(&catalog);
+    let schema_plan = sqlite_schema_plan::plan_initial_schema(
+        &catalog,
+        "9b496060-9a5c-4c7e-9f32-210f698fe497",
+        "2026-08-28T12:34:56.789Z",
+    );
     let schema_statements = sqlite_schema_sqlgen::render_initial_schema(&schema_plan);
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
 

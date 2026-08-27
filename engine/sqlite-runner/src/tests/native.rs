@@ -12,8 +12,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    SQLiteRunner, apply_schema_statements, native::NativeSQLiteRunner,
-    tests::fixtures::rendered_post_schema_statements,
+    SQLiteRunner, apply_schema_statements,
+    native::NativeSQLiteRunner,
+    tests::fixtures::{APPLIED_AT, VERSION_ID, rendered_post_schema_statements},
 };
 
 #[test]
@@ -779,7 +780,7 @@ fn inverse_catalog_round_trips_and_rejects_corrupt_metadata() {
         ),
     ])
     .expect("valid schema");
-    let plan = sqlite_schema_plan::plan_initial_schema(&catalog);
+    let plan = sqlite_schema_plan::plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
     let statements = sqlite_schema_sqlgen::render_initial_schema(&plan);
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
     apply_schema_statements(&mut runner, &statements).expect("apply schema");
