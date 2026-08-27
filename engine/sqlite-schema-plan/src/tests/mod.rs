@@ -1,8 +1,8 @@
 extern crate alloc;
 
 use crate::{
-    SQLiteAffinity, SQLiteCatalogFieldKind, SQLiteForeignKeyAction, SQLiteValuePlan,
-    plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
+    SQLiteAffinity, SQLiteCatalogFieldKind, SQLiteForeignKeyAction, SQLiteInsertPlan,
+    SQLiteValuePlan, plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
 };
 use alloc::vec;
 use alloc::vec::Vec;
@@ -1029,6 +1029,400 @@ fn inverse_schema_owns_no_storage_and_records_source_metadata() {
         assert_eq!(
             inverse.values()[index],
             SQLiteValuePlan::Text("department".into())
+        );
+    }
+}
+
+const VERSION_ID: &str = "9b496060-9a5c-4c7e-9f32-210f698fe497";
+const APPLIED_AT: &str = "2026-08-28T12:34:56.789Z";
+
+fn initial_version_insert(
+    catalog: &SchemaCatalog,
+    version_id: &str,
+    applied_at: &str,
+) -> SQLiteInsertPlan {
+    // Issue #59: the planner accepts caller-supplied application values and
+    // exposes one version insert, following the existing catalog insert API.
+    let plan = plan_initial_schema(catalog, version_id, applied_at);
+    crate::plan_schema_version_insert(&plan)
+}
+
+fn version_content(insert: &SQLiteInsertPlan) -> (&str, &str) {
+    let [
+        SQLiteValuePlan::Text(_),
+        SQLiteValuePlan::Text(checksum),
+        SQLiteValuePlan::Text(_),
+        SQLiteValuePlan::Text(snapshot),
+    ] = insert.values()
+    else {
+        panic!("expected version_id, checksum, applied_at, and schema_snapshot text bindings");
+    };
+    (snapshot, checksum)
+}
+
+fn version_catalog() -> SchemaCatalog {
+    SchemaCatalog::try_new(vec![
+        ObjectType::new(
+            "User",
+            vec![
+                Field::Link(LinkField::with_inverse(
+                    "posts",
+                    "Post",
+                    Cardinality::Many,
+                    "author",
+                )),
+                Field::Scalar(ScalarField::with_uniqueness(
+                    "name",
+                    ScalarType::Str,
+                    SingleCardinality::Optional,
+                    Uniqueness::Unique,
+                )),
+            ],
+        ),
+        ObjectType::new(
+            "Post",
+            vec![
+                Field::Scalar(ScalarField::new(
+                    "title",
+                    ScalarType::Str,
+                    SingleCardinality::Required,
+                )),
+                Field::Link(LinkField::with_uniqueness(
+                    "author",
+                    "User",
+                    Cardinality::Required,
+                    Uniqueness::Unique,
+                )),
+            ],
+        ),
+    ])
+    .expect("valid schema with scalar, stored link, and inverse fields")
+}
+
+#[test]
+fn initial_schema_version_insert_binds_values_and_omits_implicit_identity() {
+    // Digests were independently computed from the literal UTF-8 snapshots.
+    for (objects, snapshot, checksum) in [
+        (
+            vec![],
+            r#"{"format_version":1,"objects":[]}"#,
+            "f9da3ff0eb7caee22c22eb769ba23ac93e400d922e831da626a064d86091ce53",
+        ),
+        (
+            vec![ObjectType::new("User", vec![])],
+            r#"{"format_version":1,"objects":[{"name":"User","fields":[]}]}"#,
+            "c24b341cc751d78ec9ca7da1aca92c9bcfe90c7b47ef6cb6d36547842e508397",
+        ),
+    ] {
+        let catalog = SchemaCatalog::try_new(objects).expect("valid empty schema or object");
+        let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+
+        assert_eq!(insert.table_name(), "_engine_schema_versions");
+        assert_eq!(
+            insert.columns(),
+            ["version_id", "checksum", "applied_at", "schema_snapshot"]
+        );
+        assert_eq!(
+            insert.values(),
+            [
+                SQLiteValuePlan::Text(VERSION_ID.into()),
+                SQLiteValuePlan::Text(checksum.into()),
+                SQLiteValuePlan::Text(APPLIED_AT.into()),
+                SQLiteValuePlan::Text(snapshot.into()),
+            ]
+        );
+    }
+}
+
+#[test]
+fn initial_schema_version_snapshot_matches_canonical_bytes_and_sha256() {
+    let catalog = version_catalog();
+    let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+    let expected = concat!(
+        r#"{"format_version":1,"objects":[{"name":"Post","fields":["#,
+        r#"{"name":"author","kind":"link","target_type":"User","cardinality":"required","unique":true,"inverse_field":null},"#,
+        r#"{"name":"title","kind":"scalar","scalar_type":"str","cardinality":"required","unique":false}]},"#,
+        r#"{"name":"User","fields":["#,
+        r#"{"name":"name","kind":"scalar","scalar_type":"str","cardinality":"optional","unique":true},"#,
+        r#"{"name":"posts","kind":"link","target_type":"Post","cardinality":"many","unique":false,"inverse_field":"author"}]}]}"#,
+    );
+
+    assert_eq!(
+        version_content(&insert),
+        (
+            expected,
+            "40bdaa3e66c1b8a14be4221d35348439f145eb71d776c8c9e9a59ba83d1222a6"
+        )
+    );
+}
+
+#[test]
+fn initial_schema_version_snapshot_ignores_declaration_order_and_catalog_ids() {
+    let catalog = version_catalog();
+    let original = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+
+    for (reverse_objects, reverse_fields) in [(true, false), (false, true), (true, true)] {
+        let mut objects = catalog
+            .object_types()
+            .iter()
+            .map(|object| {
+                let mut fields = object.declared_fields().to_vec();
+                if reverse_fields {
+                    fields.reverse();
+                }
+                ObjectType::new(object.name(), fields)
+            })
+            .collect::<Vec<_>>();
+        if reverse_objects {
+            objects.reverse();
+        }
+        let reordered = SchemaCatalog::try_new(objects).expect("reordering preserves validity");
+        let insert = initial_version_insert(&reordered, VERSION_ID, APPLIED_AT);
+
+        assert_eq!(version_content(&insert), version_content(&original));
+    }
+}
+
+#[test]
+fn initial_schema_version_snapshot_preserves_every_scalar_type() {
+    for (scalar_type, name) in [
+        (ScalarType::Str, "str"),
+        (ScalarType::Int64, "int64"),
+        (ScalarType::Float64, "float64"),
+        (ScalarType::Bool, "bool"),
+        (ScalarType::Uuid, "uuid"),
+        (ScalarType::DateTime, "datetime"),
+    ] {
+        let catalog = SchemaCatalog::try_new(vec![ObjectType::new(
+            "Sample",
+            vec![Field::Scalar(ScalarField::new(
+                "value",
+                scalar_type,
+                SingleCardinality::Optional,
+            ))],
+        )])
+        .expect("valid scalar schema");
+        let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+        let expected = alloc::format!(
+            "{{\"format_version\":1,\"objects\":[{{\"name\":\"Sample\",\"fields\":[{{\"name\":\"value\",\"kind\":\"scalar\",\"scalar_type\":\"{name}\",\"cardinality\":\"optional\",\"unique\":false}}]}}]}}"
+        );
+
+        assert_eq!(version_content(&insert).0, expected);
+    }
+}
+
+#[test]
+fn initial_schema_version_snapshot_sorts_names_by_utf8_without_normalizing() {
+    // U+E000 sorts before U+10000 in UTF-8, unlike UTF-16 ordering.
+    let catalog = SchemaCatalog::try_new(
+        ["\u{10000}", "\u{e000}", "é", "e\u{301}", "a", "A"]
+            .into_iter()
+            .map(|name| ObjectType::new(name, vec![]))
+            .collect(),
+    )
+    .expect("case and canonically equivalent Unicode names remain distinct");
+    let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+    let expected = concat!(
+        r#"{"format_version":1,"objects":[{"name":"A","fields":[]},"#,
+        "{\"name\":\"a\",\"fields\":[]},{\"name\":\"e\u{301}\",\"fields\":[]},",
+        "{\"name\":\"é\",\"fields\":[]},{\"name\":\"\u{e000}\",\"fields\":[]},",
+        "{\"name\":\"\u{10000}\",\"fields\":[]}]}",
+    );
+
+    assert_eq!(version_content(&insert).0, expected);
+}
+
+#[test]
+fn initial_schema_version_snapshot_escapes_names_and_link_references() {
+    let name = "\0\u{1}\u{1f}\u{8}\t\n\u{c}\r\"\\/한글\u{2028}";
+    let escaped = concat!(r#"\u0000\u0001\u001f\b\t\n\f\r\"\\/한글"#, "\u{2028}");
+    let catalog = SchemaCatalog::try_new(vec![ObjectType::new(
+        name,
+        vec![
+            Field::Link(LinkField::with_inverse(
+                "back",
+                name,
+                Cardinality::Many,
+                name,
+            )),
+            Field::Link(LinkField::new(name, name, Cardinality::Optional)),
+        ],
+    )])
+    .expect("catalog names are not limited to parser identifiers");
+    let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+    let expected = alloc::format!(
+        "{{\"format_version\":1,\"objects\":[{{\"name\":\"{escaped}\",\"fields\":[{{\"name\":\"{escaped}\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"optional\",\"unique\":false,\"inverse_field\":null}},{{\"name\":\"back\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"many\",\"unique\":false,\"inverse_field\":\"{escaped}\"}}]}}]}}"
+    );
+
+    assert_eq!(version_content(&insert).0, expected);
+}
+
+#[test]
+fn initial_schema_version_content_changes_with_scalar_semantics() {
+    let catalog = |name, scalar_type, cardinality, uniqueness| {
+        SchemaCatalog::try_new(vec![ObjectType::new(
+            "Sample",
+            vec![Field::Scalar(ScalarField::with_uniqueness(
+                name,
+                scalar_type,
+                cardinality,
+                uniqueness,
+            ))],
+        )])
+        .expect("valid scalar variant")
+    };
+    let original = initial_version_insert(
+        &catalog(
+            "value",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+            Uniqueness::NotUnique,
+        ),
+        VERSION_ID,
+        APPLIED_AT,
+    );
+    for (name, scalar_type, cardinality, uniqueness) in [
+        (
+            "renamed",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+            Uniqueness::NotUnique,
+        ),
+        (
+            "value",
+            ScalarType::Uuid,
+            SingleCardinality::Optional,
+            Uniqueness::NotUnique,
+        ),
+        (
+            "value",
+            ScalarType::Str,
+            SingleCardinality::Required,
+            Uniqueness::NotUnique,
+        ),
+        (
+            "value",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+            Uniqueness::Unique,
+        ),
+    ] {
+        let changed = initial_version_insert(
+            &catalog(name, scalar_type, cardinality, uniqueness),
+            VERSION_ID,
+            APPLIED_AT,
+        );
+        assert_ne!(version_content(&original).0, version_content(&changed).0);
+        assert_ne!(version_content(&original).1, version_content(&changed).1);
+    }
+}
+
+#[test]
+fn initial_schema_version_content_distinguishes_link_and_catalog_changes() {
+    let fields = vec![
+        vec![],
+        vec![Field::Scalar(ScalarField::new(
+            "value",
+            ScalarType::Uuid,
+            SingleCardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::new(
+            "value",
+            "A",
+            Cardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::new(
+            "value",
+            "B",
+            Cardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::new(
+            "value",
+            "A",
+            Cardinality::Required,
+        ))],
+        vec![Field::Link(LinkField::new("value", "A", Cardinality::Many))],
+        vec![Field::Link(LinkField::with_uniqueness(
+            "value",
+            "A",
+            Cardinality::Optional,
+            Uniqueness::Unique,
+        ))],
+        vec![Field::Link(LinkField::with_inverse(
+            "value",
+            "A",
+            Cardinality::Many,
+            "owner",
+        ))],
+        vec![Field::Link(LinkField::with_inverse(
+            "value",
+            "A",
+            Cardinality::Many,
+            "editor",
+        ))],
+    ];
+    let mut variants = fields
+        .into_iter()
+        .map(|fields| {
+            SchemaCatalog::try_new(vec![
+                ObjectType::new("Root", fields),
+                ObjectType::new(
+                    "A",
+                    vec![
+                        Field::Link(LinkField::new("owner", "Root", Cardinality::Optional)),
+                        Field::Link(LinkField::new("editor", "Root", Cardinality::Optional)),
+                    ],
+                ),
+                ObjectType::new("B", vec![]),
+            ])
+            .expect("valid scalar, stored link, or inverse variant")
+        })
+        .collect::<Vec<_>>();
+    let mut objects = variants[0].object_types().to_vec();
+    objects.push(ObjectType::new("Extra", vec![]));
+    variants.push(SchemaCatalog::try_new(objects).expect("valid added object"));
+    let mut objects = variants[0].object_types().to_vec();
+    objects[2] = ObjectType::new("Renamed", vec![]);
+    variants.push(SchemaCatalog::try_new(objects).expect("valid renamed unreferenced object"));
+    let inserts = variants
+        .iter()
+        .map(|catalog| initial_version_insert(catalog, VERSION_ID, APPLIED_AT))
+        .collect::<Vec<_>>();
+
+    for (index, insert) in inserts.iter().enumerate() {
+        for other in &inserts[..index] {
+            assert_ne!(version_content(insert).0, version_content(other).0);
+            assert_ne!(version_content(insert).1, version_content(other).1);
+        }
+    }
+}
+
+#[test]
+fn initial_schema_version_content_is_independent_of_application_values() {
+    let catalog = version_catalog();
+    let preview =
+        initial_version_insert(&catalog, "<version-id-on-apply>", "<applied-at-on-apply>");
+    assert_eq!(
+        preview.values()[0],
+        SQLiteValuePlan::Text("<version-id-on-apply>".into())
+    );
+    assert_eq!(
+        preview.values()[2],
+        SQLiteValuePlan::Text("<applied-at-on-apply>".into())
+    );
+
+    for (version_id, applied_at) in [
+        (VERSION_ID, APPLIED_AT),
+        ("d735740d-6058-4531-bd1c-b9b2c2a5ecfb", APPLIED_AT),
+        (VERSION_ID, "2026-08-29T00:00:00.000Z"),
+    ] {
+        let insert = initial_version_insert(&catalog, version_id, applied_at);
+        assert_eq!(insert.values()[0], SQLiteValuePlan::Text(version_id.into()));
+        assert_eq!(insert.values()[2], SQLiteValuePlan::Text(applied_at.into()));
+        assert_eq!(version_content(&insert), version_content(&preview));
+        assert_eq!(
+            insert.values(),
+            initial_version_insert(&catalog, version_id, applied_at).values()
         );
     }
 }
