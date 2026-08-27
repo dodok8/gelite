@@ -103,3 +103,44 @@ fn inverse_assignments_are_readonly_for_insert_and_all_update_operators() {
         Err(ResolveError::AssignmentToInverseField { .. })
     ));
 }
+
+#[test]
+fn multi_path_comparisons_resolve_as_independent_existence_scopes() {
+    use super::fixtures::{filter_eq_string, filter_ne_null};
+    let catalog = catalog();
+    let filter = query_ast::Expr::And(
+        Box::new(filter_eq_string(&["employees", "id"], "employee-id")),
+        Box::new(query_ast::Expr::Not(Box::new(filter_ne_null(&[
+            "employees",
+            "department",
+            "id",
+        ])))),
+    );
+    let query = SelectQuery::new(
+        "Department",
+        Shape::new(vec![]),
+        Some(filter),
+        vec![],
+        None,
+        None,
+    );
+    let resolved = resolve_select(&catalog, &query).expect("multi comparisons");
+    let query_ir::Expr::And(left, right) = resolved.filter().expect("filter") else {
+        panic!("and")
+    };
+    assert!(matches!(left.as_ref(), query_ir::Expr::Exists(_)));
+    let query_ir::Expr::Not(inner) = right.as_ref() else {
+        panic!("outer negation")
+    };
+    let query_ir::Expr::Exists(exists) = inner.as_ref() else {
+        panic!("existence scope")
+    };
+    assert_eq!(exists.path().result_cardinality(), Cardinality::Many);
+    assert_eq!(
+        exists.path().steps()[0]
+            .link_traversal()
+            .expect("link")
+            .direction(),
+        query_ir::LinkDirection::Inverse
+    );
+}
