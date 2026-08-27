@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 schema-model = { path = "../schema-model" }
+sha2 = { version = "0.11", default-features = false }
