@@ -15,6 +15,8 @@ tests, and documentation.
 
 - Disclose AI assistance in pull request descriptions and commit messages.
 - Use an `Assisted-by` trailer for commits that include AI-assisted work.
+- Include `Prompt-summary` and `Human-changes` trailers in each AI-assisted
+  commit to summarize the prompts used and the contributor's direct edits.
 - Do not use `Co-authored-by` for AI tools. That trailer is reserved for human
   contributors.
 - AI-assisted pull requests must be manually reviewed by the contributor before
@@ -48,6 +50,27 @@ assisted by Codex running `gpt-5.6-sol` uses:
 Assisted-by: Codex:gpt-5.6-sol
 ```
 
+Also include these trailers for each AI-assisted commit:
+
+```text
+
+Prompt-summary: Concise summary of the prompts that led to this commit
+
+Human-changes: Concise summary of changes made directly by the contributor
+```
+
+`Prompt-summary` must describe the requested work and any follow-up instructions
+that materially shaped the committed changes. Summarize only prompts relevant
+to that commit; do not paste full conversations or include secrets or private
+information.
+
+`Human-changes` must identify edits made directly by the human contributor,
+including corrections to AI output and independently written changes included
+in the commit. Review, approval, and running tests alone do not count as direct
+edits. Use `Human-changes: None` when there were no direct human edits. AI tools
+must not infer authorship from an existing diff or invent human edits; ask the
+contributor when authorship is unclear before finalizing the commit message.
+
 Example commit message:
 
 ```text
@@ -57,6 +80,10 @@ Add crate-level documentation for the schema, resolver, IR, and SQLite
 planning stages.
 
 Assisted-by: Codex:gpt-5.6-sol
+
+Prompt-summary: Document responsibilities and boundaries of the select pipeline
+
+Human-changes: Corrected the resolver boundary description and removed speculation
 ```
 
 ## Human responsibility
