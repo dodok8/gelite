@@ -2860,3 +2860,35 @@ fn sqlite_select_plan_preserves_nested_result_shape_field_order() {
     assert_eq!(nested_fields[0].output_name(), "id");
     assert_eq!(nested_fields[1].output_name(), "name");
 }
+
+#[test]
+fn inverse_follow_up_uses_stored_relation_in_reverse() {
+    for cardinality in [
+        schema_model::Cardinality::Optional,
+        schema_model::Cardinality::Many,
+    ] {
+        let field = user_posts_shape_field().with_link_traversal(query_ir::LinkTraversal::new(
+            post_author_field(),
+            cardinality,
+            query_ir::LinkDirection::Inverse,
+        ));
+        let plan = plan_select(&user_query_with_shape(vec![field]));
+        let fetch = &plan.follow_up_fetches()[0];
+        assert_eq!(
+            fetch.source_column(),
+            if cardinality == schema_model::Cardinality::Many {
+                "target_id"
+            } else {
+                "author_id"
+            }
+        );
+        assert_eq!(
+            fetch.target_column(),
+            if cardinality == schema_model::Cardinality::Many {
+                "source_id"
+            } else {
+                "id"
+            }
+        );
+    }
+}
