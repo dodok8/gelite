@@ -383,3 +383,104 @@ fn inverse_exists_aliases_and_bind_order_survive_nested_membership_scopes() {
     );
     assert_eq!(names(&result), ["A"]);
 }
+
+#[test]
+fn inverse_reads_follow_forward_transaction_rollback() {
+    let mut db = setup();
+    db.begin_transaction().expect("begin");
+    run(
+        &mut db,
+        "update Employee filter .name = \"Solo\" set { department := null }",
+    );
+    assert!(
+        run(
+            &mut db,
+            "select Department { name } filter .employees.name = \"Solo\""
+        )
+        .rows()
+        .is_empty()
+    );
+    db.rollback_transaction().expect("rollback");
+    assert_eq!(
+        names(&run(
+            &mut db,
+            "select Department { name } filter .employees.name = \"Solo\""
+        )),
+        ["B"]
+    );
+}
+
+#[test]
+fn inverse_catalog_survives_database_reopen() {
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("gelite-inverse-{}-{suffix}.db", std::process::id()));
+    {
+        let mut db = NativeSQLiteRunner::open(path.to_str().expect("path")).expect("database");
+        apply_schema(SCHEMA, &mut db).expect("schema");
+        run(&mut db, "insert Department { name := \"A\" }");
+        run(
+            &mut db,
+            "insert Employee { name := \"타치바나 셰리\", active := true, department := (select Department { id } filter .name = \"A\") }",
+        );
+    }
+    {
+        let mut db = NativeSQLiteRunner::open(path.to_str().expect("path")).expect("reopen");
+        let result = run(
+            &mut db,
+            "select Department { name, employees: { name } } filter .employees.active = true",
+        );
+        assert_eq!(names(&result), ["A"]);
+        assert_eq!(child_count(&result.rows()[0][1]), 1);
+        assert!(
+            !db.table_exists("department__employees")
+                .expect("table lookup")
+        );
+    }
+    std::fs::remove_file(path).expect("remove test database");
+}
+
+#[test]
+fn organization_example_declares_inverse_and_runs_documented_queries() {
+    let source = include_str!("../../../examples/organization.geli");
+    let catalog = schema_parser::parse_schema(source).expect("example schema");
+    let schema_model::Field::Link(link) = catalog
+        .find_field("Department", "employees")
+        .expect("employees")
+    else {
+        panic!("link")
+    };
+    assert_eq!(link.inverse_field_name(), Some("department"));
+    let mut db = NativeSQLiteRunner::open_in_memory().expect("database");
+    apply_schema(source, &mut db).expect("example schema application");
+    let docs = include_str!("../../../docs/src/organization.md");
+    let mut executed = 0;
+    for block in docs.split("```text\n").skip(1) {
+        let query = block.split("```").next().expect("code block").trim();
+        if ["insert ", "select ", "update ", "delete "]
+            .iter()
+            .any(|prefix| query.starts_with(prefix))
+        {
+            run(&mut db, query);
+            executed += 1;
+        }
+    }
+    assert!(executed >= 10, "documented workflow must execute");
+    let result = run(
+        &mut db,
+        "select Department { code, employees: { employee_no } } order by .code asc",
+    );
+    assert_eq!(
+        child_count(&result.rows()[0][1]),
+        0,
+        "archive is empty after forward reassignment"
+    );
+    assert_eq!(
+        child_count(&result.rows()[1][1]),
+        3,
+        "investigation sees the reassigned employee"
+    );
+}
