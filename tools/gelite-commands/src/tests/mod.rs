@@ -40,6 +40,20 @@ impl SQLiteRunner for RecordingRunner {
     }
 }
 
+impl SQLiteTransactionRunner for RecordingRunner {
+    fn begin_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("BEGIN")
+    }
+
+    fn commit_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("COMMIT")
+    }
+
+    fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("ROLLBACK")
+    }
+}
+
 #[derive(Default)]
 struct RecordingQueryRunner {
     calls: Vec<&'static str>,
