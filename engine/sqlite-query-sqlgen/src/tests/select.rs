@@ -227,7 +227,7 @@ fn sqlite_sqlgen_batches_multi_link_parent_ids_in_one_follow_up_statement() {
 
     assert_eq!(
         statement.sql(),
-        "SELECT \"user__posts\".\"source_id\", \"root\".\"id\", \"root\".\"title\" FROM \"user__posts\" INNER JOIN \"post\" AS \"root\" ON \"user__posts\".\"target_id\" = \"root\".\"id\" WHERE \"user__posts\".\"source_id\" IN (?, ?)"
+        "SELECT \"user__posts\".\"source_id\", \"root\".\"id\", \"root\".\"title\" FROM \"user__posts\" AS \"user__posts\" INNER JOIN \"post\" AS \"root\" ON \"user__posts\".\"target_id\" = \"root\".\"id\" WHERE \"user__posts\".\"source_id\" IN (?, ?)"
     );
     assert_eq!(
         statement.bind_values(),
