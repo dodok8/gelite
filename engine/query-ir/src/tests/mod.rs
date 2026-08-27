@@ -945,3 +945,36 @@ fn resolved_select_query_can_store_filter_not_expr() {
 
     assert!(matches!(inner.as_ref(), Expr::Compare(_)));
 }
+
+#[test]
+fn inverse_traversal_retains_stored_field_separately_from_output_field() {
+    let inverse = crate::LinkTraversal::new(
+        post_author_field(),
+        Cardinality::Required,
+        crate::LinkDirection::Inverse,
+    );
+    let step = ResolvedPathStep::link(user_name_field(), post_type(), Cardinality::Many)
+        .with_link_traversal(inverse.clone());
+    assert_eq!(step.link_traversal(), Some(&inverse));
+    assert_eq!(
+        step.link_traversal().expect("link").stored_field(),
+        &post_author_field()
+    );
+    assert_eq!(
+        step.link_traversal().expect("link").stored_cardinality(),
+        Cardinality::Required
+    );
+    assert_eq!(
+        step.link_traversal().expect("link").direction(),
+        crate::LinkDirection::Inverse
+    );
+    let shape = ResolvedShapeField::new(
+        "posts",
+        user_name_field(),
+        Cardinality::Many,
+        Some(empty_post_shape()),
+    )
+    .with_link_traversal(inverse.clone());
+    assert_eq!(shape.link_traversal(), Some(&inverse));
+    assert_ne!(shape.field(), inverse.stored_field());
+}
