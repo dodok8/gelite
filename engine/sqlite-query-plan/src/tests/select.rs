@@ -26,6 +26,77 @@ use query_ir::{
     SelectQuery, UnaryArithmeticExpr, UnaryArithmeticOp,
 };
 
+#[test]
+fn scoped_predicate_keeps_target_and_shared_body_joins_inside_exists() {
+    use query_ir::{
+        CompareExpr, CompareOp, Expr, ResolvedPath, ResolvedPathStep, ScopedPredicate, ValueExpr,
+    };
+    use schema_model::Cardinality;
+    let path = ResolvedPath::try_new(
+        user_type(),
+        vec![ResolvedPathStep::link(
+            super::fixtures::user_posts_field(),
+            post_type(),
+            Cardinality::Many,
+        )],
+    )
+    .expect("relation path");
+    let predicate = Expr::Scoped(Box::new(ScopedPredicate::new(
+        path,
+        Expr::And(
+            Box::new(Expr::Compare(CompareExpr::new(
+                post_author_name_path_value(),
+                CompareOp::Eq,
+                ValueExpr::Literal(Literal::String("타치바나 셰리".into())),
+            ))),
+            Box::new(Expr::Compare(CompareExpr::new(
+                post_author_score_path_value(),
+                CompareOp::Gt,
+                ValueExpr::Literal(Literal::Int64(10)),
+            ))),
+        ),
+    )));
+    let query = SelectQuery::new(
+        user_type(),
+        ResolvedShape::new(user_type(), vec![]),
+        Some(predicate),
+        vec![],
+        Some(1),
+        Some(1),
+    );
+    let plan = plan_select(&query);
+    assert!(plan.joins().is_empty());
+    let SQLiteWhereExpr::Exists(exists) = plan.filter().as_ref().expect("filter") else {
+        panic!("existence plan")
+    };
+    assert_eq!(
+        exists.joins().len(),
+        3,
+        "join table, target, and one shared author join"
+    );
+    let SQLiteWhereExpr::And(correlation, body) = exists.predicate() else {
+        panic!("correlation and body")
+    };
+    let SQLiteWhereExpr::Compare(correlation) = correlation.as_ref() else {
+        panic!("correlation")
+    };
+    assert_column_value(correlation.right(), "root", "id");
+    let SQLiteWhereExpr::And(left, right) = body.as_ref() else {
+        panic!("body conjunction")
+    };
+    let SQLiteWhereExpr::Compare(left) = left.as_ref() else {
+        panic!("name comparison")
+    };
+    let SQLiteWhereExpr::Compare(right) = right.as_ref() else {
+        panic!("score comparison")
+    };
+    let SQLiteValueExpr::Column(name) = left.left() else {
+        panic!("name")
+    };
+    assert_ne!(name.source_alias(), "root");
+    assert_column_value(right.left(), name.source_alias(), "score");
+}
+
 fn assert_order_column(order: &SQLiteOrder, source_alias: &str, column_name: &str) {
     match order.value() {
         SQLiteValueExpr::Column(column) => {

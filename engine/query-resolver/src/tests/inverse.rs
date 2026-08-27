@@ -144,3 +144,118 @@ fn multi_path_comparisons_resolve_as_independent_existence_scopes() {
         query_ir::LinkDirection::Inverse
     );
 }
+
+fn scoped_query(path: &[&str], predicate: query_ast::Expr) -> SelectQuery {
+    SelectQuery::new(
+        "Department",
+        Shape::new(vec![]),
+        Some(query_ast::Expr::Scoped(Box::new(
+            query_ast::ScopedPredicate::new(
+                Path::new(path.iter().copied().map(PathStep::new).collect()),
+                predicate,
+            ),
+        ))),
+        vec![],
+        None,
+        None,
+    )
+}
+
+#[test]
+fn scoped_predicate_resolves_body_paths_from_one_child() {
+    use super::fixtures::{filter_eq_string, filter_ne_null};
+    let catalog = catalog();
+    let query = scoped_query(
+        &["employees"],
+        query_ast::Expr::And(
+            Box::new(filter_eq_string(&["id"], "employee-id")),
+            Box::new(filter_ne_null(&["department", "id"])),
+        ),
+    );
+    let resolved = resolve_select(&catalog, &query).expect("scoped predicate");
+    let query_ir::Expr::Scoped(scoped) = resolved.filter().expect("filter") else {
+        panic!("scope")
+    };
+    assert_eq!(scoped.path().root_object_type().name(), "Department");
+    assert_eq!(scoped.path().result_cardinality(), Cardinality::Many);
+    let query_ir::Expr::And(left, right) = scoped.predicate() else {
+        panic!("body and")
+    };
+    let query_ir::Expr::Compare(compare) = left.as_ref() else {
+        panic!("child comparison")
+    };
+    let query_ir::ValueExpr::Path(path) = compare.left() else {
+        panic!("child path")
+    };
+    assert_eq!(path.root_object_type().name(), "Employee");
+    assert_eq!(path.result_cardinality(), Cardinality::Required);
+    assert!(matches!(right.as_ref(), query_ir::Expr::IsNotNull(_)));
+}
+
+#[test]
+fn scoped_predicate_rejects_invalid_targets_types_and_nested_relations() {
+    use super::fixtures::{filter_eq_bool, filter_eq_string, filter_in_select};
+    use alloc::string::ToString;
+    let catalog = catalog();
+    for (query, expected) in [
+        (
+            scoped_query(&["id"], filter_eq_string(&["id"], "x")),
+            ResolveError::UnsupportedPath,
+        ),
+        (
+            scoped_query(&["employees", "department"], filter_eq_string(&["id"], "x")),
+            ResolveError::UnsupportedPath,
+        ),
+        (
+            scoped_query(
+                &["employees", "department", "employees"],
+                filter_eq_string(&["id"], "x"),
+            ),
+            ResolveError::UnsupportedPath,
+        ),
+        (
+            scoped_query(&["employees"], filter_eq_string(&["employees", "id"], "x")),
+            ResolveError::UnknownField {
+                object_type: "Employee".to_string(),
+                field: "employees".to_string(),
+            },
+        ),
+        (
+            scoped_query(&["employees"], filter_eq_bool(&["id"], true)),
+            ResolveError::IncompatibleOperandTypes {
+                expected: "uuid".to_string(),
+                actual: "bool".to_string(),
+            },
+        ),
+        (
+            scoped_query(
+                &["employees"],
+                filter_eq_string(&["department", "employees", "id"], "x"),
+            ),
+            ResolveError::UnsupportedPath,
+        ),
+        (
+            scoped_query(
+                &["employees"],
+                scoped_query(&["department", "employees"], filter_eq_string(&["id"], "x"))
+                    .filter()
+                    .expect("nested filter")
+                    .clone(),
+            ),
+            ResolveError::UnsupportedExpr {
+                expr_type: "nested scoped predicate".to_string(),
+            },
+        ),
+        (
+            scoped_query(
+                &["employees"],
+                filter_in_select(&["id"], "Employee", &["id"], None),
+            ),
+            ResolveError::UnsupportedExpr {
+                expr_type: "subquery in scoped predicate".to_string(),
+            },
+        ),
+    ] {
+        assert_eq!(resolve_select(&catalog, &query), Err(expected));
+    }
+}

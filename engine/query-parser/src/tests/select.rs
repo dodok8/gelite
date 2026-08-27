@@ -20,6 +20,52 @@ fn assert_in_list(in_expr: &query_ast::InExpr) -> &[Expr] {
 }
 
 #[test]
+fn scoped_predicates_preserve_inner_and_outer_boolean_precedence() {
+    let query = parse_select(
+        "select Department { id } filter not exists .parent.employees { .name = \"타치바나 셰리\" or .active = true and not .nickname = null } and .id != \"x\"",
+    ).expect("scoped predicate");
+    let (left, _) = assert_and_expr(query.filter().expect("filter"));
+    let inner = assert_not_expr(left);
+    let Expr::Scoped(scoped) = inner else {
+        panic!("explicit scope")
+    };
+    assert_eq!(scoped.path().steps()[0].field_name(), "parent");
+    assert_eq!(scoped.path().steps()[1].field_name(), "employees");
+    let (_, right) = assert_or_expr(scoped.predicate());
+    let (_, right) = assert_and_expr(right);
+    assert!(matches!(right, Expr::Not(_)));
+
+    let nested = parse_select(
+        "select Department { id } filter exists .employees { exists .reports { .active = true } }",
+    )
+    .expect("nesting is rejected by resolution, not parsing");
+    let Expr::Scoped(scoped) = nested.filter().expect("filter") else {
+        panic!("scope")
+    };
+    assert!(matches!(scoped.predicate(), Expr::Scoped(_)));
+}
+
+#[test]
+fn scoped_predicate_syntax_rejects_empty_or_unclosed_bodies_and_keeps_exists_identifiers() {
+    for source in [
+        "select Department { id } filter exists .employees {}",
+        "select Department { id } filter exists .employees { .active = true",
+        "select Department { id } filter exists employees { .active = true }",
+        "select Department { id } filter exists .employees { .active = true, .name = \"A\" }",
+    ] {
+        assert!(parse_select(source).is_err(), "{source}");
+    }
+    for source in [
+        "select Department { exists } filter exists = true",
+        "select Department { exists } filter .exists = true",
+        "select Department { id } filter exists.name = \"A\"",
+        "select Department { id } filter exists .exists { .name = \"A\" }",
+    ] {
+        parse_select(source).expect("exists remains a contextual identifier");
+    }
+}
+
+#[test]
 fn lexer_can_tokenize_select_shape() {
     let tokens = lex("select Post { title }").expect("query should lex");
 

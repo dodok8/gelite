@@ -740,3 +740,16 @@ many-valued path, comparison operator, literal, and operand order. Null literals
 use only equality or inequality; the single-valued suffix after the last many
 step must be optional. This distinguishes a missing value within a related
 object from a relation with no matching objects.
+
+`Expr::Scoped(ScopedPredicate)` represents explicit same-object existence. Its
+resolved relation path ends in a many-valued link, with only single-link prefix
+steps. Its predicate is an ordinary `Expr` rooted at that link's target object.
+The relation path retains `Many` cardinality; scalar paths in the body retain
+their own cardinalities relative to one child. Link steps carry the existing
+`LinkTraversal` ownership and direction metadata.
+
+The resolver rejects nested scoped predicates, additional many-valued paths,
+and membership subqueries inside the body. Boolean composition, null tests,
+and negation remain inside or outside the scope exactly as written. No SQLite
+aliases, correlation columns, or physical relation tables enter Semantic IR.
+`Expr::Exists(ExistsComparison)` remains the independent atomic comparison form.

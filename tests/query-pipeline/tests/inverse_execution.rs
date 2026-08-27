@@ -6,6 +6,7 @@ type Department {
   required unique name: str
   multi link employees: Employee inverse department
   multi link members: Employee inverse departments
+  multi link stored_employees: Employee
   link parent: Department
 }
 type Employee {
@@ -464,7 +465,11 @@ fn organization_example_declares_inverse_and_runs_documented_queries() {
             .iter()
             .any(|prefix| query.starts_with(prefix))
         {
-            run(&mut db, query);
+            let result = run(&mut db, query);
+            if query.contains("filter exists .employees") {
+                assert_eq!(names(&result), ["INVESTIGATION"]);
+                assert_eq!(child_count(&result.rows()[0][2]), 2);
+            }
             executed += 1;
         }
     }
@@ -483,4 +488,378 @@ fn organization_example_declares_inverse_and_runs_documented_queries() {
         3,
         "investigation sees the reassigned employee"
     );
+}
+
+fn setup_scoped() -> NativeSQLiteRunner {
+    let mut db = setup();
+    for name in ["A", "B"] {
+        run(
+            &mut db,
+            &format!(
+                "update Employee filter .department.name = \"{name}\" set {{ departments += (select Department {{ id }} filter .name = \"{name}\") }}"
+            ),
+        );
+        run(
+            &mut db,
+            &format!(
+                "update Department filter .name = \"{name}\" set {{ stored_employees += (select Employee {{ id }} filter .department.name = \"{name}\") }}"
+            ),
+        );
+    }
+    db
+}
+
+#[test]
+fn scoped_predicates_bind_conjunction_to_one_child_for_all_relation_storage_kinds() {
+    let mut db = setup_scoped();
+    for relation in ["employees", "members", "stored_employees"] {
+        for (filter, expected) in [
+            (
+                format!(".{relation}.name = \"타치바나 셰리\" and .{relation}.active = true"),
+                vec!["A"],
+            ),
+            (
+                format!("exists .{relation} {{ .name = \"타치바나 셰리\" and .active = true }}"),
+                vec![],
+            ),
+            (
+                format!("exists .{relation} {{ .name = \"Other\" and .active = true }}"),
+                vec!["A"],
+            ),
+            (
+                format!("exists .{relation} {{ .name = \"타치바나 셰리\" or .active = true }}"),
+                vec!["A", "B"],
+            ),
+            (
+                format!("exists .{relation} {{ .name != \"missing\" }}"),
+                vec!["A", "B"],
+            ),
+            (
+                format!("not exists .{relation} {{ .active = true }}"),
+                vec!["C"],
+            ),
+            (
+                format!("exists .{relation} {{ not .active = true }}"),
+                vec!["A"],
+            ),
+            (
+                format!("exists .{relation} {{ .nickname = null }}"),
+                vec!["A", "B"],
+            ),
+            (
+                format!("exists .{relation} {{ null != .nickname }}"),
+                vec![],
+            ),
+            (
+                format!("exists .{relation} {{ not .nickname = \"A\" }}"),
+                vec![],
+            ),
+            (
+                format!("not exists .{relation} {{ .nickname = \"A\" }}"),
+                vec!["A", "B", "C"],
+            ),
+            (
+                format!("exists .{relation} {{ .nickname = null or .nickname = \"A\" }}"),
+                vec!["A", "B"],
+            ),
+            (
+                format!(
+                    "exists .{relation} {{ concat(.name, \"!\") in [\"Other!\"] and .active = true }}"
+                ),
+                vec!["A"],
+            ),
+        ] {
+            let result = run(
+                &mut db,
+                &format!("select Department {{ name }} filter {filter} order by .name asc"),
+            );
+            assert_eq!(names(&result), expected, "{filter}");
+        }
+        let result = run(
+            &mut db,
+            &format!(
+                "select Department {{ name, {relation}: {{ name }} }} filter exists .{relation} {{ .active = true }} order by .name asc limit 1"
+            ),
+        );
+        assert_eq!(names(&result), ["A"]);
+        assert_eq!(
+            child_count(&result.rows()[0][1]),
+            2,
+            "returned children are unfiltered"
+        );
+        let result = run(
+            &mut db,
+            &format!(
+                "select Department {{ name }} filter exists .{relation} {{ .name != \"missing\" }} order by .name asc limit 1 offset 1"
+            ),
+        );
+        assert_eq!(
+            names(&result),
+            ["B"],
+            "multiple child matches do not distort pagination"
+        );
+    }
+    run(
+        &mut db,
+        "update Employee filter .name = \"타치바나 셰리\" set { active := true, nickname := \"A\" }",
+    );
+    for relation in ["employees", "members", "stored_employees"] {
+        assert_eq!(
+            names(&run(
+                &mut db,
+                &format!(
+                    "select Department {{ name }} filter exists .{relation} {{ .name = \"타치바나 셰리\" and .active = true and .nickname != null }}"
+                )
+            )),
+            ["A"]
+        );
+    }
+}
+
+#[test]
+fn scoped_predicates_preserve_single_link_paths_aliases_and_bind_order() {
+    let mut db = setup_scoped();
+    run(
+        &mut db,
+        "update Department filter .name = \"C\" set { parent := (select Department { id } filter .name = \"A\") }",
+    );
+    run(
+        &mut db,
+        "update Employee filter .name = \"Other\" set { manager := (select Employee { id } filter .name = \"타치바나 셰리\") }",
+    );
+    for (filter, expected) in [
+        (
+            "exists .parent.employees { .name = \"Other\" and .active = true }",
+            vec!["C"],
+        ),
+        (
+            "not exists .parent.employees { .name = \"Other\" }",
+            vec!["A", "B"],
+        ),
+        (
+            "exists .employees { .manager.name = \"타치바나 셰리\" and .manager.active = false and .name = \"Other\" }",
+            vec!["A"],
+        ),
+        (
+            "exists .employees { .manager.name = null and .active = true }",
+            vec!["B"],
+        ),
+        (
+            "exists .employees { .manager.name = null or .manager.active = false }",
+            vec!["A", "B"],
+        ),
+        ("exists .employees { .department.name = .name }", vec![]),
+        (
+            ".id in (select Department { id } filter exists .employees { .name = \"Other\" })",
+            vec!["A"],
+        ),
+        (
+            "exists .employees { .name = \"Other\" } and exists .employees { .name = \"타치바나 셰리\" }",
+            vec!["A"],
+        ),
+    ] {
+        assert_eq!(
+            names(&run(
+                &mut db,
+                &format!("select Department {{ name }} filter {filter} order by .name asc")
+            )),
+            expected,
+            "{filter}"
+        );
+    }
+    let catalog = db.load_schema_catalog().expect("catalog");
+    let ast = query_parser::parse_select("select Department { name } filter exists .employees { .manager.name = \"타치바나 셰리\" and .manager.active = false } and .name = \"A\"").expect("parse");
+    let ir = query_resolver::resolve_select(&catalog, &ast).expect("resolve");
+    let plan = sqlite_query_plan::plan_select(&ir);
+    assert!(
+        plan.joins().is_empty(),
+        "scoped joins never enter the parent plan"
+    );
+    let statement = sqlite_query_sqlgen::render_select(&plan);
+    assert_eq!(
+        statement.bind_values(),
+        &[
+            sqlite_query_sqlgen::SQLiteBindValue::String("타치바나 셰리".into()),
+            sqlite_query_sqlgen::SQLiteBindValue::Bool(false),
+            sqlite_query_sqlgen::SQLiteBindValue::String("A".into()),
+        ]
+    );
+    assert_eq!(statement.sql().matches("EXISTS (SELECT 1").count(), 1);
+    assert_eq!(
+        statement.sql().matches("LEFT JOIN").count(),
+        1,
+        "body joins are shared"
+    );
+}
+
+#[test]
+fn scoped_predicates_select_update_and_delete_the_same_parents() {
+    for relation in ["employees", "members", "stored_employees"] {
+        let mut db = setup_scoped();
+        let filter = format!("exists .{relation} {{ .name = \"Other\" and .active = true }}");
+        assert_eq!(
+            names(&run(
+                &mut db,
+                &format!("select Department {{ name }} filter {filter}")
+            )),
+            ["A"]
+        );
+        run(
+            &mut db,
+            &format!("update Department filter {filter} set {{ name := \"Updated\" }}"),
+        );
+        assert_eq!(
+            names(&run(
+                &mut db,
+                "select Department { name } order by .name asc"
+            )),
+            ["B", "C", "Updated"]
+        );
+        run(
+            &mut db,
+            &format!(
+                "delete Department filter exists .{relation} {{ .name = \"타치바나 셰리\" and .active = true }}"
+            ),
+        );
+        if relation == "employees" {
+            // Inverse FK matches necessarily have incoming references. Deletion
+            // still obeys the stored single link's RESTRICT policy.
+            let catalog = db.load_schema_catalog().expect("catalog");
+            let query = compile_query(&catalog, &format!("delete Department filter {filter}"))
+                .expect("compile delete");
+            let error =
+                execute_query(&mut db, query).expect_err("referenced parent cannot be deleted");
+            assert!(error.message().contains("FOREIGN KEY"));
+            assert_eq!(
+                names(&run(
+                    &mut db,
+                    &format!("select Department {{ name }} filter {filter}")
+                )),
+                ["Updated"]
+            );
+            continue;
+        }
+        run(&mut db, "update Employee set { department := null }");
+        run(&mut db, &format!("delete Department filter {filter}"));
+        assert_eq!(
+            names(&run(
+                &mut db,
+                "select Department { name } order by .name asc"
+            )),
+            ["B", "C"]
+        );
+    }
+}
+
+#[test]
+fn scoped_predicates_reject_unsupported_inputs_during_resolution() {
+    let db = setup();
+    let catalog = db.load_schema_catalog().expect("catalog");
+    for query in [
+        "select Department { name } filter exists .missing { .name = \"A\" }",
+        "select Department { name } filter exists .parent { .name = \"A\" }",
+        "select Department { name } filter exists .employees { .active = 1 }",
+        "select Department { name } filter exists .employees { .name = null }",
+        "select Department { name } filter exists .employees { .nickname < null }",
+        "select Department { name } filter exists .employees { .departments.name = \"A\" }",
+        "select Department { name } filter exists .employees { exists .reports { .active = true } }",
+        "select Department { name } filter exists .employees { .active }",
+        "select Department { name } filter exists .employees { true }",
+        "select Department { found := exists .employees { .active = true } }",
+        "select Department { name } order by exists .employees { .active = true }",
+        "select Department { name } filter (exists .employees { .active = true }) = true",
+        "select Department { name } filter .name in [exists .employees { .active = true }]",
+        "select Department { name } filter str(exists .employees { .active = true }) = \"true\"",
+    ] {
+        let ast = query_parser::parse_select(query).expect("valid syntax");
+        assert!(
+            query_resolver::resolve_select(&catalog, &ast).is_err(),
+            "accepted {query}"
+        );
+    }
+}
+
+#[test]
+fn scoped_predicates_filter_multi_link_mutation_sources_and_targets() {
+    let mut db = setup_scoped();
+    run(
+        &mut db,
+        "update Department filter exists .employees { .name = \"Other\" and .active = true } set { stored_employees -= (select Employee { id } filter .active = false) }",
+    );
+    let result = run(
+        &mut db,
+        "select Department { stored_employees: { name } } filter .name = \"A\"",
+    );
+    assert_eq!(
+        result.rows()[0][0],
+        SQLiteCellValue::List(vec![SQLiteCellValue::Object(vec![(
+            "name".into(),
+            SQLiteCellValue::Text("Other".into())
+        )])])
+    );
+    run(
+        &mut db,
+        "update Department filter .name = \"C\" set { stored_employees += (select Employee { id } filter exists .departments { .name = \"B\" }) }",
+    );
+    assert_eq!(
+        names(&run(
+            &mut db,
+            "select Department { name } filter exists .stored_employees { .name = \"Solo\" } order by .name asc"
+        )),
+        ["B", "C"]
+    );
+}
+
+#[test]
+fn scoped_predicates_isolate_self_link_aliases_from_selected_links_and_subqueries() {
+    let mut db = NativeSQLiteRunner::open_in_memory().expect("database");
+    apply_schema(
+        r#"
+        type Node {
+          required unique name: str
+          multi link __gelite_scope_root: Node
+          multi link root: Node inverse __gelite_scope_root
+          link __gelite_join_0: Node
+        }
+    "#,
+        &mut db,
+    )
+    .expect("schema");
+    for name in ["A", "B", "C"] {
+        run(&mut db, &format!("insert Node {{ name := \"{name}\" }}"));
+    }
+    run(
+        &mut db,
+        "update Node filter .name = \"A\" set { __gelite_scope_root += (select Node { id } filter .name in [\"B\", \"C\"]) }",
+    );
+    run(
+        &mut db,
+        "update Node filter .name = \"B\" set { __gelite_join_0 := (select Node { id } filter .name = \"A\") }",
+    );
+    for (filter, expected) in [
+        (
+            "exists .__gelite_scope_root { .name = \"B\" and .__gelite_join_0.name = \"A\" and .__gelite_join_0.name != \"B\" }",
+            vec!["A"],
+        ),
+        (
+            "exists .__gelite_scope_root { .name = \"C\" and .__gelite_join_0.name = \"A\" }",
+            vec![],
+        ),
+        ("exists .root { .name = \"A\" }", vec!["B", "C"]),
+        (
+            ".id in (select Node { id } filter exists .root { .name = \"A\" })",
+            vec!["B", "C"],
+        ),
+    ] {
+        assert_eq!(
+            names(&run(
+                &mut db,
+                &format!(
+                    "select Node {{ name, __gelite_join_0: {{ name }} }} filter {filter} order by .name asc"
+                )
+            )),
+            expected,
+            "{filter}"
+        );
+    }
 }

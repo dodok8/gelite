@@ -117,8 +117,21 @@ order by .code asc
 The filter selects departments; the returned `employees` collection still
 contains all employees in each selected department. Each multi-path comparison
 has its own existence scope. Two comparisons combined with `and` may be
-satisfied by different employees. Same-employee predicate scopes are tracked
-in [#68](https://github.com/gelite-dev/gelite/issues/68).
+satisfied by different employees. Use an explicit scope when one employee must
+satisfy both conditions:
+
+```text
+select Department { code, name, employees: { name, salary } }
+filter exists .employees {
+  .name = "Sheri Tachibana" and .salary >= 90000
+}
+order by .code asc
+```
+
+Inside the braces, paths refer to one employee. The returned collection still
+contains all employees in the selected department. `not exists .employees {
+.salary >= 90000 }` also selects departments with no employees, whereas an
+existence predicate with a negated body requires at least one employee.
 
 ## Change the stored relationship
 

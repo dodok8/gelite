@@ -96,7 +96,8 @@ membership_expr  := additive_expr (("in" | "not" "in") in_rhs)?
 additive_expr    := multiplicative_expr (("+" | "-") multiplicative_expr)*
 multiplicative_expr := unary_expr (("*" | "/" | "%") unary_expr)*
 unary_expr       := ("+" | "-") unary_expr | primary_expr
-primary_expr     := literal | path | "(" expr ")"
+primary_expr     := literal | path | "(" expr ")" | scoped_predicate
+scoped_predicate := "exists" "." IDENT ("." IDENT)* "{" expr "}"
 ```
 
 ### Select Semantics
@@ -182,6 +183,7 @@ Supported filter expressions:
 - `or`
 - `not`
 - parentheses
+- scoped relationship predicates
 
 Supported comparison operators:
 
@@ -414,6 +416,8 @@ primary_expr      := literal
                   | path
                   | "(" expr ")"
                   | function_call
+                  | scoped_predicate
+scoped_predicate  := "exists" "." IDENT ("." IDENT)* "{" expr "}"
 path              := "."? IDENT ("." IDENT)*
 function_call     := IDENT "(" argument_list? ")"
 argument_list     := expr ("," expr)*
@@ -423,8 +427,8 @@ expr_list         := expr ("," expr)*
 ```
 
 Only path, literal, arithmetic, supported built-in function calls, comparison,
-membership against a bracketed list or parenthesized select, boolean, and
-parenthesized expressions are accepted by the resolver in the current
+membership against a bracketed list or parenthesized select, scoped predicates,
+boolean, and parenthesized expressions are accepted by the resolver in the current
 expression milestones. Context determines which subset is valid: filters
 accept boolean expressions, ordering accepts scalar order values, and computed
 projection accepts value expressions that refer to the current row.
@@ -849,11 +853,64 @@ existence condition, so `not (.employees.name = "A")` differs from
 
 Boolean composition combines independent existence conditions: `.employees.name
 = "A" and .employees.active = true` can be satisfied by different employees.
-Same-object predicate scopes are deferred to #68. Parent filtering does not
-filter selected child collections. Parent identities, ordering, limit, and
+Same-object predicate scopes use the explicit syntax below. Parent filtering
+does not filter selected child collections. Parent identities, ordering, limit, and
 offset are not multiplied by matching children.
 
 Multi paths remain unsupported in computed projections, ordering, arithmetic,
 function arguments, membership operands, and comparisons with another path.
 Existing single-path expression behavior is unchanged. Filter semantics are
 shared by select, update, and delete.
+
+## Scoped Relationship Predicates
+
+An explicit existence predicate evaluates its complete body against one related
+object:
+
+```text
+select Department { name }
+filter exists .employees {
+  .name = "타치바나 셰리" and .active = true
+}
+```
+
+The target path must end in a stored or declared inverse multi link. Any
+preceding steps must be single links, as in `exists .parent.employees { ... }`.
+An absent optional prefix or an empty target relation makes existence false.
+Scalar targets, single-link targets, and intermediate multi links are rejected
+during resolution.
+
+Inside the braces, paths resolve from the related object, not the outer query
+root. Both operands of a comparison use this same scope. The body accepts
+existing scalar comparisons, null comparisons, arithmetic, built-in value
+functions, bracketed-list membership, boolean `and`, `or`, `not`, and grouping.
+Paths may traverse single links, but additional multi traversal, nested scoped
+predicates, and membership subqueries inside the body are deferred and rejected
+during resolution. Unknown fields and incompatible types use the ordinary
+resolver errors. There are no aliases or outer-scope references.
+
+`exists` is contextual before a dotted target path and braces; it remains usable
+as a field name. The body must be a non-empty boolean expression. A scoped
+predicate is a boolean primary expression usable in filters of select, update,
+and delete, including filters in otherwise supported independent selects. It
+cannot be used as a scalar value, order expression, or computed projection.
+
+Boolean operators retain their existing precedence. `not exists .employees {
+.active = true }` means no employee satisfies the body. `exists .employees {
+not .active = true }` means at least one employee satisfies the negated body.
+An empty relation satisfies the first form but not the second.
+
+Within the body, `= null` and `!= null` require an optional scalar path and
+test absence and presence respectively. Other comparisons against an absent
+optional value yield unknown, and `not unknown` remains unknown. Only a true
+body is a match; false and unknown do not satisfy existence. For example, if
+all employee nicknames are absent, `exists .employees { not .nickname = "A" }`
+is false, while `not exists .employees { .nickname = "A" }` is true. Testing
+`.nickname = null` explicitly matches those existing employees. An empty
+relation never counts as an employee with an absent nickname.
+
+The result of existence itself is always true or false. Matching several
+children does not duplicate parents or change ordering, limit, or offset.
+Selected child collections remain unfiltered. Stored multi links and inverse
+views of either stored single or multi links have identical predicate semantics.
+Existing independent multi-path comparisons retain their separate scopes.

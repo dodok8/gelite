@@ -535,6 +535,29 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
+        if self
+            .peek()
+            .is_some_and(|token| token_is_ident(token, "exists"))
+            && self
+                .tokens
+                .get(self.cursor + 1)
+                .is_some_and(|token| token.kind() == &TokenKind::Dot)
+            && self
+                .tokens
+                .iter()
+                .skip(self.cursor + 1)
+                .find(|token| token.kind() != &TokenKind::Dot && !token_kind_is_ident(token.kind()))
+                .is_some_and(|token| token.kind() == &TokenKind::LBrace)
+        {
+            self.advance();
+            let path = self.parse_path(true)?;
+            self.expect_lbrace()?;
+            let predicate = self.parse_expr()?;
+            self.expect_rbrace()?;
+            return Ok(Expr::Scoped(Box::new(query_ast::ScopedPredicate::new(
+                path, predicate,
+            ))));
+        }
         match self.peek() {
             Some(token) if token.kind() == &TokenKind::LParen => {
                 self.advance();

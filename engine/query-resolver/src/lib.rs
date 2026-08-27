@@ -694,24 +694,47 @@ fn resolve_expr(
     source_object_type: &schema_model::ObjectTypeRef,
     expr: &query_ast::Expr,
 ) -> Result<query_ir::Expr, ResolveError> {
+    resolve_predicate(catalog, source_object_type, expr, true)
+}
+
+fn resolve_predicate(
+    catalog: &schema_model::SchemaCatalog,
+    source_object_type: &schema_model::ObjectTypeRef,
+    expr: &query_ast::Expr,
+    allow_relations: bool,
+) -> Result<query_ir::Expr, ResolveError> {
+    let resolve = |expr: &query_ast::Expr| {
+        resolve_predicate(catalog, source_object_type, expr, allow_relations)
+    };
     match expr {
+        query_ast::Expr::Scoped(scoped) => {
+            if !allow_relations {
+                return Err(ResolveError::UnsupportedExpr {
+                    expr_type: "nested scoped predicate".to_string(),
+                });
+            }
+            resolve_scoped_predicate(catalog, source_object_type, scoped)
+        }
         query_ast::Expr::Compare(compare) => {
-            resolve_compare_expr(catalog, source_object_type, compare)
+            resolve_compare_expr(catalog, source_object_type, compare, allow_relations)
         }
         query_ast::Expr::And(left, right) => Ok(query_ir::Expr::And(
-            Box::new(resolve_expr(catalog, source_object_type, left)?),
-            Box::new(resolve_expr(catalog, source_object_type, right)?),
+            Box::new(resolve(left)?),
+            Box::new(resolve(right)?),
         )),
         query_ast::Expr::Or(left, right) => Ok(query_ir::Expr::Or(
-            Box::new(resolve_expr(catalog, source_object_type, left)?),
-            Box::new(resolve_expr(catalog, source_object_type, right)?),
+            Box::new(resolve(left)?),
+            Box::new(resolve(right)?),
         )),
-        query_ast::Expr::Not(inner) => Ok(query_ir::Expr::Not(Box::new(resolve_expr(
-            catalog,
-            source_object_type,
-            inner,
-        )?))),
-        query_ast::Expr::In(in_expr) => resolve_in_expr(catalog, source_object_type, in_expr),
+        query_ast::Expr::Not(inner) => Ok(query_ir::Expr::Not(Box::new(resolve(inner)?))),
+        query_ast::Expr::In(in_expr) => {
+            if !allow_relations && matches!(in_expr.right(), query_ast::InRhs::Select(_)) {
+                return Err(ResolveError::UnsupportedExpr {
+                    expr_type: "subquery in scoped predicate".to_string(),
+                });
+            }
+            resolve_in_expr(catalog, source_object_type, in_expr)
+        }
         query_ast::Expr::Literal(_) => Err(ResolveError::UnsupportedExpr {
             expr_type: "literal".to_string(),
         }),
@@ -734,8 +757,11 @@ fn resolve_compare_expr(
     catalog: &schema_model::SchemaCatalog,
     source_object_type: &schema_model::ObjectTypeRef,
     compare: &query_ast::CompareExpr,
+    allow_relations: bool,
 ) -> Result<query_ir::Expr, ResolveError> {
-    if let Some(expr) = resolve_multi_path_comparison(catalog, source_object_type, compare)? {
+    if allow_relations
+        && let Some(expr) = resolve_multi_path_comparison(catalog, source_object_type, compare)?
+    {
         return Ok(expr);
     }
 
@@ -768,6 +794,32 @@ fn resolve_compare_expr(
         left.value,
         resolve_compare_op(compare.op()),
         right.value,
+    )))
+}
+
+fn resolve_scoped_predicate(
+    catalog: &schema_model::SchemaCatalog,
+    source: &schema_model::ObjectTypeRef,
+    scoped: &query_ast::ScopedPredicate,
+) -> Result<query_ir::Expr, ResolveError> {
+    let path = resolve_path(catalog, source, scoped.path(), true)?;
+    let (target, prefix) = path
+        .steps()
+        .split_last()
+        .ok_or(ResolveError::UnsupportedPath)?;
+    let query_ir::ResolvedPathStepKind::Link { target_object_type } = target.kind() else {
+        return Err(ResolveError::UnsupportedPath);
+    };
+    if target.cardinality() != schema_model::Cardinality::Many
+        || prefix
+            .iter()
+            .any(|step| step.cardinality() == schema_model::Cardinality::Many)
+    {
+        return Err(ResolveError::UnsupportedPath);
+    }
+    let predicate = resolve_predicate(catalog, target_object_type, scoped.predicate(), false)?;
+    Ok(query_ir::Expr::Scoped(Box::new(
+        query_ir::ScopedPredicate::new(path, predicate),
     )))
 }
 
@@ -1020,7 +1072,8 @@ fn resolve_typed_value_expr(
         query_ast::Expr::And(_, _)
         | query_ast::Expr::Or(_, _)
         | query_ast::Expr::Not(_)
-        | query_ast::Expr::In(_) => Err(ResolveError::UnsupportedExpr {
+        | query_ast::Expr::In(_)
+        | query_ast::Expr::Scoped(_) => Err(ResolveError::UnsupportedExpr {
             expr_type: "boolean value".to_string(),
         }),
     }
@@ -1240,10 +1293,32 @@ fn resolve_typed_path(
     path: &Path,
     allow_many: bool,
 ) -> Result<TypedValueExpr, ResolveError> {
+    let resolved_path = resolve_path(catalog, source_object_type, path, allow_many)?;
+    let terminal = resolved_path
+        .steps()
+        .last()
+        .ok_or(ResolveError::UnsupportedPath)?;
+    let Some(schema_model::Field::Scalar(scalar)) = catalog.find_field(
+        terminal.field().owner_object_type().name(),
+        terminal.field().name(),
+    ) else {
+        return Err(ResolveError::UnsupportedPath);
+    };
+    Ok(TypedValueExpr {
+        source: ValueSource::Path(scalar.scalar_type()),
+        value: query_ir::ValueExpr::Path(resolved_path),
+    })
+}
+
+fn resolve_path(
+    catalog: &schema_model::SchemaCatalog,
+    source_object_type: &schema_model::ObjectTypeRef,
+    path: &Path,
+    allow_many: bool,
+) -> Result<query_ir::ResolvedPath, ResolveError> {
     let steps = path.steps();
     let mut current_object_type = source_object_type.clone();
     let mut resolved_steps = Vec::new();
-    let mut terminal_scalar_type = None;
 
     for (index, step) in steps.iter().enumerate() {
         let is_last = index == steps.len() - 1;
@@ -1261,7 +1336,7 @@ fn resolve_typed_path(
             .expect("field ref should exist for a field already found in the catalog");
 
         match field {
-            schema_model::Field::Scalar(scalar) => {
+            schema_model::Field::Scalar(_) => {
                 if !is_last {
                     return Err(ResolveError::UnsupportedPath);
                 }
@@ -1270,11 +1345,9 @@ fn resolve_typed_path(
                     field_ref,
                     field.cardinality(),
                 ));
-                terminal_scalar_type = Some(scalar.scalar_type());
             }
             schema_model::Field::Link(link) => {
-                if is_last || (!allow_many && link.cardinality() == schema_model::Cardinality::Many)
-                {
+                if !allow_many && link.cardinality() == schema_model::Cardinality::Many {
                     return Err(ResolveError::UnsupportedPath);
                 }
 
@@ -1299,15 +1372,8 @@ fn resolve_typed_path(
         }
     }
 
-    let resolved_path = query_ir::ResolvedPath::try_new(source_object_type.clone(), resolved_steps)
-        .map_err(|_| ResolveError::UnsupportedPath)?;
-
-    let scalar_type = terminal_scalar_type.ok_or(ResolveError::UnsupportedPath)?;
-
-    Ok(TypedValueExpr {
-        value: query_ir::ValueExpr::Path(resolved_path),
-        source: ValueSource::Path(scalar_type),
-    })
+    query_ir::ResolvedPath::try_new(source_object_type.clone(), resolved_steps)
+        .map_err(|_| ResolveError::UnsupportedPath)
 }
 
 fn resolve_typed_literal_expr(
@@ -1360,7 +1426,8 @@ fn resolve_membership_item(expr: &query_ast::Expr) -> Result<TypedValueExpr, Res
         | query_ast::Expr::And(_, _)
         | query_ast::Expr::Or(_, _)
         | query_ast::Expr::Not(_)
-        | query_ast::Expr::In(_) => Err(ResolveError::UnsupportedExpr {
+        | query_ast::Expr::In(_)
+        | query_ast::Expr::Scoped(_) => Err(ResolveError::UnsupportedExpr {
             expr_type: "membership list item".to_string(),
         }),
     }
@@ -1716,7 +1783,8 @@ fn resolve_order_value_expr(
         query_ast::Expr::And(_, _)
         | query_ast::Expr::Or(_, _)
         | query_ast::Expr::Not(_)
-        | query_ast::Expr::In(_) => Err(ResolveError::UnsupportedExpr {
+        | query_ast::Expr::In(_)
+        | query_ast::Expr::Scoped(_) => Err(ResolveError::UnsupportedExpr {
             expr_type: "boolean value".to_string(),
         }),
     }
