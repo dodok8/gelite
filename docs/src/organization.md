@@ -123,7 +123,7 @@ satisfy both conditions:
 ```text
 select Department { code, name, employees: { name, salary } }
 filter exists .employees {
-  .name = "타치바나 셰리" and .salary >= 90000
+  .name = "Sheri Tachibana" and .salary >= 90000
 }
 order by .code asc
 ```

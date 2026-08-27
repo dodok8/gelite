@@ -465,7 +465,11 @@ fn organization_example_declares_inverse_and_runs_documented_queries() {
             .iter()
             .any(|prefix| query.starts_with(prefix))
         {
-            run(&mut db, query);
+            let result = run(&mut db, query);
+            if query.contains("filter exists .employees") {
+                assert_eq!(names(&result), ["INVESTIGATION"]);
+                assert_eq!(child_count(&result.rows()[0][2]), 2);
+            }
             executed += 1;
         }
     }
