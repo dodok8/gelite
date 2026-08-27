@@ -695,6 +695,22 @@ fn inverse_catalog_round_trips_and_rejects_corrupt_metadata() {
         runner.load_schema_catalog().expect("reload catalog"),
         catalog
     );
+    for metadata in ["field_kind = 'scalar'", "is_implicit = 1", "is_unique = 1"] {
+        runner
+            .execute(&format!(
+                "UPDATE _engine_catalog_fields SET {metadata} WHERE name = 'employees'"
+            ))
+            .expect("corrupt inverse metadata");
+        let error = runner
+            .load_schema_catalog()
+            .expect_err("invalid inverse metadata must be rejected before field reconstruction");
+        assert_eq!(error.message(), "invalid inverse field metadata");
+        runner
+            .execute(
+                "UPDATE _engine_catalog_fields SET field_kind = 'link', is_implicit = 0, is_unique = 0 WHERE name = 'employees'",
+            )
+            .expect("restore inverse metadata");
+    }
     runner.execute("UPDATE _engine_catalog_fields SET inverse_field_name = 'missing' WHERE name = 'employees'").expect("corrupt metadata fixture");
     assert!(runner.load_schema_catalog().is_err());
     runner.execute("UPDATE _engine_catalog_fields SET inverse_field_name = 'department' WHERE name = 'employees'").expect("restore source");

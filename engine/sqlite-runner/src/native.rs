@@ -122,17 +122,16 @@ impl NativeSQLiteRunner {
     pub fn load_schema_catalog(&self) -> Result<SchemaCatalog, SQLiteRunnerError> {
         let objects = self.read_catalog_objects()?;
         let fields = self.read_catalog_fields()?;
-        let mut object_types = Vec::new();
-        for field in &fields {
-            if field.inverse_field_name.is_some()
+        if fields.iter().any(|field| {
+            field.inverse_field_name.is_some()
                 && (field.field_kind != "link" || field.is_implicit || field.is_unique)
-            {
-                return Err(SQLiteRunnerError::execution_failed(
-                    "invalid inverse field metadata",
-                ));
-            }
+        }) {
+            return Err(SQLiteRunnerError::execution_failed(
+                "invalid inverse field metadata",
+            ));
         }
 
+        let mut object_types = Vec::new();
         for object in &objects {
             let mut declared_fields = Vec::new();
 
