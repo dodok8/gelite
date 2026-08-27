@@ -275,19 +275,29 @@ pub trait SQLiteTransactionRunner {
 /// `SQLiteRunner::execute`; metadata inserts are sent through
 /// `SQLiteRunner::execute_with_values` with their bind values unchanged.
 pub fn apply_schema_statements(
-    runner: &mut impl SQLiteRunner,
+    runner: &mut (impl SQLiteRunner + SQLiteTransactionRunner),
     statements: &[RenderedSchemaStatement],
 ) -> Result<(), SQLiteRunnerError> {
-    for statement in statements {
-        match statement {
-            RenderedSchemaStatement::Sql(sql) => runner.execute(sql)?,
-            RenderedSchemaStatement::Insert(insert) => {
-                runner.execute_with_values(insert.sql(), insert.values())?;
-            }
-        }
-    }
+    runner.begin_transaction()?;
 
-    Ok(())
+    let result = statements
+        .iter()
+        .try_for_each(|statement| match statement {
+            RenderedSchemaStatement::Sql(sql) => runner.execute(sql),
+            RenderedSchemaStatement::Insert(insert) => {
+                runner.execute_with_values(insert.sql(), insert.values())
+            }
+        })
+        .and_then(|()| runner.commit_transaction());
+
+    result.map_err(|error| match runner.rollback_transaction() {
+        Ok(()) => error,
+        Err(rollback_error) => SQLiteRunnerError::execution_failed(alloc::format!(
+            "{}; rollback failed: {}",
+            error.message(),
+            rollback_error.message(),
+        )),
+    })
 }
 
 #[cfg(test)]

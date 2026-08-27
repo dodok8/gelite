@@ -7,7 +7,7 @@ use schema_model::{Field, ObjectType, ScalarField, ScalarType, SchemaCatalog, Si
 use sqlite_schema_plan::{SQLiteValuePlan, plan_initial_schema};
 use sqlite_schema_sqlgen::{RenderedSchemaStatement, render_initial_schema};
 
-use crate::{SQLiteRunner, SQLiteRunnerError};
+use crate::{SQLiteRunner, SQLiteRunnerError, SQLiteTransactionRunner};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RecordedCall {
@@ -68,6 +68,20 @@ impl SQLiteRunner for RecordingRunner {
         }
 
         Ok(())
+    }
+}
+
+impl SQLiteTransactionRunner for RecordingRunner {
+    fn begin_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("BEGIN")
+    }
+
+    fn commit_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("COMMIT")
+    }
+
+    fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("ROLLBACK")
     }
 }
 

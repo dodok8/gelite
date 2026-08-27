@@ -40,6 +40,20 @@ impl SQLiteRunner for RecordingRunner {
     }
 }
 
+impl SQLiteTransactionRunner for RecordingRunner {
+    fn begin_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("BEGIN")
+    }
+
+    fn commit_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("COMMIT")
+    }
+
+    fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.execute("ROLLBACK")
+    }
+}
+
 #[derive(Default)]
 struct RecordingQueryRunner {
     calls: Vec<&'static str>,
@@ -207,9 +221,11 @@ fn schema_apply_command_executes_rendered_schema_statements() {
 
     apply_schema(blog_schema_source(), &mut runner).expect("schema apply command should succeed");
 
-    assert_eq!(runner.calls.len(), 13);
+    assert_eq!(runner.calls.len(), 15);
+    assert_eq!(runner.calls.first().map(String::as_str), Some("BEGIN"));
+    assert_eq!(runner.calls.last().map(String::as_str), Some("COMMIT"));
     assert!(
-        runner.calls[0].starts_with("CREATE TABLE \"_engine_schema_versions\""),
+        runner.calls[1].starts_with("CREATE TABLE \"_engine_schema_versions\""),
         "metadata table should be created first"
     );
     assert!(
