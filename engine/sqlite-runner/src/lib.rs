@@ -279,22 +279,25 @@ pub fn apply_schema_statements(
     statements: &[RenderedSchemaStatement],
 ) -> Result<(), SQLiteRunnerError> {
     runner.begin_transaction()?;
-    for statement in statements {
-        let result = match statement {
+
+    let result = statements
+        .iter()
+        .try_for_each(|statement| match statement {
             RenderedSchemaStatement::Sql(sql) => runner.execute(sql),
             RenderedSchemaStatement::Insert(insert) => {
                 runner.execute_with_values(insert.sql(), insert.values())
             }
-        };
+        })
+        .and_then(|()| runner.commit_transaction());
 
-        if let Err(error) = result {
-            runner.rollback_transaction()?;
-            return Err(error);
-        }
-    }
-
-    runner.commit_transaction()?;
-    Ok(())
+    result.map_err(|error| match runner.rollback_transaction() {
+        Ok(()) => error,
+        Err(rollback_error) => SQLiteRunnerError::execution_failed(alloc::format!(
+            "{}; rollback failed: {}",
+            error.message(),
+            rollback_error.message(),
+        )),
+    })
 }
 
 #[cfg(test)]
