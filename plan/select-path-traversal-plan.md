@@ -1,5 +1,11 @@
 # Select Path Traversal Plan
 
+Status update for #66: the original single-link milestone below is complete.
+Stored and declared inverse multi paths now extend filter comparisons against
+literals with independent existence semantics. Ordering and computed values
+retain the single-path restriction. See `spec/query.md` for the current
+contract; same-target predicate scopes remain deferred to #68.
+
 ## Purpose
 
 This document describes the next select-query expansion after the basic

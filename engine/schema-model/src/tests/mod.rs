@@ -418,3 +418,128 @@ fn rejects_unique_many_link_field() {
         })
     )
 }
+
+#[test]
+fn inverse_links_validate_stored_sources_and_preserve_metadata() {
+    for cardinality in [
+        Cardinality::Optional,
+        Cardinality::Required,
+        Cardinality::Many,
+    ] {
+        let catalog = SchemaCatalog::try_new(vec![
+            ObjectType::new(
+                "Department",
+                vec![Field::Link(LinkField::with_inverse(
+                    "employees",
+                    "Employee",
+                    Cardinality::Many,
+                    "department",
+                ))],
+            ),
+            ObjectType::new(
+                "Employee",
+                vec![Field::Link(LinkField::new(
+                    "department",
+                    "Department",
+                    cardinality,
+                ))],
+            ),
+        ])
+        .expect("inverse should accept every stored forward cardinality");
+        let Field::Link(link) = catalog
+            .find_field("Department", "employees")
+            .expect("inverse field")
+        else {
+            panic!("expected link")
+        };
+        assert_eq!(link.inverse_field_name(), Some("department"));
+        assert_eq!(link.cardinality(), Cardinality::Many);
+    }
+}
+
+#[test]
+fn inverse_links_reject_invalid_sources_and_cardinalities() {
+    let source_fields = [
+        vec![],
+        vec![Field::Scalar(ScalarField::new(
+            "department",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::new(
+            "department",
+            "Employee",
+            Cardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::with_inverse(
+            "department",
+            "Department",
+            Cardinality::Many,
+            "employees",
+        ))],
+    ];
+    for fields in source_fields {
+        assert!(matches!(
+            SchemaCatalog::try_new(vec![
+                ObjectType::new(
+                    "Department",
+                    vec![Field::Link(LinkField::with_inverse(
+                        "employees",
+                        "Employee",
+                        Cardinality::Many,
+                        "department"
+                    ))]
+                ),
+                ObjectType::new("Employee", fields),
+            ]),
+            Err(SchemaError::InvalidInverseLink { .. })
+        ));
+    }
+    for cardinality in [Cardinality::Optional, Cardinality::Required] {
+        assert!(matches!(
+            SchemaCatalog::try_new(vec![
+                ObjectType::new(
+                    "Department",
+                    vec![Field::Link(LinkField::with_inverse(
+                        "employees",
+                        "Employee",
+                        cardinality,
+                        "department"
+                    ))]
+                ),
+                ObjectType::new(
+                    "Employee",
+                    vec![Field::Link(LinkField::new(
+                        "department",
+                        "Department",
+                        Cardinality::Optional
+                    ))]
+                ),
+            ]),
+            Err(SchemaError::InvalidInverseLink { .. })
+        ));
+    }
+}
+
+#[test]
+fn inverse_links_allow_explicit_self_relations_and_multiple_views() {
+    SchemaCatalog::try_new(vec![ObjectType::new(
+        "Employee",
+        vec![
+            Field::Link(LinkField::new("manager", "Employee", Cardinality::Optional)),
+            Field::Link(LinkField::with_inverse(
+                "reports",
+                "Employee",
+                Cardinality::Many,
+                "manager",
+            )),
+            Field::Link(LinkField::with_inverse(
+                "team",
+                "Employee",
+                Cardinality::Many,
+                "manager",
+            )),
+        ],
+    )])
+    .expect("explicit self inverses and aliases are unambiguous");
+}

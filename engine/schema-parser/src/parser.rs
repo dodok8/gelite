@@ -226,6 +226,23 @@ impl<'a> Parser<'a> {
             Cardinality::Optional
         };
 
+        // A following `inverse:` starts a field declaration, not an inverse clause.
+        if matches!(self.peek().map(Token::kind), Some(TokenKind::Ident(word)) if word == "inverse")
+            && !matches!(
+                self.tokens.get(self.cursor + 1).map(Token::kind),
+                Some(TokenKind::Colon)
+            )
+        {
+            self.advance();
+            let source_field = self.expect_ident()?;
+            return Ok(Field::Link(LinkField::with_inverse(
+                name,
+                target_type_name,
+                cardinality,
+                source_field,
+            )));
+        }
+
         Ok(Field::Link(LinkField::new(
             name,
             target_type_name,

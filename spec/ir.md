@@ -38,7 +38,7 @@ The Semantic IR MVP does not attempt to model:
 - cost-based optimization
 - polymorphism
 - inheritance-aware type expansion
-- backlinks or inferred inverse traversal
+- inferred inverse traversal
 - schema-level computed fields
 - access policies or rewrites
 - function overloading machinery beyond what the MVP query language needs
@@ -252,15 +252,15 @@ Minimum fields:
 - target or result type
 - step cardinality
 
-The Semantic IR path model only needs to support:
+The Semantic IR path model supports:
 
 - root field access
 - traversal through declared single links
+- stored and declared inverse multi links within existential filter comparisons
 - terminal scalar access
 
 The Semantic IR MVP does not support:
 
-- backlinks
 - inferred inverse relations
 - alias scope traversal
 - arbitrary subquery paths
@@ -721,3 +721,22 @@ MVP defers:
 
 The goal is to borrow Gel's staging discipline without copying its full
 implementation surface.
+
+## Declared Inverse Link Contract
+
+Resolved shape links and path steps carry the stored field reference, its
+forward cardinality, and the traversal direction. The selected field reference
+still identifies the declared output field. SQLite names and access strategy
+remain outside Semantic IR. Inverse steps have `Many` cardinality.
+
+Multi-path filter comparisons explicitly represent existential evaluation of
+one atomic comparison or null predicate. Boolean composition and negation stay
+outside that scope. Paths retain their full cardinality; they must not be
+misrepresented as single values to enable filtering.
+
+`LinkTraversal` records ownership and direction for both `ResolvedShapeField`
+and `ResolvedPathStep`. `Expr::Exists(ExistsComparison)` contains one resolved
+many-valued path, comparison operator, literal, and operand order. Null literals
+use only equality or inequality; the single-valued suffix after the last many
+step must be optional. This distinguishes a missing value within a related
+object from a relation with no matching objects.

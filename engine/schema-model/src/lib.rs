@@ -106,6 +106,7 @@ pub struct LinkField {
     target_type_name: String,
     cardinality: Cardinality,
     uniqueness: Uniqueness,
+    inverse_field_name: Option<String>,
 }
 
 /// An object type with declared fields and catalog-injected implicit fields.
@@ -288,7 +289,25 @@ impl LinkField {
             target_type_name: target_type_name.into(),
             cardinality,
             uniqueness,
+            inverse_field_name: None,
         }
+    }
+
+    /// Declares a readonly inverse of a stored field on the target type.
+    /// The catalog validates the source field, target, and many cardinality.
+    pub fn with_inverse(
+        name: impl Into<String>,
+        target_type_name: impl Into<String>,
+        cardinality: Cardinality,
+        inverse_field_name: impl Into<String>,
+    ) -> Self {
+        let mut link = Self::new(name, target_type_name, cardinality);
+        link.inverse_field_name = Some(inverse_field_name.into());
+        link
+    }
+
+    pub fn inverse_field_name(&self) -> Option<&str> {
+        self.inverse_field_name.as_deref()
     }
 
     pub fn target_type_name(&self) -> &str {
@@ -389,7 +408,45 @@ impl SchemaCatalog {
         Self::validate_no_unknown_link_target(&object_types)?;
         Self::validate_no_reserved_scalar_type_name_as_object_type_name(&object_types)?;
         Self::validate_no_unique_many_link_field(&object_types)?;
+        Self::validate_inverse_links(&object_types)?;
         Ok(Self { object_types })
+    }
+
+    fn validate_inverse_links(object_types: &[ObjectType]) -> Result<(), SchemaError> {
+        for object in object_types {
+            for field in object.declared_fields() {
+                let Field::Link(link) = field else { continue };
+                let Some(source_name) = link.inverse_field_name() else {
+                    continue;
+                };
+                let invalid = |reason| SchemaError::InvalidInverseLink {
+                    object_type: object.name().to_string(),
+                    field_name: field.name().to_string(),
+                    reason,
+                };
+                if link.cardinality() != Cardinality::Many {
+                    return Err(invalid("inverse links must have many cardinality"));
+                }
+                let source = object_types
+                    .iter()
+                    .find(|target| target.name() == link.target_type_name())
+                    .and_then(|target| target.find_field(source_name));
+                let Some(Field::Link(source)) = source else {
+                    return Err(invalid(
+                        "inverse source must name a stored link on the target type",
+                    ));
+                };
+                if source.inverse_field_name().is_some() {
+                    return Err(invalid("inverse source cannot be another inverse link"));
+                }
+                if source.target_type_name() != object.name() {
+                    return Err(invalid(
+                        "inverse source must target the declaring object type",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn validate_unique_type_names(object_types: &[ObjectType]) -> Result<(), SchemaError> {
@@ -559,6 +616,11 @@ impl SchemaCatalog {
 /// Validation errors reported while constructing a [`SchemaCatalog`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
+    InvalidInverseLink {
+        object_type: String,
+        field_name: String,
+        reason: &'static str,
+    },
     DuplicateTypeName {
         name: String,
     },

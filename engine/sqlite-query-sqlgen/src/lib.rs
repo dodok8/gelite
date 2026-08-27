@@ -80,33 +80,37 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
 /// Renders one batched multi-link follow-up statement.
 pub fn render_follow_up(plan: &SQLiteFollowUpFetchPlan, parent_ids: &[String]) -> SQLiteStatement {
     let mut bind_values = Vec::new();
-    let mut columns = vec![render_qualified_identifier(
-        plan.join_table_name(),
-        plan.source_column(),
-    )];
+    let parent_alias = plan.source_alias();
+    let parent_column = render_qualified_identifier(parent_alias, plan.source_column());
+    let mut columns = vec![parent_column.clone()];
     columns.extend(render_select_values(
         plan.selected_values(),
         &mut bind_values,
     ));
-
-    let mut clauses = vec![
-        format!("SELECT {}", columns.join(", ")),
-        format!(
-            "FROM {} INNER JOIN {} AS {} ON {} = {}",
-            quote_identifier(plan.join_table_name()),
+    let from = match plan.join_table_name() {
+        Some(table) => format!(
+            "FROM {} AS {} INNER JOIN {} AS {} ON {} = {}",
+            quote_identifier(table),
+            quote_identifier(plan.source_alias()),
             quote_identifier(plan.target_source().table_name()),
             quote_identifier(plan.target_source().alias()),
-            render_qualified_identifier(plan.join_table_name(), plan.target_column()),
+            render_qualified_identifier(plan.source_alias(), plan.target_column()),
             render_qualified_identifier(
                 plan.target_source().alias(),
-                plan.target_source().id_column(),
+                plan.target_source().id_column()
             ),
         ),
-    ];
+        None => format!(
+            "FROM {} AS {}",
+            quote_identifier(plan.target_source().table_name()),
+            quote_identifier(plan.target_source().alias())
+        ),
+    };
+    let mut clauses = vec![format!("SELECT {}", columns.join(", ")), from];
     clauses.extend(render_joins(plan.joins()));
     clauses.push(format!(
         "WHERE {} IN ({})",
-        render_qualified_identifier(plan.join_table_name(), plan.source_column()),
+        parent_column,
         vec!["?"; parent_ids.len()].join(", ")
     ));
     bind_values.extend(parent_ids.iter().cloned().map(SQLiteBindValue::String));
@@ -351,6 +355,19 @@ fn render_where_clause(plan: &SQLiteSelectPlan) -> (Option<String>, Vec<SQLiteBi
 
 fn render_where_expr(expr: &SQLiteWhereExpr, bind_values: &mut Vec<SQLiteBindValue>) -> String {
     match expr {
+        SQLiteWhereExpr::Exists(exists) => {
+            let mut clauses = vec![format!(
+                "SELECT 1 FROM {} AS {}",
+                quote_identifier(exists.source().table_name()),
+                quote_identifier(exists.source().alias())
+            )];
+            clauses.extend(render_joins(exists.joins()));
+            clauses.push(format!(
+                "WHERE {}",
+                render_where_expr(exists.predicate(), bind_values)
+            ));
+            format!("EXISTS ({})", clauses.join(" "))
+        }
         SQLiteWhereExpr::Compare(compare) => {
             let left_sql = render_value_expr(compare.left(), bind_values);
             let op_sql = render_compare_op(compare.op());

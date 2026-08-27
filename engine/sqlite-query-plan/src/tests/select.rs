@@ -2489,7 +2489,7 @@ fn sqlite_select_plan_plans_multi_link_under_optional_source_as_follow_up() {
     assert_eq!(fetch.parent_identity().source_alias(), "author");
     assert_eq!(fetch.parent_identity().column_name(), "id");
     assert_eq!(fetch.parent_field().name(), "posts");
-    assert_eq!(fetch.join_table_name(), "user__posts");
+    assert_eq!(fetch.join_table_name(), Some("user__posts"));
 }
 
 #[test]
@@ -2520,7 +2520,7 @@ fn sqlite_select_plan_plans_root_multi_link_follow_up() {
     assert_eq!(fetch.parent_field().name(), "posts");
     assert_eq!(fetch.parent_identity().source_alias(), "root");
     assert_eq!(fetch.parent_identity().column_name(), "id");
-    assert_eq!(fetch.join_table_name(), "user__posts");
+    assert_eq!(fetch.join_table_name(), Some("user__posts"));
     assert_eq!(fetch.source_column(), "source_id");
     assert_eq!(fetch.target_column(), "target_id");
     assert_eq!(fetch.target_source().object_type().name(), "Post");
@@ -2592,10 +2592,13 @@ fn sqlite_select_plan_aligns_sibling_multi_link_fetch_indexes() {
     assert_eq!(plan.follow_up_fetches().len(), 2);
     assert_eq!(fields[0].follow_up_fetch_index(), Some(0));
     assert_eq!(fields[1].follow_up_fetch_index(), Some(1));
-    assert_eq!(plan.follow_up_fetches()[0].join_table_name(), "user__posts");
+    assert_eq!(
+        plan.follow_up_fetches()[0].join_table_name(),
+        Some("user__posts")
+    );
     assert_eq!(
         plan.follow_up_fetches()[1].join_table_name(),
-        "user__featured_posts"
+        Some("user__featured_posts")
     );
 }
 
@@ -2629,7 +2632,7 @@ fn sqlite_multi_link_follow_up_plans_nested_multi_link_recursively() {
     let nested_posts = &posts.follow_up_fetches()[0];
     assert_eq!(nested_posts.parent_identity().source_alias(), "author");
     assert_eq!(nested_posts.parent_identity().column_name(), "id");
-    assert_eq!(nested_posts.join_table_name(), "user__posts");
+    assert_eq!(nested_posts.join_table_name(), Some("user__posts"));
     assert_eq!(nested_posts.target_source().object_type().name(), "Post");
 
     let author = &posts.result_shape().fields()[0];
@@ -2859,4 +2862,36 @@ fn sqlite_select_plan_preserves_nested_result_shape_field_order() {
     assert_eq!(nested_fields.len(), 2);
     assert_eq!(nested_fields[0].output_name(), "id");
     assert_eq!(nested_fields[1].output_name(), "name");
+}
+
+#[test]
+fn inverse_follow_up_uses_stored_relation_in_reverse() {
+    for cardinality in [
+        schema_model::Cardinality::Optional,
+        schema_model::Cardinality::Many,
+    ] {
+        let field = user_posts_shape_field().with_link_traversal(query_ir::LinkTraversal::new(
+            post_author_field(),
+            cardinality,
+            query_ir::LinkDirection::Inverse,
+        ));
+        let plan = plan_select(&user_query_with_shape(vec![field]));
+        let fetch = &plan.follow_up_fetches()[0];
+        assert_eq!(
+            fetch.source_column(),
+            if cardinality == schema_model::Cardinality::Many {
+                "target_id"
+            } else {
+                "author_id"
+            }
+        );
+        assert_eq!(
+            fetch.target_column(),
+            if cardinality == schema_model::Cardinality::Many {
+                "source_id"
+            } else {
+                "id"
+            }
+        );
+    }
 }

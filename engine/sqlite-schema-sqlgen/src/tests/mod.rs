@@ -26,7 +26,7 @@ fn render_create_table_for_catalog_fields_uses_composite_primary_key() {
 
     assert_eq!(
         sql,
-        "CREATE TABLE \"_engine_catalog_fields\" (\"object_id\" INTEGER NOT NULL, \"field_id\" INTEGER NOT NULL, \"name\" TEXT NOT NULL, \"field_kind\" TEXT NOT NULL, \"cardinality\" TEXT NOT NULL, \"scalar_type\" TEXT NULL, \"target_object_id\" INTEGER NULL, \"is_implicit\" INTEGER NOT NULL, \"is_unique\" INTEGER NOT NULL, PRIMARY KEY (\"object_id\", \"field_id\"), FOREIGN KEY (\"object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\") ON DELETE RESTRICT, FOREIGN KEY (\"target_object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\") ON DELETE RESTRICT)"
+        "CREATE TABLE \"_engine_catalog_fields\" (\"object_id\" INTEGER NOT NULL, \"field_id\" INTEGER NOT NULL, \"name\" TEXT NOT NULL, \"field_kind\" TEXT NOT NULL, \"cardinality\" TEXT NOT NULL, \"scalar_type\" TEXT NULL, \"target_object_id\" INTEGER NULL, \"is_implicit\" INTEGER NOT NULL, \"is_unique\" INTEGER NOT NULL, \"inverse_field_name\" TEXT NULL, PRIMARY KEY (\"object_id\", \"field_id\"), FOREIGN KEY (\"object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\") ON DELETE RESTRICT, FOREIGN KEY (\"target_object_id\") REFERENCES \"_engine_catalog_objects\"(\"object_id\") ON DELETE RESTRICT)"
     );
 }
 
@@ -170,7 +170,7 @@ fn render_catalog_field_insert_uses_placeholders_and_preserves_null_values() {
 
     assert_eq!(
         rendered.sql(),
-        "INSERT INTO \"_engine_catalog_fields\" (\"object_id\", \"field_id\", \"name\", \"field_kind\", \"cardinality\", \"scalar_type\", \"target_object_id\", \"is_implicit\", \"is_unique\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO \"_engine_catalog_fields\" (\"object_id\", \"field_id\", \"name\", \"field_kind\", \"cardinality\", \"scalar_type\", \"target_object_id\", \"is_implicit\", \"is_unique\", \"inverse_field_name\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     assert_eq!(
         rendered.values(),
@@ -184,6 +184,7 @@ fn render_catalog_field_insert_uses_placeholders_and_preserves_null_values() {
             SQLiteValuePlan::Null,
             SQLiteValuePlan::Integer(1),
             SQLiteValuePlan::Integer(0),
+            SQLiteValuePlan::Null,
         ]
     )
 }
@@ -246,7 +247,7 @@ fn render_initial_schema_outputs_deterministic_sql() {
     );
     assert_eq!(
         first[7].sql(),
-        "INSERT INTO \"_engine_catalog_fields\" (\"object_id\", \"field_id\", \"name\", \"field_kind\", \"cardinality\", \"scalar_type\", \"target_object_id\", \"is_implicit\", \"is_unique\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO \"_engine_catalog_fields\" (\"object_id\", \"field_id\", \"name\", \"field_kind\", \"cardinality\", \"scalar_type\", \"target_object_id\", \"is_implicit\", \"is_unique\", \"inverse_field_name\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     assert_eq!(
         first[12].sql(),

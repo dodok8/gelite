@@ -495,11 +495,24 @@ impl SQLiteSelectPlan {
     }
 }
 
+/// Physical source of a batched many-link fetch.
+enum SQLiteFollowUpSource {
+    JoinTable {
+        table_name: String,
+        alias: String,
+        parent_column: String,
+        child_column: String,
+    },
+    ReverseForeignKey {
+        column: String,
+    },
+}
+
 /// Secondary fetch plan for one selected multi link.
 pub struct SQLiteFollowUpFetchPlan {
     parent_field: FieldRef,
     parent_identity: SQLiteResultValueRef,
-    join_table_name: String,
+    source: SQLiteFollowUpSource,
     target_source: SQLiteObjectSource,
     selected_values: Vec<SQLiteSelectValue>,
     joins: Vec<SQLiteJoin>,
@@ -516,16 +529,30 @@ impl SQLiteFollowUpFetchPlan {
         &self.parent_identity
     }
 
-    pub fn join_table_name(&self) -> &str {
-        &self.join_table_name
+    pub fn source_alias(&self) -> &str {
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { alias, .. } => alias,
+            SQLiteFollowUpSource::ReverseForeignKey { .. } => self.target_source.alias(),
+        }
     }
 
+    pub fn join_table_name(&self) -> Option<&str> {
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { table_name, .. } => Some(table_name),
+            SQLiteFollowUpSource::ReverseForeignKey { .. } => None,
+        }
+    }
     pub fn source_column(&self) -> &str {
-        "source_id"
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { parent_column, .. } => parent_column,
+            SQLiteFollowUpSource::ReverseForeignKey { column } => column,
+        }
     }
-
     pub fn target_column(&self) -> &str {
-        "target_id"
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { child_column, .. } => child_column,
+            SQLiteFollowUpSource::ReverseForeignKey { .. } => "id",
+        }
     }
 
     pub fn target_source(&self) -> &SQLiteObjectSource {
@@ -926,6 +953,7 @@ fn collect_root_computed_path_aliases(shape: &query_ir::ResolvedShape, aliases: 
 
 fn collect_root_path_aliases_from_expr(expr: &Expr, aliases: &mut Vec<String>) {
     match expr {
+        Expr::Exists(_) => {}
         Expr::Compare(compare) => {
             collect_root_path_aliases_from_value(compare.left(), aliases);
             collect_root_path_aliases_from_value(compare.right(), aliases);
@@ -1251,6 +1279,28 @@ fn plan_follow_up_fetches(
     fetches
 }
 
+fn follow_up_source(traversal: &query_ir::LinkTraversal) -> SQLiteFollowUpSource {
+    let stored = traversal.stored_field();
+    let inverse = traversal.direction() == query_ir::LinkDirection::Inverse;
+    if inverse && traversal.stored_cardinality() != Cardinality::Many {
+        SQLiteFollowUpSource::ReverseForeignKey {
+            column: format!("{}_id", stored.name()),
+        }
+    } else {
+        let table_name = format!(
+            "{}__{}",
+            sqlite_table_name(stored.owner_object_type()),
+            stored.name()
+        );
+        SQLiteFollowUpSource::JoinTable {
+            alias: table_name.clone(),
+            table_name,
+            parent_column: if inverse { "target_id" } else { "source_id" }.to_string(),
+            child_column: if inverse { "source_id" } else { "target_id" }.to_string(),
+        }
+    }
+}
+
 fn plan_follow_up_fetch(
     field: &query_ir::ResolvedShapeField,
     target_shape: &query_ir::ResolvedShape,
@@ -1298,6 +1348,17 @@ fn plan_follow_up_fetch(
     let follow_up_fetches =
         plan_follow_up_fetches(target_shape, "root", &[], &selected_shape_aliases);
 
+    let mut source = follow_up_source(
+        field
+            .link_traversal()
+            .expect("link shape has traversal metadata"),
+    );
+    if let SQLiteFollowUpSource::JoinTable { alias, .. } = &mut source {
+        while alias == "root" || joins.iter().any(|join| join.target_alias() == alias) {
+            alias.push('_');
+        }
+    }
+
     SQLiteFollowUpFetchPlan {
         parent_field: field.field().clone(),
         parent_identity: SQLiteResultValueRef {
@@ -1305,11 +1366,7 @@ fn plan_follow_up_fetch(
             column_name: "id".to_string(),
             role: SQLiteValueRole::ObjectId,
         },
-        join_table_name: format!(
-            "{}__{}",
-            sqlite_table_name(field.field().owner_object_type()),
-            field.field().name()
-        ),
+        source,
         target_source: SQLiteObjectSource {
             object_type: target_object_type.clone(),
             table_name: sqlite_table_name(&target_object_type),
@@ -1452,6 +1509,7 @@ impl SQLiteOrder {
 
 /// Backend-specific predicate expression.
 pub enum SQLiteWhereExpr {
+    Exists(Box<SQLiteExistsPlan>),
     Compare(SQLiteCompareExpr),
     IsNull(SQLiteValueExpr),
     IsNotNull(SQLiteValueExpr),
@@ -1459,6 +1517,24 @@ pub enum SQLiteWhereExpr {
     And(Box<SQLiteWhereExpr>, Box<SQLiteWhereExpr>),
     Or(Box<SQLiteWhereExpr>, Box<SQLiteWhereExpr>),
     Not(Box<SQLiteWhereExpr>),
+}
+
+/// A correlated existence query whose joins do not multiply outer rows.
+pub struct SQLiteExistsPlan {
+    source: SQLiteObjectSource,
+    joins: Vec<SQLiteJoin>,
+    predicate: SQLiteWhereExpr,
+}
+impl SQLiteExistsPlan {
+    pub fn source(&self) -> &SQLiteObjectSource {
+        &self.source
+    }
+    pub fn joins(&self) -> &[SQLiteJoin] {
+        &self.joins
+    }
+    pub fn predicate(&self) -> &SQLiteWhereExpr {
+        &self.predicate
+    }
 }
 
 /// Backend-specific comparison expression.
@@ -1793,19 +1869,66 @@ fn plan_link_path_step(
     state.alias_parts.push(step.field().name().to_string());
     state.path_parts.push(step.field().name().to_string());
     let target_alias = path_step_target_alias(&source_alias, state, join_aliases);
-    let join_cardinality = path_step_join_cardinality(state.current_nullable, step.cardinality());
-
-    state.joins.push(SQLiteJoin::path_traversal(
-        source_alias,
-        step.field(),
-        target_object_type,
-        target_alias.clone(),
-        state.path_parts.clone(),
-        join_cardinality,
-    ));
-
+    let traversal = step
+        .link_traversal()
+        .expect("link step has resolved storage");
+    if step.cardinality() == Cardinality::Many {
+        match follow_up_source(traversal) {
+            SQLiteFollowUpSource::ReverseForeignKey { column } => {
+                state.joins.push(SQLiteJoin::relation(
+                    SQLiteJoinKind::Inner,
+                    &source_alias,
+                    "id",
+                    sqlite_table_name(target_object_type),
+                    &target_alias,
+                    &column,
+                    state.path_parts.clone(),
+                ));
+            }
+            SQLiteFollowUpSource::JoinTable {
+                table_name,
+                parent_column,
+                child_column,
+                ..
+            } => {
+                let relation_alias = join_aliases.next_alias();
+                state.joins.push(SQLiteJoin::relation(
+                    SQLiteJoinKind::Inner,
+                    &source_alias,
+                    "id",
+                    table_name,
+                    &relation_alias,
+                    &parent_column,
+                    state.path_parts.clone(),
+                ));
+                state.joins.push(SQLiteJoin::relation(
+                    SQLiteJoinKind::Inner,
+                    &relation_alias,
+                    &child_column,
+                    sqlite_table_name(target_object_type),
+                    &target_alias,
+                    "id",
+                    state.path_parts.clone(),
+                ));
+            }
+        }
+        state.current_nullable = false;
+    } else {
+        let join_cardinality =
+            path_step_join_cardinality(state.current_nullable, step.cardinality());
+        state.joins.push(SQLiteJoin::relation(
+            SQLiteJoinKind::for_single_link(join_cardinality),
+            &source_alias,
+            &format!("{}_id", traversal.stored_field().name()),
+            sqlite_table_name(target_object_type),
+            &target_alias,
+            "id",
+            state.path_parts.clone(),
+        ));
+        state.current_nullable =
+            state.current_nullable || step.cardinality() == Cardinality::Optional;
+    }
     state.current_alias = target_alias;
-    state.current_nullable = state.current_nullable || step.cardinality() == Cardinality::Optional;
 }
 
 fn path_step_target_alias(
@@ -1990,8 +2113,59 @@ struct PlannedWhereExpr {
     joins: Vec<SQLiteJoin>,
 }
 
+fn plan_exists_comparison(exists: &query_ir::ExistsComparison) -> SQLiteExistsPlan {
+    let alias = "__gelite_exists_root";
+    let mut aliases = SQLiteJoinAliasAllocator::new(vec!["root".to_string(), alias.to_string()]);
+    let path = plan_resolved_path(exists.path(), alias, false, &mut aliases);
+    let value = SQLiteValueExpr::Column(path.column);
+    let predicate = if matches!(exists.literal(), query_ir::Literal::Null) {
+        if exists.op() == CompareOp::Eq {
+            SQLiteWhereExpr::IsNull(value)
+        } else {
+            SQLiteWhereExpr::IsNotNull(value)
+        }
+    } else {
+        let literal = SQLiteValueExpr::Literal(sqlite_literal_from_ir(exists.literal()));
+        let (left, right) = if exists.path_on_left() {
+            (value, literal)
+        } else {
+            (literal, value)
+        };
+        SQLiteWhereExpr::Compare(SQLiteCompareExpr {
+            left,
+            op: SQLiteCompareOp::from_ir(exists.op()),
+            right,
+        })
+    };
+    let correlation = SQLiteWhereExpr::Compare(SQLiteCompareExpr {
+        left: SQLiteValueExpr::Column(SQLiteColumnRef {
+            source_alias: alias.to_string(),
+            column_name: "id".to_string(),
+        }),
+        op: SQLiteCompareOp::Eq,
+        right: SQLiteValueExpr::Column(SQLiteColumnRef {
+            source_alias: "root".to_string(),
+            column_name: "id".to_string(),
+        }),
+    });
+    SQLiteExistsPlan {
+        source: SQLiteObjectSource {
+            object_type: exists.path().root_object_type().clone(),
+            table_name: sqlite_table_name(exists.path().root_object_type()),
+            alias: alias.to_string(),
+            id_column: "id".to_string(),
+        },
+        joins: path.joins,
+        predicate: SQLiteWhereExpr::And(Box::new(correlation), Box::new(predicate)),
+    }
+}
+
 fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> PlannedWhereExpr {
     match expr {
+        Expr::Exists(exists) => PlannedWhereExpr {
+            expr: SQLiteWhereExpr::Exists(Box::new(plan_exists_comparison(exists))),
+            joins: Vec::new(),
+        },
         Expr::Compare(compare) => {
             let left = plan_value_expr(compare.left(), "root", false, join_aliases);
             let right = plan_value_expr(compare.right(), "root", false, join_aliases);
@@ -2200,6 +2374,30 @@ pub struct SQLiteJoin {
 }
 
 impl SQLiteJoin {
+    fn relation(
+        kind: SQLiteJoinKind,
+        source_alias: &str,
+        source_column: &str,
+        target_table: String,
+        target_alias: &str,
+        target_column: &str,
+        path: Vec<String>,
+    ) -> Self {
+        Self {
+            kind,
+            source_alias: source_alias.to_string(),
+            target_table,
+            target_alias: target_alias.to_string(),
+            on: SQLiteJoinCondition {
+                left_alias: source_alias.to_string(),
+                left_column: source_column.to_string(),
+                right_alias: target_alias.to_string(),
+                right_column: target_column.to_string(),
+            },
+            reason: SQLiteJoinReason::PathTraversal { path },
+        }
+    }
+
     pub fn selected_single_link(
         source_alias: &str,
         shape_field: &query_ir::ResolvedShapeField,
@@ -2241,32 +2439,6 @@ impl SQLiteJoin {
                 right_column: "id".to_string(),
             },
             reason: SQLiteJoinReason::SelectedSingleLink { field },
-        }
-    }
-
-    fn path_traversal(
-        source_alias: impl Into<String>,
-        link_field: &FieldRef,
-        target_object_type: &ObjectTypeRef,
-        target_alias: impl Into<String>,
-        path: Vec<String>,
-        cardinality: Cardinality,
-    ) -> Self {
-        let source_alias = source_alias.into();
-        let target_alias = target_alias.into();
-
-        Self {
-            kind: SQLiteJoinKind::for_single_link(cardinality),
-            source_alias: source_alias.clone(),
-            target_table: target_object_type.name().to_ascii_lowercase().to_string(),
-            target_alias: target_alias.clone(),
-            on: SQLiteJoinCondition {
-                left_alias: source_alias,
-                left_column: format!("{}_id", link_field.name()),
-                right_alias: target_alias,
-                right_column: "id".to_string(),
-            },
-            reason: SQLiteJoinReason::PathTraversal { path },
         }
     }
 

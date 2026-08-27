@@ -268,6 +268,13 @@ fn resolve_assignment(
             field: assignment.field_name().to_string(),
         })?;
 
+    if matches!(field, Field::Link(link) if link.inverse_field_name().is_some()) {
+        return Err(ResolveError::AssignmentToInverseField {
+            object_type: target_object_type.name().to_string(),
+            field: assignment.field_name().to_string(),
+        });
+    }
+
     if field.is_implicit() {
         return Err(ResolveError::AssignmentToImplicitField {
             object_type: target_object_type.name().to_string(),
@@ -546,6 +553,33 @@ fn resolve_link_assignment_value(
     }
 }
 
+fn resolve_link_traversal(
+    catalog: &schema_model::SchemaCatalog,
+    field: &schema_model::FieldRef,
+    link: &schema_model::LinkField,
+) -> query_ir::LinkTraversal {
+    match link.inverse_field_name() {
+        None => query_ir::LinkTraversal::new(
+            field.clone(),
+            link.cardinality(),
+            query_ir::LinkDirection::Forward,
+        ),
+        Some(source) => {
+            let stored = catalog
+                .find_field(link.target_type_name(), source)
+                .expect("validated inverse source exists");
+            let stored_ref = catalog
+                .find_field_ref(link.target_type_name(), source)
+                .expect("validated inverse source has a reference");
+            query_ir::LinkTraversal::new(
+                stored_ref,
+                stored.cardinality(),
+                query_ir::LinkDirection::Inverse,
+            )
+        }
+    }
+}
+
 fn resolve_shape_field(
     catalog: &schema_model::SchemaCatalog,
     source_object_type: &schema_model::ObjectTypeRef,
@@ -602,13 +636,15 @@ fn resolve_shape_field(
                     })?;
 
             let resolved_child_shape = resolve_shape(catalog, target_object_type, child_shape)?;
+            let traversal = resolve_link_traversal(catalog, &field_ref, link);
 
             Ok(query_ir::ResolvedShapeField::new(
                 field_name,
                 field_ref,
                 field.cardinality(),
                 Some(resolved_child_shape),
-            ))
+            )
+            .with_link_traversal(traversal))
         }
     }
 }
@@ -699,6 +735,10 @@ fn resolve_compare_expr(
     source_object_type: &schema_model::ObjectTypeRef,
     compare: &query_ast::CompareExpr,
 ) -> Result<query_ir::Expr, ResolveError> {
+    if let Some(expr) = resolve_multi_path_comparison(catalog, source_object_type, compare)? {
+        return Ok(expr);
+    }
+
     if let Some(expr) = resolve_null_compare_expr(
         catalog,
         source_object_type,
@@ -729,6 +769,62 @@ fn resolve_compare_expr(
         resolve_compare_op(compare.op()),
         right.value,
     )))
+}
+
+fn resolve_multi_path_comparison(
+    catalog: &schema_model::SchemaCatalog,
+    source: &schema_model::ObjectTypeRef,
+    compare: &query_ast::CompareExpr,
+) -> Result<Option<query_ir::Expr>, ResolveError> {
+    let (path, literal, path_on_left) = match (compare.left(), compare.right()) {
+        (query_ast::Expr::Path(path), query_ast::Expr::Literal(literal)) => (path, literal, true),
+        (query_ast::Expr::Literal(literal), query_ast::Expr::Path(path)) => (path, literal, false),
+        _ => return Ok(None),
+    };
+    let typed_path = resolve_typed_path(catalog, source, path, true)?;
+    let query_ir::ValueExpr::Path(path) = typed_path.value else {
+        unreachable!("resolved path")
+    };
+    if path.result_cardinality() != schema_model::Cardinality::Many {
+        return Ok(None);
+    }
+    let typed_literal = resolve_typed_literal_expr(literal)?;
+    if matches!(literal, query_ast::Literal::Null) {
+        if !matches!(
+            compare.op(),
+            query_ast::CompareOp::Eq | query_ast::CompareOp::Ne
+        ) {
+            return Err(ResolveError::UnsupportedExpr {
+                expr_type: "null comparison operator".to_string(),
+            });
+        }
+        // Only the single-valued suffix after the last multi step can be absent
+        // within an existing relation match. An empty relation is not null.
+        let nullable = path
+            .steps()
+            .iter()
+            .rev()
+            .take_while(|step| step.cardinality() != schema_model::Cardinality::Many)
+            .any(|step| step.cardinality() == schema_model::Cardinality::Optional);
+        if !nullable {
+            return Err(ResolveError::NullComparisonOnNonOptionalPath {
+                cardinality: "required".to_string(),
+            });
+        }
+    } else {
+        ensure_compatible_comparison(&typed_path.source, &typed_literal.source)?;
+    }
+    let query_ir::ValueExpr::Literal(literal) = typed_literal.value else {
+        unreachable!("resolved literal")
+    };
+    Ok(Some(query_ir::Expr::Exists(Box::new(
+        query_ir::ExistsComparison::new(
+            path,
+            resolve_compare_op(compare.op()),
+            literal,
+            path_on_left,
+        ),
+    ))))
 }
 
 fn resolve_null_compare_expr(
@@ -1135,6 +1231,15 @@ fn resolve_typed_path_expr(
     source_object_type: &schema_model::ObjectTypeRef,
     path: &Path,
 ) -> Result<TypedValueExpr, ResolveError> {
+    resolve_typed_path(catalog, source_object_type, path, false)
+}
+
+fn resolve_typed_path(
+    catalog: &schema_model::SchemaCatalog,
+    source_object_type: &schema_model::ObjectTypeRef,
+    path: &Path,
+    allow_many: bool,
+) -> Result<TypedValueExpr, ResolveError> {
     let steps = path.steps();
     let mut current_object_type = source_object_type.clone();
     let mut resolved_steps = Vec::new();
@@ -1168,7 +1273,8 @@ fn resolve_typed_path_expr(
                 terminal_scalar_type = Some(scalar.scalar_type());
             }
             schema_model::Field::Link(link) => {
-                if is_last || link.cardinality() == schema_model::Cardinality::Many {
+                if is_last || (!allow_many && link.cardinality() == schema_model::Cardinality::Many)
+                {
                     return Err(ResolveError::UnsupportedPath);
                 }
 
@@ -1178,11 +1284,15 @@ fn resolve_typed_path_expr(
                         name: link.target_type_name().to_string(),
                     })?;
 
-                resolved_steps.push(query_ir::ResolvedPathStep::link(
-                    field_ref,
-                    target_object_type.clone(),
-                    field.cardinality(),
-                ));
+                let traversal = resolve_link_traversal(catalog, &field_ref, link);
+                resolved_steps.push(
+                    query_ir::ResolvedPathStep::link(
+                        field_ref,
+                        target_object_type.clone(),
+                        field.cardinality(),
+                    )
+                    .with_link_traversal(traversal),
+                );
 
                 current_object_type = target_object_type;
             }
@@ -1846,6 +1956,10 @@ fn resolve_order_expr(
 /// callers can distinguish syntax failures from schema or type failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
+    AssignmentToInverseField {
+        object_type: String,
+        field: String,
+    },
     UnknownObjectType {
         name: String,
     },

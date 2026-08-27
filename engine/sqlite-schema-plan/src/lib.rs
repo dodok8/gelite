@@ -247,6 +247,13 @@ pub fn plan_initial_schema(catalog: &SchemaCatalog) -> SQLiteSchemaPlan {
                     false,
                     false,
                 ),
+                SQLiteColumnPlan::new(
+                    "inverse_field_name",
+                    SQLiteAffinity::Text,
+                    true,
+                    false,
+                    false,
+                ),
             ],
             Some(SQLitePrimaryKeyPlan::new(vec![
                 "object_id".to_string(),
@@ -304,14 +311,16 @@ fn plan_catalog_field_rows(catalog: &SchemaCatalog) -> Vec<SQLiteCatalogFieldRow
                         .id()
                         .value();
 
-                    rows.push(SQLiteCatalogFieldRow::link(
+                    let mut row = SQLiteCatalogFieldRow::link(
                         object_id,
                         field_id,
                         field.name().to_string(),
                         field.cardinality(),
                         target_object_id,
                         link.is_unique(),
-                    ));
+                    );
+                    row.inverse_field_name = link.inverse_field_name().map(ToString::to_string);
+                    rows.push(row);
                 }
             }
         }
@@ -420,7 +429,10 @@ fn plan_relation_tables(catalog: &SchemaCatalog) -> Vec<SQLiteTablePlan> {
                 .iter()
                 .filter_map(|field| match field {
                     Field::Scalar(_) => None,
-                    Field::Link(link) if link.cardinality() == Cardinality::Many => {
+                    Field::Link(link)
+                        if link.cardinality() == Cardinality::Many
+                            && link.inverse_field_name().is_none() =>
+                    {
                         let source_table = object_type.name().to_ascii_lowercase();
                         let target_table = link.target_type_name().to_ascii_lowercase();
                         Some(SQLiteTablePlan::new_with_constraints(
@@ -500,6 +512,7 @@ pub fn plan_catalog_field_inserts(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPl
                 "target_object_id".to_string(),
                 "is_implicit".to_string(),
                 "is_unique".to_string(),
+                "inverse_field_name".to_string(),
             ],
             values: vec![
                 SQLiteValuePlan::Integer(row.object_id()),
@@ -511,6 +524,11 @@ pub fn plan_catalog_field_inserts(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPl
                 optional_i64_value(row.target_object_id()),
                 bool_value(row.is_implicit()),
                 bool_value(row.is_unique()),
+                row.inverse_field_name
+                    .as_ref()
+                    .map_or(SQLiteValuePlan::Null, |name| {
+                        SQLiteValuePlan::Text(name.clone())
+                    }),
             ],
         })
         .collect()
@@ -568,6 +586,10 @@ fn plan_indexes(catalog: &SchemaCatalog) -> Vec<SQLiteIndexPlan> {
             let Field::Link(link) = field else {
                 continue;
             };
+
+            if link.inverse_field_name().is_some() {
+                continue;
+            }
 
             match link.cardinality() {
                 Cardinality::Optional | Cardinality::Required => {
@@ -757,6 +779,7 @@ pub struct SQLiteCatalogFieldRow {
     target_object_id: Option<i64>,
     is_implicit: bool,
     is_unique: bool,
+    inverse_field_name: Option<String>,
 }
 
 impl SQLiteCatalogFieldRow {
@@ -771,6 +794,7 @@ impl SQLiteCatalogFieldRow {
             target_object_id: None,
             is_implicit: true,
             is_unique: false,
+            inverse_field_name: None,
         }
     }
 
@@ -792,6 +816,7 @@ impl SQLiteCatalogFieldRow {
             target_object_id: None,
             is_implicit: false,
             is_unique,
+            inverse_field_name: None,
         }
     }
 
@@ -813,6 +838,7 @@ impl SQLiteCatalogFieldRow {
             target_object_id: Some(target_object_id),
             is_implicit: false,
             is_unique,
+            inverse_field_name: None,
         }
     }
 

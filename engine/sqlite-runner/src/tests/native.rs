@@ -663,3 +663,77 @@ fn native_runner_reports_execution_errors() {
     assert!(error.message().contains("execute SQL"));
     assert!(!error.message().is_empty());
 }
+
+#[test]
+fn inverse_catalog_round_trips_and_rejects_corrupt_metadata() {
+    use schema_model::{Cardinality, Field, LinkField, ObjectType, SchemaCatalog};
+    let catalog = SchemaCatalog::try_new(vec![
+        ObjectType::new(
+            "Department",
+            vec![Field::Link(LinkField::with_inverse(
+                "employees",
+                "Employee",
+                Cardinality::Many,
+                "department",
+            ))],
+        ),
+        ObjectType::new(
+            "Employee",
+            vec![Field::Link(LinkField::new(
+                "department",
+                "Department",
+                Cardinality::Optional,
+            ))],
+        ),
+    ])
+    .expect("valid schema");
+    let plan = sqlite_schema_plan::plan_initial_schema(&catalog);
+    let statements = sqlite_schema_sqlgen::render_initial_schema(&plan);
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+    apply_schema_statements(&mut runner, &statements).expect("apply schema");
+    assert_eq!(
+        runner.load_schema_catalog().expect("reload catalog"),
+        catalog
+    );
+    for metadata in ["field_kind = 'scalar'", "is_implicit = 1", "is_unique = 1"] {
+        runner
+            .execute(&format!(
+                "UPDATE _engine_catalog_fields SET {metadata} WHERE name = 'employees'"
+            ))
+            .expect("corrupt inverse metadata");
+        let error = runner
+            .load_schema_catalog()
+            .expect_err("invalid inverse metadata must be rejected before field reconstruction");
+        assert_eq!(error.message(), "invalid inverse field metadata");
+        runner
+            .execute(
+                "UPDATE _engine_catalog_fields SET field_kind = 'link', is_implicit = 0, is_unique = 0 WHERE name = 'employees'",
+            )
+            .expect("restore inverse metadata");
+    }
+    runner.execute("UPDATE _engine_catalog_fields SET inverse_field_name = 'missing' WHERE name = 'employees'").expect("corrupt metadata fixture");
+    assert!(runner.load_schema_catalog().is_err());
+    runner.execute("UPDATE _engine_catalog_fields SET inverse_field_name = 'department' WHERE name = 'employees'").expect("restore source");
+    runner
+        .execute(
+            "UPDATE _engine_catalog_fields SET cardinality = 'optional' WHERE name = 'employees'",
+        )
+        .expect("corrupt cardinality");
+    assert!(runner.load_schema_catalog().is_err());
+}
+
+#[test]
+fn legacy_catalog_without_inverse_column_still_loads() {
+    let statements = rendered_post_schema_statements();
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+    apply_schema_statements(&mut runner, &statements).expect("apply schema");
+    let catalog = runner.load_schema_catalog().expect("catalog");
+    // Raw metadata DDL recreates the pre-inverse format, not a user schema mutation.
+    runner
+        .execute("ALTER TABLE _engine_catalog_fields DROP COLUMN inverse_field_name")
+        .expect("legacy metadata fixture");
+    assert_eq!(
+        runner.load_schema_catalog().expect("legacy reload"),
+        catalog
+    );
+}

@@ -1,8 +1,8 @@
 # Organization
 
-This `EMP`/`DEPT`-style example demonstrates a department's multi link to its
-employees, each employee's required department link, and an optional
-self-referencing manager link.
+This `EMP`/`DEPT`-style example stores each employee's required department link
+and exposes its readonly inverse as `Department.employees`. It also includes
+an optional self-referencing manager link.
 
 ```text
 {{#include ../../examples/organization.geli}}
@@ -80,60 +80,9 @@ insert Employee {
 }
 ```
 
-Populate the independent `Department.employees` links with Gelite updates. The
-outer filter selects the department and the nested select chooses the employee
-targets:
-
-```text
-update Department
-filter .code = "INVESTIGATION"
-set {
-  employees += (
-    select Employee { id }
-    filter .department.code = "INVESTIGATION"
-  )
-}
-```
-
-```text
-update Department
-filter .code = "ARCHIVE"
-set {
-  employees += (
-    select Employee { id }
-    filter .department.code = "ARCHIVE"
-  )
-}
-```
-
-The engine does not infer inverse links: `Employee.department` and
-`Department.employees` are separate stored links in this example.
-
-Use `-=` to remove selected relationships. Adding an existing relationship or
-removing a missing one reports `affected_rows` as `0`. This pair removes and
-then restores the archive employee used below:
-
-```text
-update Department
-filter .code = "ARCHIVE"
-set {
-  employees -= (
-    select Employee { id }
-    filter .employee_no = "MG-002"
-  )
-}
-```
-
-```text
-update Department
-filter .code = "ARCHIVE"
-set {
-  employees += (
-    select Employee { id }
-    filter .employee_no = "MG-002"
-  )
-}
-```
+`Department.employees` is derived from the stored `Employee.department` link.
+No separate population or synchronization step is needed. Assignments to the
+inverse field are rejected; change the stored employee link instead.
 
 ## Query a multi link
 
@@ -154,6 +103,45 @@ order by .code asc
 The REPL renders `employees` as a collection of nested objects. A department
 without linked employees receives `[]`. Multi-link collection order is not
 defined by the language.
+
+## Filter through the inverse link
+
+Select departments with at least one employee earning 90000 or more:
+
+```text
+select Department { code, name, employees: { name, salary } }
+filter .employees.salary >= 90000
+order by .code asc
+```
+
+The filter selects departments; the returned `employees` collection still
+contains all employees in each selected department. Each multi-path comparison
+has its own existence scope. Two comparisons combined with `and` may be
+satisfied by different employees. Same-employee predicate scopes are tracked
+in [#68](https://github.com/gelite-dev/gelite/issues/68).
+
+## Change the stored relationship
+
+Move the archive employee to the investigation department:
+
+```text
+update Employee
+filter .employee_no = "MG-002"
+set {
+  department := (
+    select Department { id }
+    filter .code = "INVESTIGATION"
+  )
+}
+```
+
+```text
+select Department { code, employees: { employee_no, name } }
+order by .code asc
+```
+
+The archive department now returns `[]`, and the investigation department
+returns three employees. No inverse-side update is needed.
 
 ## Query nested links
 

@@ -41,7 +41,7 @@ fn apply_schema_statements_executes_sql_and_insert_statements_in_order() {
     assert!(runner.calls().iter().any(|call| matches!(
         call,
         RecordedCall::ExecuteWithValues(sql, values)
-            if sql == "INSERT INTO \"_engine_catalog_fields\" (\"object_id\", \"field_id\", \"name\", \"field_kind\", \"cardinality\", \"scalar_type\", \"target_object_id\", \"is_implicit\", \"is_unique\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            if sql == "INSERT INTO \"_engine_catalog_fields\" (\"object_id\", \"field_id\", \"name\", \"field_kind\", \"cardinality\", \"scalar_type\", \"target_object_id\", \"is_implicit\", \"is_unique\", \"inverse_field_name\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 && values == &vec![
                     SQLiteValuePlan::Integer(1),
                     SQLiteValuePlan::Integer(1),
@@ -52,6 +52,7 @@ fn apply_schema_statements_executes_sql_and_insert_statements_in_order() {
                     SQLiteValuePlan::Null,
                     SQLiteValuePlan::Integer(1),
                     SQLiteValuePlan::Integer(0),
+            SQLiteValuePlan::Null,
                 ]
     )));
 }

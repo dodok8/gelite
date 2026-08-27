@@ -247,6 +247,44 @@ impl ResolvedShapeItem {
     }
 }
 
+/// Direction relative to the single stored relationship.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkDirection {
+    Forward,
+    Inverse,
+}
+
+/// Backend-independent relationship ownership used by shapes and paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkTraversal {
+    stored_field: FieldRef,
+    stored_cardinality: Cardinality,
+    direction: LinkDirection,
+}
+
+impl LinkTraversal {
+    pub fn new(
+        stored_field: FieldRef,
+        stored_cardinality: Cardinality,
+        direction: LinkDirection,
+    ) -> Self {
+        Self {
+            stored_field,
+            stored_cardinality,
+            direction,
+        }
+    }
+    pub fn stored_field(&self) -> &FieldRef {
+        &self.stored_field
+    }
+    pub fn stored_cardinality(&self) -> Cardinality {
+        self.stored_cardinality
+    }
+    pub fn direction(&self) -> LinkDirection {
+        self.direction
+    }
+}
+
 /// One resolved output field in a [`ResolvedShape`].
 ///
 /// Scalar fields have no child shape. Link fields selected in output must have
@@ -258,6 +296,7 @@ pub struct ResolvedShapeField {
     field: FieldRef,
     cardinality: Cardinality,
     child_shape: Option<ResolvedShape>,
+    link_traversal: Option<LinkTraversal>,
 }
 
 /// Query-local computed output item in a [`ResolvedShape`].
@@ -308,13 +347,26 @@ impl ResolvedShapeField {
         cardinality: Cardinality,
         child_shape: Option<ResolvedShape>,
     ) -> Self {
+        let link_traversal = child_shape
+            .as_ref()
+            .map(|_| LinkTraversal::new(field.clone(), cardinality, LinkDirection::Forward));
         Self {
             output_name: output_name.into(),
             field,
             cardinality,
             child_shape,
+            link_traversal,
         }
     }
+    /// Replaces the default forward relationship with resolved ownership.
+    pub fn with_link_traversal(mut self, traversal: LinkTraversal) -> Self {
+        self.link_traversal = Some(traversal);
+        self
+    }
+    pub fn link_traversal(&self) -> Option<&LinkTraversal> {
+        self.link_traversal.as_ref()
+    }
+
     pub fn output_name(&self) -> &str {
         &self.output_name
     }
@@ -399,6 +451,7 @@ pub struct ResolvedPathStep {
     field: FieldRef,
     kind: ResolvedPathStepKind,
     cardinality: Cardinality,
+    link_traversal: Option<LinkTraversal>,
 }
 
 impl ResolvedPathStep {
@@ -407,6 +460,7 @@ impl ResolvedPathStep {
             field,
             kind: ResolvedPathStepKind::Scalar,
             cardinality,
+            link_traversal: None,
         }
     }
 
@@ -415,11 +469,26 @@ impl ResolvedPathStep {
         target_object_type: ObjectTypeRef,
         cardinality: Cardinality,
     ) -> Self {
+        let link_traversal = Some(LinkTraversal::new(
+            field.clone(),
+            cardinality,
+            LinkDirection::Forward,
+        ));
         Self {
             field,
             kind: ResolvedPathStepKind::Link { target_object_type },
             cardinality,
+            link_traversal,
         }
+    }
+
+    /// Replaces the default forward relationship with resolved ownership.
+    pub fn with_link_traversal(mut self, traversal: LinkTraversal) -> Self {
+        self.link_traversal = Some(traversal);
+        self
+    }
+    pub fn link_traversal(&self) -> Option<&LinkTraversal> {
+        self.link_traversal.as_ref()
     }
 
     pub fn field(&self) -> &FieldRef {
@@ -442,6 +511,39 @@ pub enum ResolvedPathStepKind {
     Link { target_object_type: ObjectTypeRef },
 }
 
+/// One atomic comparison evaluated over the matches of a many-valued path.
+/// Boolean composition and negation are outside this existential scope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExistsComparison {
+    path: ResolvedPath,
+    op: CompareOp,
+    literal: Literal,
+    path_on_left: bool,
+}
+
+impl ExistsComparison {
+    pub fn new(path: ResolvedPath, op: CompareOp, literal: Literal, path_on_left: bool) -> Self {
+        Self {
+            path,
+            op,
+            literal,
+            path_on_left,
+        }
+    }
+    pub fn path(&self) -> &ResolvedPath {
+        &self.path
+    }
+    pub fn op(&self) -> CompareOp {
+        self.op
+    }
+    pub fn literal(&self) -> &Literal {
+        &self.literal
+    }
+    pub fn path_on_left(&self) -> bool {
+        self.path_on_left
+    }
+}
+
 /// Resolved boolean expression.
 ///
 /// `IsNull` and `IsNotNull` are used when the source query compares a path to
@@ -450,6 +552,7 @@ pub enum ResolvedPathStepKind {
 /// operator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    Exists(Box<ExistsComparison>),
     Compare(CompareExpr),
     IsNull(ValueExpr),
     IsNotNull(ValueExpr),

@@ -227,7 +227,7 @@ fn sqlite_sqlgen_batches_multi_link_parent_ids_in_one_follow_up_statement() {
 
     assert_eq!(
         statement.sql(),
-        "SELECT \"user__posts\".\"source_id\", \"root\".\"id\", \"root\".\"title\" FROM \"user__posts\" INNER JOIN \"post\" AS \"root\" ON \"user__posts\".\"target_id\" = \"root\".\"id\" WHERE \"user__posts\".\"source_id\" IN (?, ?)"
+        "SELECT \"user__posts\".\"source_id\", \"root\".\"id\", \"root\".\"title\" FROM \"user__posts\" AS \"user__posts\" INNER JOIN \"post\" AS \"root\" ON \"user__posts\".\"target_id\" = \"root\".\"id\" WHERE \"user__posts\".\"source_id\" IN (?, ?)"
     );
     assert_eq!(
         statement.bind_values(),
@@ -1106,4 +1106,59 @@ fn sqlite_sqlgen_can_render_limit_and_offset() {
         statement.sql(),
         "SELECT \"root\".\"title\" FROM \"post\" AS \"root\" LIMIT 10 OFFSET 20"
     );
+}
+
+#[test]
+fn inverse_follow_up_renders_fk_and_reversed_join_table_access() {
+    use query_ir::{LinkDirection, LinkTraversal, ResolvedShape, ResolvedShapeField, SelectQuery};
+    use schema_model::{Cardinality, FieldId, FieldRef};
+    for cardinality in [Cardinality::Required, Cardinality::Many] {
+        let field = ResolvedShapeField::new(
+            "posts",
+            FieldRef::new(FieldId::new(9), user_type(), "posts"),
+            Cardinality::Many,
+            Some(ResolvedShape::new(post_type(), vec![post_id_shape_field()])),
+        )
+        .with_link_traversal(LinkTraversal::new(
+            super::fixtures::post_author_field(),
+            cardinality,
+            LinkDirection::Inverse,
+        ));
+        let query = SelectQuery::new(
+            user_type(),
+            ResolvedShape::new(user_type(), vec![field]),
+            None,
+            vec![],
+            None,
+            None,
+        );
+        let plan = sqlite_query_plan::plan_select(&query);
+        let statement = render_follow_up(
+            &plan.follow_up_fetches()[0],
+            &["user-1".into(), "user-2".into()],
+        );
+        assert_eq!(
+            statement.bind_values(),
+            &[
+                SQLiteBindValue::String("user-1".into()),
+                SQLiteBindValue::String("user-2".into())
+            ]
+        );
+        if cardinality == Cardinality::Many {
+            assert!(statement.sql().contains("\"post__author\".\"target_id\""));
+            assert!(
+                statement
+                    .sql()
+                    .contains("\"post__author\".\"source_id\" = \"root\".\"id\"")
+            );
+        } else {
+            assert!(statement.sql().starts_with("SELECT \"root\".\"author_id\""));
+            assert!(
+                statement
+                    .sql()
+                    .contains("FROM \"post\" AS \"root\" WHERE \"root\".\"author_id\" IN (?, ?)")
+            );
+            assert!(!statement.sql().contains("JOIN"));
+        }
+    }
 }

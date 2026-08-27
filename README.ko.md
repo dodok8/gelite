@@ -77,6 +77,11 @@ REPL을 통해 실행할 수 있습니다. 아직 migration diffing, server, web
 schema pipeline이 정확하고 이해 가능한지 먼저 검증하는 것이 첫 번째 유효한
 milestone입니다.
 
+명시적으로 선언한 inverse link는 정방향 저장소를 재사용하며 읽기 전용 multi
+필드로 조회할 수 있습니다. 중첩 결과와 multi 경로의 리터럴 비교를 지원하고,
+각 비교는 독립적인 존재 조건으로 평가합니다. 예제는
+[Organization](docs/src/organization.md)을 참고하세요.
+
 ## 예시
 
 schema model은 현재 Rust catalog value로 존재합니다. 모델링 중인 언어는 다음과

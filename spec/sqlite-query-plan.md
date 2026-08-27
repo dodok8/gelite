@@ -433,7 +433,7 @@ Minimum fields:
 - parent field reference
 - parent identity input slot
 - root source for the follow-up query
-- join-table access description
+- join-table or reverse foreign-key access description
 - selected value slots
 - optional nested result shape plan
 
@@ -578,3 +578,22 @@ For the first implementation:
 - use object `id` as the primary deduplication key during result shaping
 
 This strategy favors clarity over aggressive optimization.
+
+## Declared Inverse Planning
+
+Follow-up fetch plans distinguish join-table access from reverse foreign-key
+access. Join-table access records which column identifies the parent and which
+identifies the child; inverse multi links swap those roles. Reverse single
+links query the stored source object table directly, selecting its foreign key
+as the hidden parent identity. Existing batched fetching and nested shaping
+remain unchanged.
+
+Multi-path atomic filter predicates lower to correlated `EXISTS`, keeping
+matching child rows out of the outer result. Each atomic predicate gets its
+own scope. Negation remains outside that scope. SQL rendering preserves
+placeholder order and alias separation from the enclosing query.
+
+`SQLiteFollowUpSource` carries either join-table columns and an alias or the
+reverse foreign-key column. Relation aliases must not collide with selected
+link aliases. `SQLiteWhereExpr::Exists` owns a `SQLiteExistsPlan` with its own
+source, joins, and correlated predicate; its joins never enter the outer plan.

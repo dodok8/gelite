@@ -122,8 +122,16 @@ impl NativeSQLiteRunner {
     pub fn load_schema_catalog(&self) -> Result<SchemaCatalog, SQLiteRunnerError> {
         let objects = self.read_catalog_objects()?;
         let fields = self.read_catalog_fields()?;
-        let mut object_types = Vec::new();
+        if fields.iter().any(|field| {
+            field.inverse_field_name.is_some()
+                && (field.field_kind != "link" || field.is_implicit || field.is_unique)
+        }) {
+            return Err(SQLiteRunnerError::execution_failed(
+                "invalid inverse field metadata",
+            ));
+        }
 
+        let mut object_types = Vec::new();
         for object in &objects {
             let mut declared_fields = Vec::new();
 
@@ -169,12 +177,21 @@ impl NativeSQLiteRunner {
                         let cardinality = parse_cardinality(&field.cardinality)?;
                         let uniqueness = parse_uniqueness(field.is_unique)?;
 
-                        declared_fields.push(Field::Link(LinkField::with_uniqueness(
-                            field.name.clone(),
-                            target_object.name.clone(),
-                            cardinality,
-                            uniqueness,
-                        )));
+                        let link = match &field.inverse_field_name {
+                            Some(source) => LinkField::with_inverse(
+                                field.name.clone(),
+                                target_object.name.clone(),
+                                cardinality,
+                                source.clone(),
+                            ),
+                            None => LinkField::with_uniqueness(
+                                field.name.clone(),
+                                target_object.name.clone(),
+                                cardinality,
+                                uniqueness,
+                            ),
+                        };
+                        declared_fields.push(Field::Link(link));
                     }
                     kind => {
                         return Err(SQLiteRunnerError::execution_failed(format!(
@@ -418,12 +435,22 @@ impl NativeSQLiteRunner {
     }
 
     fn read_catalog_fields(&self) -> Result<Vec<CatalogFieldRow>, SQLiteRunnerError> {
+        let columns = self.connection.prepare_v2(
+            "SELECT name FROM pragma_table_info('_engine_catalog_fields') WHERE name = 'inverse_field_name'",
+        ).map_err(|_| self.connection_error("prepare catalog compatibility query"))?;
+        let inverse_column = match columns.step() {
+            Ok(ResultCode::ROW) => "inverse_field_name",
+            Ok(ResultCode::DONE) => "NULL",
+            Ok(result) | Err(result) => {
+                return Err(self.result_error("read catalog columns", result));
+            }
+        };
         let statement = self
             .connection
             .prepare_v2(
-                "SELECT object_id, field_id, name, field_kind, cardinality, scalar_type, target_object_id, is_implicit, is_unique
+                &format!("SELECT object_id, field_id, name, field_kind, cardinality, scalar_type, target_object_id, is_implicit, is_unique, {inverse_column}
                  FROM _engine_catalog_fields
-                 ORDER BY object_id ASC, field_id ASC",
+                 ORDER BY object_id ASC, field_id ASC"),
             )
             .map_err(|_| self.connection_error("prepare catalog field query"))?;
         let mut rows = Vec::new();
@@ -444,6 +471,11 @@ impl NativeSQLiteRunner {
                     )?,
                     is_implicit: read_bool_column(&statement, 7, "read is_implicit")?,
                     is_unique: read_bool_column(&statement, 8, "read is_unique")?,
+                    inverse_field_name: read_nullable_text_column(
+                        &statement,
+                        9,
+                        "read inverse_field_name",
+                    )?,
                 }),
                 Ok(ResultCode::DONE) => break,
                 Ok(result) => return Err(self.result_error("step catalog field query", result)),
@@ -495,6 +527,7 @@ struct CatalogFieldRow {
     target_object_id: Option<i64>,
     is_implicit: bool,
     is_unique: bool,
+    inverse_field_name: Option<String>,
 }
 
 fn read_text_column(

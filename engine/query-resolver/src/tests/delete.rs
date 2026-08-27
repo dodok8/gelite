@@ -80,7 +80,7 @@ fn rejects_delete_unknown_filter_field() {
 }
 
 #[test]
-fn rejects_delete_filter_through_multi_link() {
+fn resolves_delete_filter_through_multi_link_as_exists() {
     let catalog = user_with_posts_catalog();
     let query = DeleteQuery::new(
         "User",
@@ -94,8 +94,13 @@ fn rejects_delete_filter_through_multi_link() {
         ))),
     );
 
+    let resolved = resolve_delete(&catalog, &query).expect("multi path comparison");
+    let Some(query_ir::Expr::Exists(exists)) = resolved.filter() else {
+        panic!("existential filter")
+    };
     assert_eq!(
-        resolve_delete(&catalog, &query),
-        Err(ResolveError::UnsupportedPath)
+        exists.path().result_cardinality(),
+        schema_model::Cardinality::Many
     );
+    assert_eq!(exists.literal(), &query_ir::Literal::Int64(1));
 }

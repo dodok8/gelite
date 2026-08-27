@@ -63,6 +63,8 @@ Gelite's current scope includes:
 - native query execution for the current `select`, `insert`, `update`, and `delete`
   subsets, including explicit multi-link add/remove mutations and nested
   single- and multi-link result shaping
+- declared readonly inverse links that reuse forward storage, with nested
+  results and per-comparison existential multi-path filters
 - semicolon-terminated multi-statement query files with preflight compilation
   and explicit transaction validation
 - explicit `start transaction`, `commit`, and `rollback` commands in the

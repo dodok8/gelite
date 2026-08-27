@@ -328,3 +328,17 @@ The first end-to-end deliverable should be:
 
 That is small enough to finish, but complete enough to validate the engine's
 core architecture.
+
+## Declared Inverse Link Milestone (#66)
+
+The schema catalog validates explicit readonly multi inverses of stored single
+or multi links. Semantic IR carries relationship ownership and direction;
+SQLite planning chooses reverse foreign-key or join-table access. Result
+execution reuses batched follow-up fetching. Atomic multi-path filters use
+independent existence conditions without multiplying parent rows.
+
+Implementation proceeds from schema model/parser to metadata storage, then
+IR/resolution, query planning/rendering, execution tests, and examples. Each
+implementation stage is preceded by a failing-test commit. Same-target scoped
+predicates remain a separate follow-up in #68; single inverse cardinality and
+inverse-side mutations are not part of this milestone.

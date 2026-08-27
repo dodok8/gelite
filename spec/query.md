@@ -110,8 +110,8 @@ primary_expr     := literal | path | "(" expr ")"
   fields. They are not schema fields and are not stored.
 - Omitted fields are not returned.
 - `id` may be selected explicitly even though it is implicit in schema source.
-- Backlink traversal and inferred inverse relations are not supported in the
-  MVP.
+- Only declared inverse links are supported; inferred inverse traversal is
+  rejected.
 
 Computed projection expressions are value expressions. The supported subset
 includes scalar paths, numeric arithmetic expressions, and supported built-in
@@ -483,6 +483,7 @@ The MVP supports:
 
 - field paths from the root object
 - traversal through declared single relation fields
+- multi-path comparisons against literals with independent existence semantics
 - scalar comparisons against literals
 - numeric arithmetic expressions used as comparison or membership operands
 - unary numeric arithmetic expressions
@@ -496,7 +497,7 @@ The MVP supports:
 
 The MVP does not support:
 
-- traversal through backlinks or inferred inverse relations
+- inferred inverse relations
 - correlated subqueries
 - scalar comparison subqueries
 - aggregation
@@ -768,7 +769,7 @@ The analyzer should report:
 - type mismatches in filter comparisons
 - unsupported expression forms
 - invalid cardinality usage
-- use of backlink or inferred inverse traversal
+- use of inferred inverse traversal
 
 ## Canonical MVP Examples
 
@@ -828,3 +829,31 @@ These are intentionally out of scope until the end-to-end path is stable:
   membership filters
 - query parameters
 - upsert
+
+## Declared Inverse Traversal and Multi-Path Comparisons
+
+Declared inverse links are selected with ordinary nested link shapes. Missing
+matches produce `[]`; one or more matches produce an unordered collection.
+Forward mutations are visible through inverse reads without synchronizing a
+second stored relation. Assignments (`:=`, `+=`, `-=`) to inverse fields are
+rejected in insert and update.
+
+A filter may compare a scalar path traversing stored or inverse multi links
+against one compatible literal, in either operand order. Each such comparison
+means that at least one related path match satisfies it. Comparisons with null
+retain the existing `= null` / `!= null` rules for each matching related object;
+an empty relation satisfies neither. Null comparisons require an optional
+single-valued suffix after the last multi step. `not` negates the complete
+existence condition, so `not (.employees.name = "A")` differs from
+`.employees.name != "A"`.
+
+Boolean composition combines independent existence conditions: `.employees.name
+= "A" and .employees.active = true` can be satisfied by different employees.
+Same-object predicate scopes are deferred to #68. Parent filtering does not
+filter selected child collections. Parent identities, ordering, limit, and
+offset are not multiplied by matching children.
+
+Multi paths remain unsupported in computed projections, ordering, arithmetic,
+function arguments, membership operands, and comparisons with another path.
+Existing single-path expression behavior is unchanged. Filter semantics are
+shared by select, update, and delete.
