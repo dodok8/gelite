@@ -230,6 +230,38 @@ CREATE TABLE _engine_schema_versions (
 );
 ```
 
+#### Initial version record contract
+
+The following contract is planned for issue #59. The current implementation
+creates the version table but does not insert an initial version row.
+
+- A successful initial schema application must record exactly one version row.
+- The snapshot and checksum must be computed from the validated logical
+  `SchemaCatalog`, not from the original source text. Equivalent catalogs must
+  produce identical snapshots and checksums under the same snapshot format
+  version, regardless of source comments, whitespace, or declaration order.
+- The version ID and applied timestamp describe an application attempt and
+  must not affect the snapshot or checksum. The caller prepares them once per
+  attempt; pure planning and SQL generation must not generate IDs or read the
+  clock. The applied timestamp must represent UTC.
+- The version insert must follow the schema DDL, catalog metadata, and indexes
+  in the same transaction. Statement or commit failure must roll back the
+  version row together with the schema changes.
+- Reapplying an initial schema to an existing Gelite database must not append
+  a duplicate baseline or overwrite the existing version record.
+
+Schema plan previews must show the computed snapshot and checksum, but use
+`<version-id-on-apply>` and `<applied-at-on-apply>` as the respective version ID
+and timestamp values. These are reserved display placeholders, not valid
+persisted version values. The application path must not store them.
+
+The snapshot encoding, checksum algorithm, version ID format, and timestamp
+precision remain to be specified before implementing version records. The
+preview contract does not choose those formats.
+
+See [CLI and Tooling Plan](../plan/cli-and-tooling-plan.md#schema-commands) for
+preview output and application behavior.
+
 ### `_engine_catalog_objects`
 
 Stores semantic object definitions for diagnostics and diff support.

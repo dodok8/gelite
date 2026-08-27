@@ -130,6 +130,12 @@ turned into a thin wrapper around the same command/repl implementation.
 
 ## Schema Commands
 
+Issue #59 adds the version-record and preview contracts below. They are design
+requirements, not current behavior: the runtime does not yet insert a version
+row, and schema plan output does not yet include version values or a preview
+notice. Storage requirements are defined in
+[SQLite Storage MVP Spec](../spec/storage-sqlite.md#initial-version-record-contract).
+
 ### `gelite schema plan <schema.geli>`
 
 Purpose: show what would be applied to an empty SQLite database.
@@ -139,6 +145,7 @@ Pipeline:
 ```text
 read schema.geli
 -> schema_parser::parse_schema
+-> prepare version ID and timestamp preview placeholders
 -> sqlite_schema_plan::plan_initial_schema
 -> sqlite_schema_sqlgen::render_initial_schema
 -> print SQL statements and bind values
@@ -146,6 +153,25 @@ read schema.geli
 
 This command must not open a database. It should work in environments where
 SQLite execution is unavailable.
+
+It must not generate or reserve a version ID or read the current time. The
+version row uses these fixed display values:
+
+- `version_id`: `<version-id-on-apply>`
+- `applied_at`: `<applied-at-on-apply>`
+
+The snapshot and checksum are computed values, not placeholders. Repeated
+previews of the same source under the same snapshot format version must produce
+identical output. Preview and apply share planning and SQL generation; the
+caller supplies preview placeholders or actual application values.
+
+Output must begin with:
+
+```text
+Schema plan preview.
+Version ID and applied timestamp will be generated during schema apply.
+No database was opened or changed.
+```
 
 Output should keep SQL and bind values separate:
 
@@ -170,6 +196,10 @@ Assert:
 - metadata tables appear before object tables
 - object metadata insert statements keep bind values
 - planned indexes appear after table creation
+- the version insert follows all other schema statements
+- repeated previews produce identical output without database, clock, or
+  version ID generator access
+- the output identifies preview values and uses the exact placeholders above
 
 ### `gelite schema apply <schema.geli> --database <app.db>`
 
@@ -180,18 +210,28 @@ Pipeline:
 ```text
 read schema.geli
 -> schema_parser::parse_schema
+-> prepare the actual version ID and UTC applied timestamp once
 -> sqlite_schema_plan::plan_initial_schema
 -> sqlite_schema_sqlgen::render_initial_schema
 -> sqlite_runner::apply_schema_statements over a native runner backend
 ```
 
+`schema apply` must reread and validate the source and build its own plan. It
+does not consume preview output or replace placeholders in a saved preview.
+A preview neither freezes nor approves an execution plan; editing the source
+after previewing can change what is applied.
+
+For an equivalent logical catalog and the same snapshot format version, the
+stored snapshot and checksum must match the preview. The stored version ID and
+timestamp must be actual application values, never preview placeholders.
+
 Initial scope:
 
 - initial schema only
 - empty or newly created database
-- one transaction if the runner supports it
+- one transaction for schema DDL, catalog metadata, indexes, and the version row
 - no schema diffing
-- no migration history row until checksum and snapshot rules exist
+- exactly one initial version row once issue #59 is implemented
 
 First command-level test:
 
@@ -205,6 +245,10 @@ Assert:
 - metadata tables exist after apply
 - object tables exist after apply
 - catalog object rows exist after apply
+- exactly one initial version row exists and contains no preview placeholders
+- the stored snapshot and checksum match a preview of the same logical catalog
+- statement or commit failure rolls back the schema and version row together
+- reapplying an initial schema does not append or overwrite a baseline
 
 Do not implement this command before `sqlite-runner` has tests for DDL,
 prepared metadata inserts, and full rendered initial schema application.
