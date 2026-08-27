@@ -252,10 +252,11 @@ Minimum fields:
 - target or result type
 - step cardinality
 
-The Semantic IR path model only needs to support:
+The Semantic IR path model supports:
 
 - root field access
 - traversal through declared single links
+- stored and declared inverse multi links within existential filter comparisons
 - terminal scalar access
 
 The Semantic IR MVP does not support:
@@ -732,3 +733,10 @@ Multi-path filter comparisons explicitly represent existential evaluation of
 one atomic comparison or null predicate. Boolean composition and negation stay
 outside that scope. Paths retain their full cardinality; they must not be
 misrepresented as single values to enable filtering.
+
+`LinkTraversal` records ownership and direction for both `ResolvedShapeField`
+and `ResolvedPathStep`. `Expr::Exists(ExistsComparison)` contains one resolved
+many-valued path, comparison operator, literal, and operand order. Null literals
+use only equality or inequality; the single-valued suffix after the last many
+step must be optional. This distinguishes a missing value within a related
+object from a relation with no matching objects.

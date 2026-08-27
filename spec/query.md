@@ -483,6 +483,7 @@ The MVP supports:
 
 - field paths from the root object
 - traversal through declared single relation fields
+- multi-path comparisons against literals with independent existence semantics
 - scalar comparisons against literals
 - numeric arithmetic expressions used as comparison or membership operands
 - unary numeric arithmetic expressions
@@ -841,8 +842,9 @@ A filter may compare a scalar path traversing stored or inverse multi links
 against one compatible literal, in either operand order. Each such comparison
 means that at least one related path match satisfies it. Comparisons with null
 retain the existing `= null` / `!= null` rules for each matching related object;
-an empty relation satisfies neither. `not` negates the complete existence
-condition, so `not (.employees.name = "A")` differs from
+an empty relation satisfies neither. Null comparisons require an optional
+single-valued suffix after the last multi step. `not` negates the complete
+existence condition, so `not (.employees.name = "A")` differs from
 `.employees.name != "A"`.
 
 Boolean composition combines independent existence conditions: `.employees.name

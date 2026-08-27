@@ -433,7 +433,7 @@ Minimum fields:
 - parent field reference
 - parent identity input slot
 - root source for the follow-up query
-- join-table access description
+- join-table or reverse foreign-key access description
 - selected value slots
 - optional nested result shape plan
 
@@ -592,3 +592,8 @@ Multi-path atomic filter predicates lower to correlated `EXISTS`, keeping
 matching child rows out of the outer result. Each atomic predicate gets its
 own scope. Negation remains outside that scope. SQL rendering preserves
 placeholder order and alias separation from the enclosing query.
+
+`SQLiteFollowUpSource` carries either join-table columns and an alias or the
+reverse foreign-key column. Relation aliases must not collide with selected
+link aliases. `SQLiteWhereExpr::Exists` owns a `SQLiteExistsPlan` with its own
+source, joins, and correlated predicate; its joins never enter the outer plan.

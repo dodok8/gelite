@@ -1,7 +1,7 @@
 type Department {
   required unique code: str
   required name: str
-  multi link employees: Employee
+  multi link employees: Employee inverse department
 }
 
 type Employee {

@@ -6,6 +6,12 @@ limitations are:
 - The REPL reconstructs selected single links as nested objects and selected
   multi links as collections while keeping top-level rows tab-separated.
   Multi-link collection order is unspecified.
+- Declared inverse links are readonly and always multi. Stored forward links
+  own the foreign keys or join tables; inverse links create no duplicate storage.
+- Filters support a multi path compared with a literal using independent
+  existence conditions. Same-target predicate scopes are deferred to #68.
+  Multi paths remain unsupported in ordering, computed values, arithmetic,
+  function arguments, membership operands, and path-to-path comparisons.
 - `gelite repl --schema` compiles and renders queries but cannot execute them.
   Use `--debug` to inspect SQL and bind values.
 - `gelite repl --database` executes `select`, `insert`, `update`, and `delete`.
