@@ -495,9 +495,8 @@ impl SQLiteSelectPlan {
     }
 }
 
-/// Secondary fetch plan for one selected multi link.
 /// Physical source of a batched many-link fetch.
-pub enum SQLiteFollowUpSource {
+enum SQLiteFollowUpSource {
     JoinTable {
         table_name: String,
         alias: String,
@@ -509,6 +508,7 @@ pub enum SQLiteFollowUpSource {
     },
 }
 
+/// Secondary fetch plan for one selected multi link.
 pub struct SQLiteFollowUpFetchPlan {
     parent_field: FieldRef,
     parent_identity: SQLiteResultValueRef,
@@ -527,10 +527,6 @@ impl SQLiteFollowUpFetchPlan {
 
     pub fn parent_identity(&self) -> &SQLiteResultValueRef {
         &self.parent_identity
-    }
-
-    pub fn source(&self) -> &SQLiteFollowUpSource {
-        &self.source
     }
 
     pub fn source_alias(&self) -> &str {
@@ -1291,17 +1287,14 @@ fn follow_up_source(traversal: &query_ir::LinkTraversal) -> SQLiteFollowUpSource
             column: format!("{}_id", stored.name()),
         }
     } else {
+        let table_name = format!(
+            "{}__{}",
+            sqlite_table_name(stored.owner_object_type()),
+            stored.name()
+        );
         SQLiteFollowUpSource::JoinTable {
-            alias: format!(
-                "{}__{}",
-                sqlite_table_name(stored.owner_object_type()),
-                stored.name()
-            ),
-            table_name: format!(
-                "{}__{}",
-                sqlite_table_name(stored.owner_object_type()),
-                stored.name()
-            ),
+            alias: table_name.clone(),
+            table_name,
             parent_column: if inverse { "target_id" } else { "source_id" }.to_string(),
             child_column: if inverse { "source_id" } else { "target_id" }.to_string(),
         }
@@ -1923,13 +1916,14 @@ fn plan_link_path_step(
     } else {
         let join_cardinality =
             path_step_join_cardinality(state.current_nullable, step.cardinality());
-        state.joins.push(SQLiteJoin::path_traversal(
-            source_alias,
-            traversal.stored_field(),
-            target_object_type,
-            target_alias.clone(),
+        state.joins.push(SQLiteJoin::relation(
+            SQLiteJoinKind::for_single_link(join_cardinality),
+            &source_alias,
+            &format!("{}_id", traversal.stored_field().name()),
+            sqlite_table_name(target_object_type),
+            &target_alias,
+            "id",
             state.path_parts.clone(),
-            join_cardinality,
         ));
         state.current_nullable =
             state.current_nullable || step.cardinality() == Cardinality::Optional;
@@ -2445,32 +2439,6 @@ impl SQLiteJoin {
                 right_column: "id".to_string(),
             },
             reason: SQLiteJoinReason::SelectedSingleLink { field },
-        }
-    }
-
-    fn path_traversal(
-        source_alias: impl Into<String>,
-        link_field: &FieldRef,
-        target_object_type: &ObjectTypeRef,
-        target_alias: impl Into<String>,
-        path: Vec<String>,
-        cardinality: Cardinality,
-    ) -> Self {
-        let source_alias = source_alias.into();
-        let target_alias = target_alias.into();
-
-        Self {
-            kind: SQLiteJoinKind::for_single_link(cardinality),
-            source_alias: source_alias.clone(),
-            target_table: target_object_type.name().to_ascii_lowercase().to_string(),
-            target_alias: target_alias.clone(),
-            on: SQLiteJoinCondition {
-                left_alias: source_alias,
-                left_column: format!("{}_id", link_field.name()),
-                right_alias: target_alias,
-                right_column: "id".to_string(),
-            },
-            reason: SQLiteJoinReason::PathTraversal { path },
         }
     }
 

@@ -89,16 +89,9 @@ pub fn render_follow_up(plan: &SQLiteFollowUpFetchPlan, parent_ids: &[String]) -
     ));
     let from = match plan.join_table_name() {
         Some(table) => format!(
-            "FROM {} INNER JOIN {} AS {} ON {} = {}",
-            if table == plan.source_alias() {
-                quote_identifier(table)
-            } else {
-                format!(
-                    "{} AS {}",
-                    quote_identifier(table),
-                    quote_identifier(plan.source_alias())
-                )
-            },
+            "FROM {} AS {} INNER JOIN {} AS {} ON {} = {}",
+            quote_identifier(table),
+            quote_identifier(plan.source_alias()),
             quote_identifier(plan.target_source().table_name()),
             quote_identifier(plan.target_source().alias()),
             render_qualified_identifier(plan.source_alias(), plan.target_column()),
