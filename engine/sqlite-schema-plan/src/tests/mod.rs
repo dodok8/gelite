@@ -975,3 +975,60 @@ fn initial_schema_plan_creates_multi_link_join_table_indexes() {
     assert_eq!(indexes[1].column_names()[0], "target_id");
     assert!(!indexes[1].is_unique());
 }
+
+#[test]
+fn inverse_schema_owns_no_storage_and_records_source_metadata() {
+    for cardinality in [Cardinality::Optional, Cardinality::Many] {
+        let catalog = SchemaCatalog::try_new(vec![
+            ObjectType::new(
+                "Department",
+                vec![Field::Link(LinkField::with_inverse(
+                    "employees",
+                    "Employee",
+                    Cardinality::Many,
+                    "department",
+                ))],
+            ),
+            ObjectType::new(
+                "Employee",
+                vec![Field::Link(LinkField::new(
+                    "department",
+                    "Department",
+                    cardinality,
+                ))],
+            ),
+        ])
+        .expect("valid inverse schema");
+        let plan = plan_initial_schema(&catalog);
+        assert_eq!(plan.object_tables()[0].columns().len(), 1);
+        assert!(plan.object_tables()[0].foreign_keys().is_empty());
+        assert!(
+            plan.relation_tables()
+                .iter()
+                .all(|table| table.name() != "department__employees")
+        );
+        assert!(
+            plan.indexes()
+                .iter()
+                .all(|index| !index.table_name().starts_with("department"))
+        );
+        assert_eq!(
+            plan.relation_tables().len(),
+            usize::from(cardinality == Cardinality::Many)
+        );
+        let inserts = plan_catalog_field_inserts(&plan);
+        let inverse = inserts
+            .iter()
+            .find(|row| row.values()[2] == SQLiteValuePlan::Text("employees".into()))
+            .expect("inverse metadata");
+        let index = inverse
+            .columns()
+            .iter()
+            .position(|name| name == "inverse_field_name")
+            .expect("source metadata column");
+        assert_eq!(
+            inverse.values()[index],
+            SQLiteValuePlan::Text("department".into())
+        );
+    }
+}
