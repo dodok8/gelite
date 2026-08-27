@@ -82,7 +82,10 @@ pub fn plan_schema(source: &str) -> Result<SchemaPlanOutput, CommandError> {
     Ok(SchemaPlanOutput { statements })
 }
 
-pub fn apply_schema(source: &str, runner: &mut impl SQLiteRunner) -> Result<(), CommandError> {
+pub fn apply_schema(
+    source: &str,
+    runner: &mut (impl SQLiteRunner + SQLiteTransactionRunner),
+) -> Result<(), CommandError> {
     let catalog = schema_parser::parse_schema(source).map_err(|error| CommandError {
         message: format!("failed to parse schema: {error:?}"),
     })?;
