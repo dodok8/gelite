@@ -372,3 +372,39 @@ fn parser_can_parse_all_scalar_types() {
         }
     }
 }
+
+#[test]
+fn parses_declared_inverse_links_and_contextual_inverse_identifiers() {
+    let catalog = parse_schema("type Department { multi link employees: Employee inverse department } type Employee { link department: Department inverse: str }")
+        .expect("inverse declaration should parse");
+    let Field::Link(link) = catalog
+        .find_field("Department", "employees")
+        .expect("inverse field")
+    else {
+        panic!("expected link")
+    };
+    assert_eq!(link.inverse_field_name(), Some("department"));
+    assert_eq!(link.cardinality(), Cardinality::Many);
+    parse_schema("type Department {} type Employee { link department: Department inverse: str }")
+        .expect("inverse followed by colon is a field name, not a clause");
+    parse_schema("type Node { link inverse: Node multi link children: Node inverse inverse }")
+        .expect("inverse can name the stored source field");
+}
+
+#[test]
+fn rejects_invalid_inverse_declarations() {
+    for declaration in [
+        "link employees: Employee inverse department",
+        "required link employees: Employee inverse department",
+        "multi link employees: Employee inverse missing",
+        "multi link employees: Employee inverse name",
+        "multi link employees: Employee inverse",
+        "multi link employees: Employee inverse department inverse department",
+        "name: str inverse department",
+    ] {
+        let source = alloc::format!(
+            "type Department {{ {declaration} }} type Employee {{ name: str link department: Department }}"
+        );
+        assert!(parse_schema(&source).is_err(), "accepted {declaration}");
+    }
+}
