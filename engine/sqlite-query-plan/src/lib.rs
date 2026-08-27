@@ -949,6 +949,7 @@ fn collect_root_computed_path_aliases(shape: &query_ir::ResolvedShape, aliases: 
 
 fn collect_root_path_aliases_from_expr(expr: &Expr, aliases: &mut Vec<String>) {
     match expr {
+        Expr::Exists(_) => {}
         Expr::Compare(compare) => {
             collect_root_path_aliases_from_value(compare.left(), aliases);
             collect_root_path_aliases_from_value(compare.right(), aliases);
@@ -1495,6 +1496,7 @@ impl SQLiteOrder {
 
 /// Backend-specific predicate expression.
 pub enum SQLiteWhereExpr {
+    Exists(Box<SQLiteExistsPlan>),
     Compare(SQLiteCompareExpr),
     IsNull(SQLiteValueExpr),
     IsNotNull(SQLiteValueExpr),
@@ -1502,6 +1504,24 @@ pub enum SQLiteWhereExpr {
     And(Box<SQLiteWhereExpr>, Box<SQLiteWhereExpr>),
     Or(Box<SQLiteWhereExpr>, Box<SQLiteWhereExpr>),
     Not(Box<SQLiteWhereExpr>),
+}
+
+/// A correlated existence query whose joins do not multiply outer rows.
+pub struct SQLiteExistsPlan {
+    source: SQLiteObjectSource,
+    joins: Vec<SQLiteJoin>,
+    predicate: SQLiteWhereExpr,
+}
+impl SQLiteExistsPlan {
+    pub fn source(&self) -> &SQLiteObjectSource {
+        &self.source
+    }
+    pub fn joins(&self) -> &[SQLiteJoin] {
+        &self.joins
+    }
+    pub fn predicate(&self) -> &SQLiteWhereExpr {
+        &self.predicate
+    }
 }
 
 /// Backend-specific comparison expression.
@@ -1836,19 +1856,64 @@ fn plan_link_path_step(
     state.alias_parts.push(step.field().name().to_string());
     state.path_parts.push(step.field().name().to_string());
     let target_alias = path_step_target_alias(&source_alias, state, join_aliases);
-    let join_cardinality = path_step_join_cardinality(state.current_nullable, step.cardinality());
-
-    state.joins.push(SQLiteJoin::path_traversal(
-        source_alias,
-        step.field(),
-        target_object_type,
-        target_alias.clone(),
-        state.path_parts.clone(),
-        join_cardinality,
-    ));
-
+    let traversal = step
+        .link_traversal()
+        .expect("link step has resolved storage");
+    if step.cardinality() == Cardinality::Many {
+        match follow_up_source(traversal) {
+            SQLiteFollowUpSource::ReverseForeignKey { column } => {
+                state.joins.push(SQLiteJoin::relation(
+                    SQLiteJoinKind::Inner,
+                    &source_alias,
+                    "id",
+                    sqlite_table_name(target_object_type),
+                    &target_alias,
+                    &column,
+                    state.path_parts.clone(),
+                ));
+            }
+            SQLiteFollowUpSource::JoinTable {
+                table_name,
+                parent_column,
+                child_column,
+            } => {
+                let relation_alias = join_aliases.next_alias();
+                state.joins.push(SQLiteJoin::relation(
+                    SQLiteJoinKind::Inner,
+                    &source_alias,
+                    "id",
+                    table_name,
+                    &relation_alias,
+                    &parent_column,
+                    state.path_parts.clone(),
+                ));
+                state.joins.push(SQLiteJoin::relation(
+                    SQLiteJoinKind::Inner,
+                    &relation_alias,
+                    &child_column,
+                    sqlite_table_name(target_object_type),
+                    &target_alias,
+                    "id",
+                    state.path_parts.clone(),
+                ));
+            }
+        }
+        state.current_nullable = false;
+    } else {
+        let join_cardinality =
+            path_step_join_cardinality(state.current_nullable, step.cardinality());
+        state.joins.push(SQLiteJoin::path_traversal(
+            source_alias,
+            traversal.stored_field(),
+            target_object_type,
+            target_alias.clone(),
+            state.path_parts.clone(),
+            join_cardinality,
+        ));
+        state.current_nullable =
+            state.current_nullable || step.cardinality() == Cardinality::Optional;
+    }
     state.current_alias = target_alias;
-    state.current_nullable = state.current_nullable || step.cardinality() == Cardinality::Optional;
 }
 
 fn path_step_target_alias(
@@ -2033,8 +2098,59 @@ struct PlannedWhereExpr {
     joins: Vec<SQLiteJoin>,
 }
 
+fn plan_exists_comparison(exists: &query_ir::ExistsComparison) -> SQLiteExistsPlan {
+    let alias = "__gelite_exists_root";
+    let mut aliases = SQLiteJoinAliasAllocator::new(vec!["root".to_string(), alias.to_string()]);
+    let path = plan_resolved_path(exists.path(), alias, false, &mut aliases);
+    let value = SQLiteValueExpr::Column(path.column);
+    let predicate = if matches!(exists.literal(), query_ir::Literal::Null) {
+        if exists.op() == CompareOp::Eq {
+            SQLiteWhereExpr::IsNull(value)
+        } else {
+            SQLiteWhereExpr::IsNotNull(value)
+        }
+    } else {
+        let literal = SQLiteValueExpr::Literal(sqlite_literal_from_ir(exists.literal()));
+        let (left, right) = if exists.path_on_left() {
+            (value, literal)
+        } else {
+            (literal, value)
+        };
+        SQLiteWhereExpr::Compare(SQLiteCompareExpr {
+            left,
+            op: SQLiteCompareOp::from_ir(exists.op()),
+            right,
+        })
+    };
+    let correlation = SQLiteWhereExpr::Compare(SQLiteCompareExpr {
+        left: SQLiteValueExpr::Column(SQLiteColumnRef {
+            source_alias: alias.to_string(),
+            column_name: "id".to_string(),
+        }),
+        op: SQLiteCompareOp::Eq,
+        right: SQLiteValueExpr::Column(SQLiteColumnRef {
+            source_alias: "root".to_string(),
+            column_name: "id".to_string(),
+        }),
+    });
+    SQLiteExistsPlan {
+        source: SQLiteObjectSource {
+            object_type: exists.path().root_object_type().clone(),
+            table_name: sqlite_table_name(exists.path().root_object_type()),
+            alias: alias.to_string(),
+            id_column: "id".to_string(),
+        },
+        joins: path.joins,
+        predicate: SQLiteWhereExpr::And(Box::new(correlation), Box::new(predicate)),
+    }
+}
+
 fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> PlannedWhereExpr {
     match expr {
+        Expr::Exists(exists) => PlannedWhereExpr {
+            expr: SQLiteWhereExpr::Exists(Box::new(plan_exists_comparison(exists))),
+            joins: Vec::new(),
+        },
         Expr::Compare(compare) => {
             let left = plan_value_expr(compare.left(), "root", false, join_aliases);
             let right = plan_value_expr(compare.right(), "root", false, join_aliases);
@@ -2243,6 +2359,30 @@ pub struct SQLiteJoin {
 }
 
 impl SQLiteJoin {
+    fn relation(
+        kind: SQLiteJoinKind,
+        source_alias: &str,
+        source_column: &str,
+        target_table: String,
+        target_alias: &str,
+        target_column: &str,
+        path: Vec<String>,
+    ) -> Self {
+        Self {
+            kind,
+            source_alias: source_alias.to_string(),
+            target_table,
+            target_alias: target_alias.to_string(),
+            on: SQLiteJoinCondition {
+                left_alias: source_alias.to_string(),
+                left_column: source_column.to_string(),
+                right_alias: target_alias.to_string(),
+                right_column: target_column.to_string(),
+            },
+            reason: SQLiteJoinReason::PathTraversal { path },
+        }
+    }
+
     pub fn selected_single_link(
         source_alias: &str,
         shape_field: &query_ir::ResolvedShapeField,

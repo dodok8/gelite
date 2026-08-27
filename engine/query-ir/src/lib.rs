@@ -511,6 +511,39 @@ pub enum ResolvedPathStepKind {
     Link { target_object_type: ObjectTypeRef },
 }
 
+/// One atomic comparison evaluated over the matches of a many-valued path.
+/// Boolean composition and negation are outside this existential scope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExistsComparison {
+    path: ResolvedPath,
+    op: CompareOp,
+    literal: Literal,
+    path_on_left: bool,
+}
+
+impl ExistsComparison {
+    pub fn new(path: ResolvedPath, op: CompareOp, literal: Literal, path_on_left: bool) -> Self {
+        Self {
+            path,
+            op,
+            literal,
+            path_on_left,
+        }
+    }
+    pub fn path(&self) -> &ResolvedPath {
+        &self.path
+    }
+    pub fn op(&self) -> CompareOp {
+        self.op
+    }
+    pub fn literal(&self) -> &Literal {
+        &self.literal
+    }
+    pub fn path_on_left(&self) -> bool {
+        self.path_on_left
+    }
+}
+
 /// Resolved boolean expression.
 ///
 /// `IsNull` and `IsNotNull` are used when the source query compares a path to
@@ -519,6 +552,7 @@ pub enum ResolvedPathStepKind {
 /// operator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    Exists(Box<ExistsComparison>),
     Compare(CompareExpr),
     IsNull(ValueExpr),
     IsNotNull(ValueExpr),

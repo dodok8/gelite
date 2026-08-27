@@ -191,7 +191,7 @@ fn inverse_filters_preserve_existential_boolean_null_and_pagination_semantics() 
     }
     let result = run(
         &mut db,
-        "select Department { name, employees: { name } } filter .employees.active = true order by .name asc offset 1 limit 1",
+        "select Department { name, employees: { name } } filter .employees.active = true order by .name asc limit 1 offset 1",
     );
     assert_eq!(names(&result), ["B"]);
     let result = run(

@@ -356,6 +356,19 @@ fn render_where_clause(plan: &SQLiteSelectPlan) -> (Option<String>, Vec<SQLiteBi
 
 fn render_where_expr(expr: &SQLiteWhereExpr, bind_values: &mut Vec<SQLiteBindValue>) -> String {
     match expr {
+        SQLiteWhereExpr::Exists(exists) => {
+            let mut clauses = vec![format!(
+                "SELECT 1 FROM {} AS {}",
+                quote_identifier(exists.source().table_name()),
+                quote_identifier(exists.source().alias())
+            )];
+            clauses.extend(render_joins(exists.joins()));
+            clauses.push(format!(
+                "WHERE {}",
+                render_where_expr(exists.predicate(), bind_values)
+            ));
+            format!("EXISTS ({})", clauses.join(" "))
+        }
         SQLiteWhereExpr::Compare(compare) => {
             let left_sql = render_value_expr(compare.left(), bind_values);
             let op_sql = render_compare_op(compare.op());
