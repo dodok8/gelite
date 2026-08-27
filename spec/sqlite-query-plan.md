@@ -578,3 +578,17 @@ For the first implementation:
 - use object `id` as the primary deduplication key during result shaping
 
 This strategy favors clarity over aggressive optimization.
+
+## Declared Inverse Planning
+
+Follow-up fetch plans distinguish join-table access from reverse foreign-key
+access. Join-table access records which column identifies the parent and which
+identifies the child; inverse multi links swap those roles. Reverse single
+links query the stored source object table directly, selecting its foreign key
+as the hidden parent identity. Existing batched fetching and nested shaping
+remain unchanged.
+
+Multi-path atomic filter predicates lower to correlated `EXISTS`, keeping
+matching child rows out of the outer result. Each atomic predicate gets its
+own scope. Negation remains outside that scope. SQL rendering preserves
+placeholder order and alias separation from the enclosing query.

@@ -53,7 +53,7 @@ schema          := type_decl*
 type_decl       := "type" IDENT "{" field_decl* "}"
 field_decl      := property_decl | link_decl
 property_decl   := property_mod* "property"? IDENT ":" scalar_type
-link_decl       := link_mod* "link" IDENT ":" IDENT
+link_decl       := link_mod* "link" IDENT ":" IDENT ("inverse" IDENT)?
 property_mod    := "required" | "unique"
 link_mod        := "required" | "multi"
 scalar_type     := "str" | "int64" | "float64" | "bool" | "uuid" | "datetime"
@@ -150,8 +150,8 @@ as keywords and the MVP schema language does not support quoted identifiers.
 - Single relations may be optional or required.
 - Multi relations are represented with `multi TargetType`.
 - `multi` is supported only for relation fields.
-- Backlinks are not declared separately in the MVP.
-- Bidirectional modeling is allowed only by writing two explicit fields.
+- Inverse links must explicitly name a stored link on their target type.
+- Two stored fields remain independent unless one explicitly declares an inverse.
 
 Example:
 
@@ -166,9 +166,8 @@ type Post {
 ```
 
 The engine should not infer inverse links automatically in the MVP.
-If both sides are declared explicitly, they are treated as separate relation
-fields rather than two views of one shared edge. To avoid ambiguity, the MVP
-should model each logical relation in only one declared direction.
+Without an `inverse` clause, two link declarations remain independent stored
+relations.
 
 ## Semantic Validation
 
@@ -279,3 +278,22 @@ These should be revisited only after the MVP works end to end:
 - computed fields
 - deletion behavior annotations
 - inferred inverse links
+
+## Declared Inverse Links
+
+`multi link employees: Employee inverse department` on `Department` exposes
+`Employee.department` in reverse. The named field must be a stored link whose
+target is the declaring type. Resolve the name only within the declared target
+type; do not infer a field from compatible types. Declaration order does not
+matter. Stored single and multi links are both valid sources.
+
+Inverse fields are readonly, unordered, and always `many` (zero or more).
+Single or required inverse declarations are rejected. Required forward links
+do not guarantee that any object points at a particular target. Inverse chains,
+unknown fields, scalar sources, and mismatched target types are rejected by the
+catalog. Self-referential stored links are allowed. Multiple explicitly named
+inverse views of the same stored field are allowed.
+
+`inverse` is contextual after a link target; it remains usable as an identifier
+elsewhere. The catalog preserves the source field name and validates it before
+query resolution or metadata reconstruction succeeds.

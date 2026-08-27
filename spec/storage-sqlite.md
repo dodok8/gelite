@@ -18,7 +18,7 @@ This spec fixes enough of the physical design for:
 - Single relations stored as foreign key columns
 - Multi relations stored in join tables
 - Engine metadata stored in dedicated internal tables
-- Only schema `link` fields create relation storage structures
+- Only stored schema `link` fields create relation storage structures
 - Scalar fields never use join tables in the MVP
 
 ## SQLite Pragmas
@@ -259,6 +259,7 @@ CREATE TABLE _engine_catalog_fields (
   target_object_id INTEGER NULL,
   is_implicit INTEGER NOT NULL,
   is_unique INTEGER NOT NULL,
+  inverse_field_name TEXT NULL,
   PRIMARY KEY (object_id, field_id),
   FOREIGN KEY (object_id) REFERENCES _engine_catalog_objects(object_id),
   FOREIGN KEY (target_object_id) REFERENCES _engine_catalog_objects(object_id)
@@ -314,8 +315,8 @@ This storage model is designed around these compiler assumptions:
 - single relations use joins on `<field>_id`
 - multi relations may use secondary queries or grouped joins
 - relation traversal is limited to declared `link` fields
-- backlinks or inferred inverse traversals do not exist in the MVP storage
-  contract
+- declared inverse links reuse forward storage; inferred inverse traversals
+  are unsupported
 
 The runtime is allowed to fetch nested multi relations with follow-up queries if
 that keeps the first implementation simpler and more predictable.
@@ -395,3 +396,16 @@ Out of scope until the basic migration and query loop is proven:
 - enum storage optimizations
 - online migration strategies
 - schema branching
+
+## Declared Inverse Storage and Metadata
+
+Inverse links create no columns, foreign keys, relation tables, or indexes.
+Reverse single-link access reads the stored source table's `<field>_id` column.
+Reverse multi-link access uses the existing join table with source and target
+roles swapped. Existing forward indexes cover these reads.
+
+Catalog field rows preserve an optional `inverse_field_name` text value, scoped
+to `target_object_id`. It is null for stored links and scalar fields. Reloading
+metadata reconstructs and validates the same logical catalog, including inverse
+ownership. Legacy catalogs without this column load as stored-only catalogs;
+no implicit schema upgrade or mutation is performed by reads.
