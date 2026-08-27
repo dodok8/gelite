@@ -92,7 +92,7 @@ pub fn plan_select(ir: &SelectQuery) -> SQLiteSelectPlan {
 
     let (filter, filter_joins) = match ir.filter() {
         Some(expr) => {
-            let planned = plan_where_expr(expr, &mut join_aliases);
+            let planned = plan_where_expr(expr, "root", &mut join_aliases);
             (Some(planned.expr), planned.joins)
         }
         None => (None, vec![]),
@@ -231,7 +231,7 @@ fn plan_mutation_filter(
 
     match filter {
         Some(expr) => {
-            let planned = plan_where_expr(expr, &mut join_aliases);
+            let planned = plan_where_expr(expr, "root", &mut join_aliases);
             (Some(planned.expr), dedup_joins(planned.joins))
         }
         None => (None, vec![]),
@@ -953,7 +953,7 @@ fn collect_root_computed_path_aliases(shape: &query_ir::ResolvedShape, aliases: 
 
 fn collect_root_path_aliases_from_expr(expr: &Expr, aliases: &mut Vec<String>) {
     match expr {
-        Expr::Exists(_) => {}
+        Expr::Exists(_) | Expr::Scoped(_) => {}
         Expr::Compare(compare) => {
             collect_root_path_aliases_from_value(compare.left(), aliases);
             collect_root_path_aliases_from_value(compare.right(), aliases);
@@ -1832,7 +1832,7 @@ fn plan_resolved_path(
 
         match step.kind() {
             query_ir::ResolvedPathStepKind::Link { target_object_type } => {
-                plan_link_path_step(step, target_object_type, is_last, &mut state, join_aliases);
+                plan_link_path_step(step, target_object_type, &mut state, join_aliases);
             }
             query_ir::ResolvedPathStepKind::Scalar => {
                 column = Some(plan_scalar_path_step(step, is_last, &state));
@@ -1857,14 +1857,9 @@ fn initial_path_alias_parts(source_alias: &str) -> Vec<String> {
 fn plan_link_path_step(
     step: &query_ir::ResolvedPathStep,
     target_object_type: &ObjectTypeRef,
-    is_last: bool,
     state: &mut PathPlanningState,
     join_aliases: &mut SQLiteJoinAliasAllocator,
 ) {
-    if is_last {
-        todo!("link-only paths cannot be lowered to SQLite columns");
-    }
-
     let source_alias = state.current_alias.clone();
     state.alias_parts.push(step.field().name().to_string());
     state.path_parts.push(step.field().name().to_string());
@@ -2113,9 +2108,13 @@ struct PlannedWhereExpr {
     joins: Vec<SQLiteJoin>,
 }
 
-fn plan_exists_comparison(exists: &query_ir::ExistsComparison) -> SQLiteExistsPlan {
+fn plan_exists_comparison(
+    exists: &query_ir::ExistsComparison,
+    source_alias: &str,
+) -> SQLiteExistsPlan {
     let alias = "__gelite_exists_root";
-    let mut aliases = SQLiteJoinAliasAllocator::new(vec!["root".to_string(), alias.to_string()]);
+    let mut aliases =
+        SQLiteJoinAliasAllocator::new(vec![source_alias.to_string(), alias.to_string()]);
     let path = plan_resolved_path(exists.path(), alias, false, &mut aliases);
     let value = SQLiteValueExpr::Column(path.column);
     let predicate = if matches!(exists.literal(), query_ir::Literal::Null) {
@@ -2137,6 +2136,47 @@ fn plan_exists_comparison(exists: &query_ir::ExistsComparison) -> SQLiteExistsPl
             right,
         })
     };
+    correlated_exists(
+        exists.path().root_object_type(),
+        alias,
+        source_alias,
+        path.joins,
+        predicate,
+    )
+}
+
+fn plan_scoped_predicate(
+    scoped: &query_ir::ScopedPredicate,
+    source_alias: &str,
+) -> SQLiteExistsPlan {
+    let alias = "__gelite_scope_root";
+    let mut aliases =
+        SQLiteJoinAliasAllocator::new(vec![source_alias.to_string(), alias.to_string()]);
+    let mut state = PathPlanningState::new(alias, false);
+    for step in scoped.path().steps() {
+        let query_ir::ResolvedPathStepKind::Link { target_object_type } = step.kind() else {
+            unreachable!("scoped target path contains only links")
+        };
+        plan_link_path_step(step, target_object_type, &mut state, &mut aliases);
+    }
+    let predicate = plan_where_expr(scoped.predicate(), &state.current_alias, &mut aliases);
+    state.joins.extend(predicate.joins);
+    correlated_exists(
+        scoped.path().root_object_type(),
+        alias,
+        source_alias,
+        state.joins,
+        predicate.expr,
+    )
+}
+
+fn correlated_exists(
+    root_object_type: &ObjectTypeRef,
+    alias: &str,
+    source_alias: &str,
+    joins: Vec<SQLiteJoin>,
+    predicate: SQLiteWhereExpr,
+) -> SQLiteExistsPlan {
     let correlation = SQLiteWhereExpr::Compare(SQLiteCompareExpr {
         left: SQLiteValueExpr::Column(SQLiteColumnRef {
             source_alias: alias.to_string(),
@@ -2144,31 +2184,39 @@ fn plan_exists_comparison(exists: &query_ir::ExistsComparison) -> SQLiteExistsPl
         }),
         op: SQLiteCompareOp::Eq,
         right: SQLiteValueExpr::Column(SQLiteColumnRef {
-            source_alias: "root".to_string(),
+            source_alias: source_alias.to_string(),
             column_name: "id".to_string(),
         }),
     });
     SQLiteExistsPlan {
         source: SQLiteObjectSource {
-            object_type: exists.path().root_object_type().clone(),
-            table_name: sqlite_table_name(exists.path().root_object_type()),
+            object_type: root_object_type.clone(),
+            table_name: sqlite_table_name(root_object_type),
             alias: alias.to_string(),
             id_column: "id".to_string(),
         },
-        joins: path.joins,
+        joins: dedup_joins(joins),
         predicate: SQLiteWhereExpr::And(Box::new(correlation), Box::new(predicate)),
     }
 }
 
-fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> PlannedWhereExpr {
+fn plan_where_expr(
+    expr: &Expr,
+    source_alias: &str,
+    join_aliases: &mut SQLiteJoinAliasAllocator,
+) -> PlannedWhereExpr {
     match expr {
+        Expr::Scoped(scoped) => PlannedWhereExpr {
+            expr: SQLiteWhereExpr::Exists(Box::new(plan_scoped_predicate(scoped, source_alias))),
+            joins: Vec::new(),
+        },
         Expr::Exists(exists) => PlannedWhereExpr {
-            expr: SQLiteWhereExpr::Exists(Box::new(plan_exists_comparison(exists))),
+            expr: SQLiteWhereExpr::Exists(Box::new(plan_exists_comparison(exists, source_alias))),
             joins: Vec::new(),
         },
         Expr::Compare(compare) => {
-            let left = plan_value_expr(compare.left(), "root", false, join_aliases);
-            let right = plan_value_expr(compare.right(), "root", false, join_aliases);
+            let left = plan_value_expr(compare.left(), source_alias, false, join_aliases);
+            let right = plan_value_expr(compare.right(), source_alias, false, join_aliases);
 
             let mut joins = left.joins;
             joins.extend(right.joins);
@@ -2183,7 +2231,7 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
             }
         }
         Expr::IsNull(value) => {
-            let value = plan_value_expr(value, "root", false, join_aliases);
+            let value = plan_value_expr(value, source_alias, false, join_aliases);
 
             PlannedWhereExpr {
                 expr: SQLiteWhereExpr::IsNull(value.value),
@@ -2191,7 +2239,7 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
             }
         }
         Expr::IsNotNull(value) => {
-            let value = plan_value_expr(value, "root", false, join_aliases);
+            let value = plan_value_expr(value, source_alias, false, join_aliases);
 
             PlannedWhereExpr {
                 expr: SQLiteWhereExpr::IsNotNull(value.value),
@@ -2199,13 +2247,15 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
             }
         }
         Expr::In(in_expr) => {
-            let left = plan_value_expr(in_expr.left(), "root", false, join_aliases);
+            let left = plan_value_expr(in_expr.left(), source_alias, false, join_aliases);
             let joins = left.joins;
             let right = match in_expr.right() {
                 query_ir::InRhs::List(values) => SQLiteInRhs::List(
                     values
                         .iter()
-                        .map(|value| plan_value_expr(value, "root", false, join_aliases).value)
+                        .map(|value| {
+                            plan_value_expr(value, source_alias, false, join_aliases).value
+                        })
                         .collect(),
                 ),
                 query_ir::InRhs::Select(select) => {
@@ -2223,8 +2273,8 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
             }
         }
         Expr::And(left, right) => {
-            let left = plan_where_expr(left, join_aliases);
-            let right = plan_where_expr(right, join_aliases);
+            let left = plan_where_expr(left, source_alias, join_aliases);
+            let right = plan_where_expr(right, source_alias, join_aliases);
 
             let mut joins = left.joins;
             joins.extend(right.joins);
@@ -2235,8 +2285,8 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
             }
         }
         Expr::Or(left, right) => {
-            let left = plan_where_expr(left, join_aliases);
-            let right = plan_where_expr(right, join_aliases);
+            let left = plan_where_expr(left, source_alias, join_aliases);
+            let right = plan_where_expr(right, source_alias, join_aliases);
 
             let mut joins = left.joins;
             joins.extend(right.joins);
@@ -2247,7 +2297,7 @@ fn plan_where_expr(expr: &Expr, join_aliases: &mut SQLiteJoinAliasAllocator) -> 
             }
         }
         Expr::Not(inner) => {
-            let inner = plan_where_expr(inner, join_aliases);
+            let inner = plan_where_expr(inner, source_alias, join_aliases);
 
             PlannedWhereExpr {
                 expr: SQLiteWhereExpr::Not(Box::new(inner.expr)),

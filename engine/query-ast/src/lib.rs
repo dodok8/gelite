@@ -229,6 +229,7 @@ pub struct PathStep {
 /// Parsed expression forms accepted by the query syntax tree.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    Scoped(Box<ScopedPredicate>),
     Literal(Literal),
     Path(Path),
     Compare(CompareExpr),
@@ -239,6 +240,27 @@ pub enum Expr {
     Arithmetic(ArithmeticExpr),
     UnaryArithmetic(UnaryArithmeticExpr),
     FunctionCall(FunctionCallExpr),
+}
+
+/// A relation path and a predicate whose paths refer to one related object.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopedPredicate {
+    path: Path,
+    predicate: Expr,
+}
+
+impl ScopedPredicate {
+    pub fn new(path: Path, predicate: Expr) -> Self {
+        Self { path, predicate }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn predicate(&self) -> &Expr {
+        &self.predicate
+    }
 }
 
 /// Function call expression parsed from `name(args...)` syntax.

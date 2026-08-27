@@ -552,6 +552,7 @@ impl ExistsComparison {
 /// operator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    Scoped(Box<ScopedPredicate>),
     Exists(Box<ExistsComparison>),
     Compare(CompareExpr),
     IsNull(ValueExpr),
@@ -560,6 +561,31 @@ pub enum Expr {
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
+}
+
+/// Existence of one related object satisfying a complete boolean predicate.
+///
+/// The resolver supplies a path ending at a multi link with single-link prefix
+/// steps. Body paths are rooted at that target; nested relation scopes are not
+/// supported. The relation path retains its many cardinality.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopedPredicate {
+    path: ResolvedPath,
+    predicate: Expr,
+}
+
+impl ScopedPredicate {
+    pub fn new(path: ResolvedPath, predicate: Expr) -> Self {
+        Self { path, predicate }
+    }
+
+    pub fn path(&self) -> &ResolvedPath {
+        &self.path
+    }
+
+    pub fn predicate(&self) -> &Expr {
+        &self.predicate
+    }
 }
 
 /// Resolved comparison expression.
