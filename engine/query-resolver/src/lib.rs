@@ -268,6 +268,13 @@ fn resolve_assignment(
             field: assignment.field_name().to_string(),
         })?;
 
+    if matches!(field, Field::Link(link) if link.inverse_field_name().is_some()) {
+        return Err(ResolveError::AssignmentToInverseField {
+            object_type: target_object_type.name().to_string(),
+            field: assignment.field_name().to_string(),
+        });
+    }
+
     if field.is_implicit() {
         return Err(ResolveError::AssignmentToImplicitField {
             object_type: target_object_type.name().to_string(),
@@ -546,6 +553,33 @@ fn resolve_link_assignment_value(
     }
 }
 
+fn resolve_link_traversal(
+    catalog: &schema_model::SchemaCatalog,
+    field: &schema_model::FieldRef,
+    link: &schema_model::LinkField,
+) -> query_ir::LinkTraversal {
+    match link.inverse_field_name() {
+        None => query_ir::LinkTraversal::new(
+            field.clone(),
+            link.cardinality(),
+            query_ir::LinkDirection::Forward,
+        ),
+        Some(source) => {
+            let stored = catalog
+                .find_field(link.target_type_name(), source)
+                .expect("validated inverse source exists");
+            let stored_ref = catalog
+                .find_field_ref(link.target_type_name(), source)
+                .expect("validated inverse source has a reference");
+            query_ir::LinkTraversal::new(
+                stored_ref,
+                stored.cardinality(),
+                query_ir::LinkDirection::Inverse,
+            )
+        }
+    }
+}
+
 fn resolve_shape_field(
     catalog: &schema_model::SchemaCatalog,
     source_object_type: &schema_model::ObjectTypeRef,
@@ -602,13 +636,15 @@ fn resolve_shape_field(
                     })?;
 
             let resolved_child_shape = resolve_shape(catalog, target_object_type, child_shape)?;
+            let traversal = resolve_link_traversal(catalog, &field_ref, link);
 
             Ok(query_ir::ResolvedShapeField::new(
                 field_name,
                 field_ref,
                 field.cardinality(),
                 Some(resolved_child_shape),
-            ))
+            )
+            .with_link_traversal(traversal))
         }
     }
 }
@@ -1178,11 +1214,15 @@ fn resolve_typed_path_expr(
                         name: link.target_type_name().to_string(),
                     })?;
 
-                resolved_steps.push(query_ir::ResolvedPathStep::link(
-                    field_ref,
-                    target_object_type.clone(),
-                    field.cardinality(),
-                ));
+                let traversal = resolve_link_traversal(catalog, &field_ref, link);
+                resolved_steps.push(
+                    query_ir::ResolvedPathStep::link(
+                        field_ref,
+                        target_object_type.clone(),
+                        field.cardinality(),
+                    )
+                    .with_link_traversal(traversal),
+                );
 
                 current_object_type = target_object_type;
             }
@@ -1846,6 +1886,10 @@ fn resolve_order_expr(
 /// callers can distinguish syntax failures from schema or type failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
+    AssignmentToInverseField {
+        object_type: String,
+        field: String,
+    },
     UnknownObjectType {
         name: String,
     },
