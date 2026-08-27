@@ -80,9 +80,7 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
 /// Renders one batched multi-link follow-up statement.
 pub fn render_follow_up(plan: &SQLiteFollowUpFetchPlan, parent_ids: &[String]) -> SQLiteStatement {
     let mut bind_values = Vec::new();
-    let parent_alias = plan
-        .join_table_name()
-        .unwrap_or(plan.target_source().alias());
+    let parent_alias = plan.source_alias();
     let parent_column = render_qualified_identifier(parent_alias, plan.source_column());
     let mut columns = vec![parent_column.clone()];
     columns.extend(render_select_values(
@@ -92,10 +90,18 @@ pub fn render_follow_up(plan: &SQLiteFollowUpFetchPlan, parent_ids: &[String]) -
     let from = match plan.join_table_name() {
         Some(table) => format!(
             "FROM {} INNER JOIN {} AS {} ON {} = {}",
-            quote_identifier(table),
+            if table == plan.source_alias() {
+                quote_identifier(table)
+            } else {
+                format!(
+                    "{} AS {}",
+                    quote_identifier(table),
+                    quote_identifier(plan.source_alias())
+                )
+            },
             quote_identifier(plan.target_source().table_name()),
             quote_identifier(plan.target_source().alias()),
-            render_qualified_identifier(table, plan.target_column()),
+            render_qualified_identifier(plan.source_alias(), plan.target_column()),
             render_qualified_identifier(
                 plan.target_source().alias(),
                 plan.target_source().id_column()

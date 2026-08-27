@@ -500,6 +500,7 @@ impl SQLiteSelectPlan {
 pub enum SQLiteFollowUpSource {
     JoinTable {
         table_name: String,
+        alias: String,
         parent_column: String,
         child_column: String,
     },
@@ -530,6 +531,13 @@ impl SQLiteFollowUpFetchPlan {
 
     pub fn source(&self) -> &SQLiteFollowUpSource {
         &self.source
+    }
+
+    pub fn source_alias(&self) -> &str {
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { alias, .. } => alias,
+            SQLiteFollowUpSource::ReverseForeignKey { .. } => self.target_source.alias(),
+        }
     }
 
     pub fn join_table_name(&self) -> Option<&str> {
@@ -1284,6 +1292,11 @@ fn follow_up_source(traversal: &query_ir::LinkTraversal) -> SQLiteFollowUpSource
         }
     } else {
         SQLiteFollowUpSource::JoinTable {
+            alias: format!(
+                "{}__{}",
+                sqlite_table_name(stored.owner_object_type()),
+                stored.name()
+            ),
             table_name: format!(
                 "{}__{}",
                 sqlite_table_name(stored.owner_object_type()),
@@ -1342,6 +1355,17 @@ fn plan_follow_up_fetch(
     let follow_up_fetches =
         plan_follow_up_fetches(target_shape, "root", &[], &selected_shape_aliases);
 
+    let mut source = follow_up_source(
+        field
+            .link_traversal()
+            .expect("link shape has traversal metadata"),
+    );
+    if let SQLiteFollowUpSource::JoinTable { alias, .. } = &mut source {
+        while alias == "root" || joins.iter().any(|join| join.target_alias() == alias) {
+            alias.push('_');
+        }
+    }
+
     SQLiteFollowUpFetchPlan {
         parent_field: field.field().clone(),
         parent_identity: SQLiteResultValueRef {
@@ -1349,11 +1373,7 @@ fn plan_follow_up_fetch(
             column_name: "id".to_string(),
             role: SQLiteValueRole::ObjectId,
         },
-        source: follow_up_source(
-            field
-                .link_traversal()
-                .expect("link shape has traversal metadata"),
-        ),
+        source,
         target_source: SQLiteObjectSource {
             object_type: target_object_type.clone(),
             table_name: sqlite_table_name(&target_object_type),
@@ -1876,6 +1896,7 @@ fn plan_link_path_step(
                 table_name,
                 parent_column,
                 child_column,
+                ..
             } => {
                 let relation_alias = join_aliases.next_alias();
                 state.joins.push(SQLiteJoin::relation(
