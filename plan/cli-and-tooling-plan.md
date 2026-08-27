@@ -136,6 +136,31 @@ row, and schema plan output does not yet include version values or a preview
 notice. Storage requirements are defined in
 [SQLite Storage MVP Spec](../spec/storage-sqlite.md#initial-version-record-contract).
 
+### Version record implementation choices
+
+Use snapshot format v1, SHA-256, UUID v4, and UTC timestamps with millisecond
+precision as defined in the storage spec. Keep snapshot encoding and hashing
+pure in `sqlite-schema-plan`; the caller supplies application IDs and times.
+Reuse the existing `uuid` v4 dependency in `gelite-commands`.
+
+For SHA-256, use RustCrypto's `sha2` in `sqlite-schema-plan` with this dependency
+configuration:
+
+```toml
+sha2 = { version = "0.11", default-features = false }
+```
+
+The [0.11.0 source](https://github.com/RustCrypto/hashes/blob/sha2-v0.11.0/sha2/src/lib.rs)
+declares `#![no_std]`. Its default features are `alloc` and `oid`; neither is
+needed for `Sha256::digest`. Keep the engine hashing path free of `std`
+requirements and do not implement SHA-256 locally. Snapshot generation and
+version-row insertion remain pending implementation.
+
+Implement only the fixed snapshot structure; do not introduce a general
+serialization framework or a general JSON canonicalizer for this milestone.
+Test fixed snapshot bytes and checksums, invariance under declaration order
+and source formatting changes, and sensitivity to logical schema changes.
+
 ### `gelite schema plan <schema.geli>`
 
 Purpose: show what would be applied to an empty SQLite database.

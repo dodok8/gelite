@@ -255,12 +255,70 @@ Schema plan previews must show the computed snapshot and checksum, but use
 and timestamp values. These are reserved display placeholders, not valid
 persisted version values. The application path must not store them.
 
-The snapshot encoding, checksum algorithm, version ID format, and timestamp
-precision remain to be specified before implementing version records. The
-preview contract does not choose those formats.
-
 See [CLI and Tooling Plan](../plan/cli-and-tooling-plan.md#schema-commands) for
 preview output and application behavior.
+
+#### Snapshot format v1
+
+The snapshot is UTF-8 JSON with this fixed structure and property order:
+
+| Value | Properties in output order |
+| --- | --- |
+| Root | `format_version`, `objects` |
+| Object type | `name`, `fields` |
+| Scalar field | `name`, `kind`, `scalar_type`, `cardinality`, `unique` |
+| Link field | `name`, `kind`, `target_type`, `cardinality`, `unique`, `inverse_field` |
+
+- `format_version` is the integer `1`; `objects` and `fields` are arrays.
+- Object types and their declared fields are sorted by their unescaped names
+  in ascending UTF-8 byte order, independently of locale and declaration order.
+- `kind` is `scalar` or `link`. Scalar types use the schema names `str`,
+  `int64`, `float64`, `bool`, `uuid`, and `datetime`. Cardinality is `optional`,
+  `required`, or `many`, as permitted by the validated catalog.
+- `unique` is a JSON boolean and is always included, even when false.
+  `target_type` names the referenced object type. `inverse_field` names the
+  forward field for an inverse link and is JSON `null` for a stored link.
+- Every object implicitly has the required UUID `id` field supplied by
+  `ObjectType::new`. This field is omitted from `fields`; format v1 fixes its
+  implicit identity semantics, including its absence from declared fields.
+- Internal object and field IDs, source formatting and comments, physical
+  SQLite names, version IDs, and applied timestamps are excluded.
+
+Emit no byte-order mark, insignificant whitespace, or trailing newline. Empty
+arrays remain present. Preserve names exactly, without Unicode normalization
+or case folding. Escape quotes and backslashes as `\"` and `\\`. Use `\b`,
+`\t`, `\n`, `\f`, and `\r` for their control characters and lowercase `\u00xx`
+for the remaining U+0000 through U+001F characters. Emit all other characters
+directly as UTF-8, including `/` and non-ASCII characters.
+
+For example, a catalog containing only an empty `User` type is encoded as:
+
+```json
+{"format_version":1,"objects":[{"name":"User","fields":[]}]}
+```
+
+The code block's line ending is not part of the snapshot. These rules define
+a Gelite-specific canonical representation, not full RFC 8785 compliance.
+Changes to the encoding or implicit semantics require a new format version;
+readers must reject unsupported format versions rather than reinterpret them.
+
+#### Checksum and application values
+
+- `checksum` is SHA-256 of the exact stored snapshot UTF-8 bytes, including
+  `format_version`, encoded as 64 lowercase hexadecimal characters without a
+  prefix. Hash the stored representation, not a parsed and reserialized copy.
+- `version_id` is a newly generated UUID v4 in lowercase, hyphenated
+  `8-4-4-4-12` notation. It identifies an application attempt, not schema content.
+- `applied_at` uses RFC 3339 UTC notation with uppercase `T` and `Z` and exactly
+  three fractional second digits: `YYYY-MM-DDTHH:MM:SS.sssZ`. Truncate finer
+  precision to milliseconds. It records the caller's application-attempt time,
+  not the exact commit completion time.
+
+Neither UUIDs nor timestamps define migration order. Checking the snapshot
+checksum detects a mismatch but does not authenticate a record against an
+actor who can rewrite both values. Verifying the logical schema additionally
+requires comparing the canonical snapshot of the loaded catalog with the
+stored snapshot; this does not audit physical SQLite DDL.
 
 ### `_engine_catalog_objects`
 
