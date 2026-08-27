@@ -80,33 +80,38 @@ pub fn render_select(plan: &sqlite_query_plan::SQLiteSelectPlan) -> SQLiteStatem
 /// Renders one batched multi-link follow-up statement.
 pub fn render_follow_up(plan: &SQLiteFollowUpFetchPlan, parent_ids: &[String]) -> SQLiteStatement {
     let mut bind_values = Vec::new();
-    let mut columns = vec![render_qualified_identifier(
-        plan.join_table_name(),
-        plan.source_column(),
-    )];
+    let parent_alias = plan
+        .join_table_name()
+        .unwrap_or(plan.target_source().alias());
+    let parent_column = render_qualified_identifier(parent_alias, plan.source_column());
+    let mut columns = vec![parent_column.clone()];
     columns.extend(render_select_values(
         plan.selected_values(),
         &mut bind_values,
     ));
-
-    let mut clauses = vec![
-        format!("SELECT {}", columns.join(", ")),
-        format!(
+    let from = match plan.join_table_name() {
+        Some(table) => format!(
             "FROM {} INNER JOIN {} AS {} ON {} = {}",
-            quote_identifier(plan.join_table_name()),
+            quote_identifier(table),
             quote_identifier(plan.target_source().table_name()),
             quote_identifier(plan.target_source().alias()),
-            render_qualified_identifier(plan.join_table_name(), plan.target_column()),
+            render_qualified_identifier(table, plan.target_column()),
             render_qualified_identifier(
                 plan.target_source().alias(),
-                plan.target_source().id_column(),
+                plan.target_source().id_column()
             ),
         ),
-    ];
+        None => format!(
+            "FROM {} AS {}",
+            quote_identifier(plan.target_source().table_name()),
+            quote_identifier(plan.target_source().alias())
+        ),
+    };
+    let mut clauses = vec![format!("SELECT {}", columns.join(", ")), from];
     clauses.extend(render_joins(plan.joins()));
     clauses.push(format!(
         "WHERE {} IN ({})",
-        render_qualified_identifier(plan.join_table_name(), plan.source_column()),
+        parent_column,
         vec!["?"; parent_ids.len()].join(", ")
     ));
     bind_values.extend(parent_ids.iter().cloned().map(SQLiteBindValue::String));

@@ -496,10 +496,22 @@ impl SQLiteSelectPlan {
 }
 
 /// Secondary fetch plan for one selected multi link.
+/// Physical source of a batched many-link fetch.
+pub enum SQLiteFollowUpSource {
+    JoinTable {
+        table_name: String,
+        parent_column: String,
+        child_column: String,
+    },
+    ReverseForeignKey {
+        column: String,
+    },
+}
+
 pub struct SQLiteFollowUpFetchPlan {
     parent_field: FieldRef,
     parent_identity: SQLiteResultValueRef,
-    join_table_name: String,
+    source: SQLiteFollowUpSource,
     target_source: SQLiteObjectSource,
     selected_values: Vec<SQLiteSelectValue>,
     joins: Vec<SQLiteJoin>,
@@ -516,16 +528,27 @@ impl SQLiteFollowUpFetchPlan {
         &self.parent_identity
     }
 
-    pub fn join_table_name(&self) -> &str {
-        &self.join_table_name
+    pub fn source(&self) -> &SQLiteFollowUpSource {
+        &self.source
     }
 
+    pub fn join_table_name(&self) -> Option<&str> {
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { table_name, .. } => Some(table_name),
+            SQLiteFollowUpSource::ReverseForeignKey { .. } => None,
+        }
+    }
     pub fn source_column(&self) -> &str {
-        "source_id"
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { parent_column, .. } => parent_column,
+            SQLiteFollowUpSource::ReverseForeignKey { column } => column,
+        }
     }
-
     pub fn target_column(&self) -> &str {
-        "target_id"
+        match &self.source {
+            SQLiteFollowUpSource::JoinTable { child_column, .. } => child_column,
+            SQLiteFollowUpSource::ReverseForeignKey { .. } => "id",
+        }
     }
 
     pub fn target_source(&self) -> &SQLiteObjectSource {
@@ -1251,6 +1274,26 @@ fn plan_follow_up_fetches(
     fetches
 }
 
+fn follow_up_source(traversal: &query_ir::LinkTraversal) -> SQLiteFollowUpSource {
+    let stored = traversal.stored_field();
+    let inverse = traversal.direction() == query_ir::LinkDirection::Inverse;
+    if inverse && traversal.stored_cardinality() != Cardinality::Many {
+        SQLiteFollowUpSource::ReverseForeignKey {
+            column: format!("{}_id", stored.name()),
+        }
+    } else {
+        SQLiteFollowUpSource::JoinTable {
+            table_name: format!(
+                "{}__{}",
+                sqlite_table_name(stored.owner_object_type()),
+                stored.name()
+            ),
+            parent_column: if inverse { "target_id" } else { "source_id" }.to_string(),
+            child_column: if inverse { "source_id" } else { "target_id" }.to_string(),
+        }
+    }
+}
+
 fn plan_follow_up_fetch(
     field: &query_ir::ResolvedShapeField,
     target_shape: &query_ir::ResolvedShape,
@@ -1305,10 +1348,10 @@ fn plan_follow_up_fetch(
             column_name: "id".to_string(),
             role: SQLiteValueRole::ObjectId,
         },
-        join_table_name: format!(
-            "{}__{}",
-            sqlite_table_name(field.field().owner_object_type()),
-            field.field().name()
+        source: follow_up_source(
+            field
+                .link_traversal()
+                .expect("link shape has traversal metadata"),
         ),
         target_source: SQLiteObjectSource {
             object_type: target_object_type.clone(),
