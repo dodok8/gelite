@@ -703,6 +703,9 @@ fn resolve_predicate(
     expr: &query_ast::Expr,
     allow_relations: bool,
 ) -> Result<query_ir::Expr, ResolveError> {
+    let resolve = |expr: &query_ast::Expr| {
+        resolve_predicate(catalog, source_object_type, expr, allow_relations)
+    };
     match expr {
         query_ast::Expr::Scoped(scoped) => {
             if !allow_relations {
@@ -716,39 +719,14 @@ fn resolve_predicate(
             resolve_compare_expr(catalog, source_object_type, compare, allow_relations)
         }
         query_ast::Expr::And(left, right) => Ok(query_ir::Expr::And(
-            Box::new(resolve_predicate(
-                catalog,
-                source_object_type,
-                left,
-                allow_relations,
-            )?),
-            Box::new(resolve_predicate(
-                catalog,
-                source_object_type,
-                right,
-                allow_relations,
-            )?),
+            Box::new(resolve(left)?),
+            Box::new(resolve(right)?),
         )),
         query_ast::Expr::Or(left, right) => Ok(query_ir::Expr::Or(
-            Box::new(resolve_predicate(
-                catalog,
-                source_object_type,
-                left,
-                allow_relations,
-            )?),
-            Box::new(resolve_predicate(
-                catalog,
-                source_object_type,
-                right,
-                allow_relations,
-            )?),
+            Box::new(resolve(left)?),
+            Box::new(resolve(right)?),
         )),
-        query_ast::Expr::Not(inner) => Ok(query_ir::Expr::Not(Box::new(resolve_predicate(
-            catalog,
-            source_object_type,
-            inner,
-            allow_relations,
-        )?))),
+        query_ast::Expr::Not(inner) => Ok(query_ir::Expr::Not(Box::new(resolve(inner)?))),
         query_ast::Expr::In(in_expr) => {
             if !allow_relations && matches!(in_expr.right(), query_ast::InRhs::Select(_)) {
                 return Err(ResolveError::UnsupportedExpr {

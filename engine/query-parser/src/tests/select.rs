@@ -24,24 +24,16 @@ fn scoped_predicates_preserve_inner_and_outer_boolean_precedence() {
     let query = parse_select(
         "select Department { id } filter not exists .parent.employees { .name = \"타치바나 셰리\" or .active = true and not .nickname = null } and .id != \"x\"",
     ).expect("scoped predicate");
-    let Expr::And(left, _) = query.filter().expect("filter") else {
-        panic!("outer and")
-    };
-    let Expr::Not(inner) = left.as_ref() else {
-        panic!("outer not")
-    };
-    let Expr::Scoped(scoped) = inner.as_ref() else {
+    let (left, _) = assert_and_expr(query.filter().expect("filter"));
+    let inner = assert_not_expr(left);
+    let Expr::Scoped(scoped) = inner else {
         panic!("explicit scope")
     };
     assert_eq!(scoped.path().steps()[0].field_name(), "parent");
     assert_eq!(scoped.path().steps()[1].field_name(), "employees");
-    let Expr::Or(_, right) = scoped.predicate() else {
-        panic!("inner or")
-    };
-    let Expr::And(_, right) = right.as_ref() else {
-        panic!("inner and")
-    };
-    assert!(matches!(right.as_ref(), Expr::Not(_)));
+    let (_, right) = assert_or_expr(scoped.predicate());
+    let (_, right) = assert_and_expr(right);
+    assert!(matches!(right, Expr::Not(_)));
 
     let nested = parse_select(
         "select Department { id } filter exists .employees { exists .reports { .active = true } }",
