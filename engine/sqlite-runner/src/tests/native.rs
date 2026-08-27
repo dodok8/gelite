@@ -465,6 +465,72 @@ fn native_schema_apply_rolls_back_after_ddl_failure() {
 }
 
 #[test]
+fn native_schema_apply_rolls_back_after_commit_failure() {
+    let path = temporary_database_path("schema-commit-failure");
+    let path_str = path.to_str().expect("temporary path should be UTF-8");
+    let mut writer = NativeSQLiteRunner::open(path_str).expect("database should open");
+    writer
+        .execute("PRAGMA journal_mode = DELETE")
+        .expect("rollback journal should be enabled");
+    let mut reader = NativeSQLiteRunner::open(path_str).expect("reader should open");
+    reader
+        .begin_transaction()
+        .expect("read transaction should begin");
+    // Keep a read lock after the query finishes so the writer cannot commit.
+    assert_eq!(reader.table_exists("post"), Ok(false));
+
+    let statements = rendered_post_schema_statements();
+    let result = apply_schema_statements(&mut writer, &statements);
+    reader
+        .rollback_transaction()
+        .expect("read lock should be released");
+    let remaining_tables = [
+        "_engine_schema_versions",
+        "_engine_catalog_objects",
+        "_engine_catalog_fields",
+        "post",
+    ]
+    .map(|table| (table, writer.table_exists(table)));
+    let retry = apply_schema_statements(&mut writer, &statements);
+
+    // Close both connections and remove the file before regression assertions.
+    drop(reader);
+    drop(writer);
+    std::fs::remove_file(path).expect("temporary database should be removed");
+
+    let error = result.expect_err("read lock should make schema commit fail");
+    assert!(error.message().contains("database is locked"), "{error:?}");
+    remaining_tables.iter().for_each(|(table, exists)| {
+        assert_eq!(*exists, Ok(false), "{table} remains after commit failure");
+    });
+    retry.expect("schema apply should succeed on the same connection after releasing the reader");
+}
+
+#[test]
+fn native_schema_apply_preserves_original_error_after_rollback_failure() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let mut statements = rendered_post_schema_statements();
+    // Raw SQL forces automatic rollback; schema plans do not expose conflict policies.
+    statements.push(RenderedSchemaStatement::Sql(
+        "INSERT OR ROLLBACK INTO _engine_catalog_objects (object_id, name) VALUES (1, 'Post')"
+            .to_string(),
+    ));
+
+    let error = apply_schema_statements(&mut runner, &statements)
+        .expect_err("duplicate catalog object should fail and roll back automatically");
+
+    assert_eq!(runner.table_exists("_engine_catalog_objects"), Ok(false));
+    assert!(
+        error.message().contains("UNIQUE constraint failed"),
+        "original constraint error should be preserved: {error:?}"
+    );
+    assert!(
+        error.message().contains("no transaction is active"),
+        "rollback failure context should be included: {error:?}"
+    );
+}
+
+#[test]
 fn native_runner_can_load_schema_catalog_from_metadata() {
     let statements = rendered_post_schema_statements();
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
