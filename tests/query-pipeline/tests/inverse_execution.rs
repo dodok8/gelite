@@ -291,3 +291,95 @@ fn unsupported_multi_value_expressions_and_inverse_writes_fail_before_sql() {
         assert!(compile_query(&catalog, query).is_err(), "accepted {query}");
     }
 }
+
+#[test]
+fn inverse_follow_up_does_not_shadow_relation_table_with_selected_link_alias() {
+    let mut db = NativeSQLiteRunner::open_in_memory().expect("database");
+    apply_schema(r#"
+        type Department { required unique name: str target_id: str multi link employees: Employee inverse departments }
+        type Employee { required name: str multi link departments: Department link employee__departments: Department }
+    "#, &mut db).expect("schema");
+    run(&mut db, "insert Department { name := \"A\" }");
+    run(&mut db, "insert Department { name := \"B\" }");
+    run(
+        &mut db,
+        "insert Employee { name := \"타치바나 셰리\", employee__departments := (select Department { id } filter .name = \"B\") }",
+    );
+    run(
+        &mut db,
+        "update Employee set { departments += (select Department { id } filter .name = \"A\") }",
+    );
+    let result = run(
+        &mut db,
+        "select Department { employees: { name, employee__departments: { name } } } filter .name = \"A\"",
+    );
+    let SQLiteCellValue::List(employees) = &result.rows()[0][0] else {
+        panic!("employees")
+    };
+    let SQLiteCellValue::Object(employee) = &employees[0] else {
+        panic!("employee")
+    };
+    assert_eq!(
+        employee[1].1,
+        SQLiteCellValue::Object(vec![("name".into(), SQLiteCellValue::Text("B".into()))])
+    );
+}
+
+#[test]
+fn inverse_self_links_and_nullable_suffixes_preserve_match_existence() {
+    let mut db = setup();
+    run(
+        &mut db,
+        "update Employee filter .name = \"Other\" set { manager := (select Employee { id } filter .name = \"타치바나 셰리\") }",
+    );
+    let result = run(
+        &mut db,
+        "select Employee { name, reports: { name, manager: { name } } } filter .reports.active = true",
+    );
+    assert_eq!(names(&result), ["타치바나 셰리"]);
+    assert_eq!(child_count(&result.rows()[0][1]), 1);
+    let result = run(
+        &mut db,
+        "select Department { name } filter .employees.manager.name = null order by .name asc",
+    );
+    assert_eq!(
+        names(&result),
+        ["A", "B"],
+        "empty C is not a null path match"
+    );
+    let result = run(
+        &mut db,
+        "select Department { name } filter .employees.manager.name != null",
+    );
+    assert_eq!(names(&result), ["A"]);
+}
+
+#[test]
+fn inverse_exists_aliases_and_bind_order_survive_nested_membership_scopes() {
+    let mut db = setup();
+    let catalog = db.load_schema_catalog().expect("catalog");
+    let ast = query_parser::parse_select(
+        "select Department { name } filter .employees.active = true and .name = \"A\"",
+    )
+    .expect("parse");
+    let ir = query_resolver::resolve_select(&catalog, &ast).expect("resolve");
+    let plan = sqlite_query_plan::plan_select(&ir);
+    assert!(
+        plan.joins().is_empty(),
+        "existential joins stay inside their own scope"
+    );
+    let statement = sqlite_query_sqlgen::render_select(&plan);
+    assert_eq!(
+        statement.bind_values(),
+        &[
+            sqlite_query_sqlgen::SQLiteBindValue::Bool(true),
+            sqlite_query_sqlgen::SQLiteBindValue::String("A".into())
+        ]
+    );
+    assert!(statement.sql().contains("EXISTS (SELECT 1"));
+    let result = run(
+        &mut db,
+        "select Department { name } filter .id in (select Department { id } filter .employees.name = \"Other\")",
+    );
+    assert_eq!(names(&result), ["A"]);
+}
