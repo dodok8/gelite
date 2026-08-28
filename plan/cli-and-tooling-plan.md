@@ -154,7 +154,8 @@ The [0.11.0 source](https://github.com/RustCrypto/hashes/blob/sha2-v0.11.0/sha2/
 declares `#![no_std]`. Its default features are `alloc` and `oid`; neither is
 needed for `Sha256::digest`. Keep the engine hashing path free of `std`
 requirements and do not implement SHA-256 locally. Snapshot generation and
-version-row insertion remain pending implementation.
+version-row planning are implemented; SQL insert generation and application
+integration remain pending.
 
 Use Serde-derived snapshot types and `serde_json` in `sqlite-schema-plan`:
 
@@ -165,13 +166,16 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
 These settings support `no_std` with allocation. Keep serialization types local
 to the snapshot implementation rather than deriving serialization for the
-entire schema model or catalog metadata rows. Combine declared and implicit
-fields in each object's `fields` array, then sort objects and fields before
-serialization. Omit internal IDs and emit struct
-properties in the order required by snapshot format v1. Serialize directly
-with `serde_json::to_string`; do not pass through `Value` maps or pretty-print.
+entire schema model or catalog metadata rows. Keep each object's declared and
+implicit fields in separate arrays, sharing the field conversion logic. Sort
+objects and each field array independently before serialization. Omit internal
+IDs and emit struct properties in the order required by snapshot format v1.
+Serialize directly with `serde_json::to_string`; do not pass through `Value`
+maps or pretty-print.
 Let the JSON serializer handle string escaping and propagate serialization
 errors. Hash the resulting UTF-8 bytes without further transformation.
+`plan_initial_schema` propagates snapshot serialization failures through its
+`Result` return value.
 
 Do not build a general JSON canonicalizer for this milestone.
 Test fixed snapshot bytes and checksums, invariance under declaration order

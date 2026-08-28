@@ -265,13 +265,14 @@ The snapshot is UTF-8 JSON with this fixed structure and property order:
 | Value | Properties in output order |
 | --- | --- |
 | Root | `format_version`, `objects` |
-| Object type | `name`, `fields` |
+| Object type | `name`, `declared_fields`, `implicit_fields` |
 | Scalar field | `name`, `kind`, `scalar_type`, `cardinality`, `unique` |
 | Link field | `name`, `kind`, `target_type`, `cardinality`, `unique`, `inverse_field` |
 
-- `format_version` is the integer `1`; `objects` and `fields` are arrays.
-- Each object's `fields` combines declared and implicit fields. Object types
-  and their fields are sorted by their unescaped names
+- `format_version` is the integer `1`; `objects`, `declared_fields`, and
+  `implicit_fields` are arrays.
+- Each object preserves declared and implicit fields in separate arrays.
+  Sort objects and each field array independently by their unescaped names
   in ascending UTF-8 byte order, independently of locale and declaration order.
 - `kind` is `scalar` or `link`. Scalar types use the schema names `str`,
   `int64`, `float64`, `bool`, `uuid`, and `datetime`. Cardinality is `optional`,
@@ -280,8 +281,8 @@ The snapshot is UTF-8 JSON with this fixed structure and property order:
   `target_type` names the referenced object type. `inverse_field` names the
   forward field for an inverse link and is JSON `null` for a stored link.
 - Every object implicitly has the required UUID `id` field supplied by
-  `ObjectType::new`. Include it exactly once in `fields`, even when the object
-  has no declared fields. Its scalar snapshot has `unique: false`, matching
+  `ObjectType::new`. Include it exactly once in `implicit_fields`, even when
+  `declared_fields` is empty. Its scalar snapshot has `unique: false`, matching
   the catalog's uniqueness flag; SQLite primary-key uniqueness is unchanged.
   The field remains implicit and cannot be declared by the schema author.
 - Internal object and field IDs, source formatting and comments, physical
@@ -297,7 +298,7 @@ directly as UTF-8, including `/` and non-ASCII characters.
 For example, a catalog containing only an empty `User` type is encoded as:
 
 ```json
-{"format_version":1,"objects":[{"name":"User","fields":[{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]}]}
+{"format_version":1,"objects":[{"name":"User","declared_fields":[],"implicit_fields":[{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]}]}
 ```
 
 The code block's line ending is not part of the snapshot. These rules define
