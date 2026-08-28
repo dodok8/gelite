@@ -270,7 +270,8 @@ The snapshot is UTF-8 JSON with this fixed structure and property order:
 | Link field | `name`, `kind`, `target_type`, `cardinality`, `unique`, `inverse_field` |
 
 - `format_version` is the integer `1`; `objects` and `fields` are arrays.
-- Object types and their declared fields are sorted by their unescaped names
+- Each object's `fields` combines declared and implicit fields. Object types
+  and their fields are sorted by their unescaped names
   in ascending UTF-8 byte order, independently of locale and declaration order.
 - `kind` is `scalar` or `link`. Scalar types use the schema names `str`,
   `int64`, `float64`, `bool`, `uuid`, and `datetime`. Cardinality is `optional`,
@@ -279,8 +280,10 @@ The snapshot is UTF-8 JSON with this fixed structure and property order:
   `target_type` names the referenced object type. `inverse_field` names the
   forward field for an inverse link and is JSON `null` for a stored link.
 - Every object implicitly has the required UUID `id` field supplied by
-  `ObjectType::new`. This field is omitted from `fields`; format v1 fixes its
-  implicit identity semantics, including its absence from declared fields.
+  `ObjectType::new`. Include it exactly once in `fields`, even when the object
+  has no declared fields. Its scalar snapshot has `unique: false`, matching
+  the catalog's uniqueness flag; SQLite primary-key uniqueness is unchanged.
+  The field remains implicit and cannot be declared by the schema author.
 - Internal object and field IDs, source formatting and comments, physical
   SQLite names, version IDs, and applied timestamps are excluded.
 
@@ -294,7 +297,7 @@ directly as UTF-8, including `/` and non-ASCII characters.
 For example, a catalog containing only an empty `User` type is encoded as:
 
 ```json
-{"format_version":1,"objects":[{"name":"User","fields":[]}]}
+{"format_version":1,"objects":[{"name":"User","fields":[{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]}]}
 ```
 
 The code block's line ending is not part of the snapshot. These rules define

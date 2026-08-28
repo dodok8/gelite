@@ -165,8 +165,9 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
 These settings support `no_std` with allocation. Keep serialization types local
 to the snapshot implementation rather than deriving serialization for the
-entire schema model or catalog metadata rows. Sort objects and fields before
-serialization, omit internal IDs and implicit fields, and emit struct
+entire schema model or catalog metadata rows. Combine declared and implicit
+fields in each object's `fields` array, then sort objects and fields before
+serialization. Omit internal IDs and emit struct
 properties in the order required by snapshot format v1. Serialize directly
 with `serde_json::to_string`; do not pass through `Value` maps or pretty-print.
 Let the JSON serializer handle string escaping and propagate serialization
