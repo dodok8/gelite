@@ -156,8 +156,23 @@ needed for `Sha256::digest`. Keep the engine hashing path free of `std`
 requirements and do not implement SHA-256 locally. Snapshot generation and
 version-row insertion remain pending implementation.
 
-Implement only the fixed snapshot structure; do not introduce a general
-serialization framework or a general JSON canonicalizer for this milestone.
+Use Serde-derived snapshot types and `serde_json` in `sqlite-schema-plan`:
+
+```toml
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+```
+
+These settings support `no_std` with allocation. Keep serialization types local
+to the snapshot implementation rather than deriving serialization for the
+entire schema model or catalog metadata rows. Sort objects and fields before
+serialization, omit internal IDs and implicit fields, and emit struct
+properties in the order required by snapshot format v1. Serialize directly
+with `serde_json::to_string`; do not pass through `Value` maps or pretty-print.
+Let the JSON serializer handle string escaping and propagate serialization
+errors. Hash the resulting UTF-8 bytes without further transformation.
+
+Do not build a general JSON canonicalizer for this milestone.
 Test fixed snapshot bytes and checksums, invariance under declaration order
 and source formatting changes, and sensitivity to logical schema changes.
 
