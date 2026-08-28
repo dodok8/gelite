@@ -1168,7 +1168,7 @@ fn initial_version_insert(
     catalog: &SchemaCatalog,
     version_id: &str,
     applied_at: &str,
-) -> SQLiteInsertPlan {
+) -> Vec<SQLiteInsertPlan> {
     // Issue #59: the planner accepts caller-supplied application values and
     // exposes one version insert, following the existing catalog insert API.
     let plan = plan_initial_schema(catalog, version_id, applied_at)
@@ -1251,7 +1251,10 @@ fn initial_schema_version_insert_binds_values_and_includes_implicit_identity() {
         ),
     ] {
         let catalog = SchemaCatalog::try_new(objects).expect("valid empty schema or object");
-        let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+        let inserts = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+        let [insert] = inserts.as_slice() else {
+            panic!("initial planning should return exactly one version INSERT");
+        };
 
         assert_eq!(insert.table_name(), "_engine_schema_versions");
         assert_eq!(

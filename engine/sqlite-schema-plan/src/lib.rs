@@ -1121,13 +1121,13 @@ impl SQLiteIndexPlan {
     }
 }
 
-/// Converts the initial plan's single version row into a bound INSERT plan.
-pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> SQLiteInsertPlan {
+/// Converts the initial plan's single version row into a list of bound INSERT plans.
+pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPlan> {
     let [row] = plan.schema_versions_rows() else {
         unreachable!("initial schema planning produces exactly one version row");
     };
 
-    SQLiteInsertPlan {
+    vec![SQLiteInsertPlan {
         table_name: SCHEMA_VERSIONS_TABLE.to_string(),
         columns: vec![
             "version_id".to_string(),
@@ -1141,7 +1141,7 @@ pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> SQLiteInsertPlan {
             SQLiteValuePlan::Text(row.applied_at.clone()),
             SQLiteValuePlan::Text(row.schema_snapshot.clone()),
         ],
-    }
+    }]
 }
 
 #[cfg(test)]
