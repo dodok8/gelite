@@ -106,3 +106,12 @@ pub fn rendered_post_schema_statements() -> Vec<RenderedSchemaStatement> {
         .expect("schema snapshot should serialize");
     render_initial_schema(&plan)
 }
+
+#[cfg(feature = "native")]
+pub fn native_runner_with_post_schema() -> crate::native::NativeSQLiteRunner {
+    let mut runner = crate::native::NativeSQLiteRunner::open_in_memory()
+        .expect("in-memory database should open");
+    crate::apply_schema_statements(&mut runner, &rendered_post_schema_statements())
+        .expect("Post schema should apply");
+    runner
+}
