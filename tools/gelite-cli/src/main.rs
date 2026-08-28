@@ -97,6 +97,9 @@ fn run_schema_command(command: SchemaCommand) -> Result<(), String> {
                 .map_err(|error| format!("failed to read {}: {error}", schema_file.display()))?;
             let output = plan_schema(&source).map_err(|error| error.message().to_string())?;
 
+            println!("Schema plan preview.");
+            println!("Version ID and applied timestamp will be generated during schema apply.");
+            println!("No database was opened or changed.");
             for statement in output.statements() {
                 println!("{}", statement.sql());
                 if let SchemaPlanStatement::Insert { values, .. } = statement {

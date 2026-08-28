@@ -226,9 +226,143 @@ CREATE TABLE _engine_schema_versions (
   version_id TEXT PRIMARY KEY,
   checksum TEXT NOT NULL,
   applied_at TEXT NOT NULL,
-  schema_snapshot TEXT NOT NULL
+  schema_snapshot TEXT NOT NULL,
+  version_number INTEGER NOT NULL UNIQUE
 );
 ```
+
+#### Initial version record contract
+
+The following contract is defined for issue #59. The engine and schema commands
+plan and apply the initial version row.
+
+- A successful initial schema application must record exactly one version row.
+- The initial row has `version_number = 1`, including in previews. The number
+  records application order and is excluded from the snapshot and checksum.
+- The snapshot and checksum must be computed from the validated logical
+  `SchemaCatalog`, not from the original source text. Equivalent catalogs must
+  produce identical snapshots and checksums under the same snapshot format
+  version, regardless of source comments, whitespace, or declaration order.
+- The version ID and applied timestamp describe an application attempt and
+  must not affect the snapshot or checksum. The caller prepares them once per
+  attempt; pure planning and SQL generation must not generate IDs or read the
+  clock. The applied timestamp must represent UTC.
+- The version insert must follow the schema DDL, catalog metadata, and indexes
+  in the same transaction. Statement or commit failure must roll back the
+  version row together with the schema changes.
+- Reapplying an initial schema to an existing Gelite database must not append
+  a duplicate baseline or overwrite the existing version record.
+
+Schema plan previews must show the computed snapshot and checksum, but use
+`<version-id-on-apply>` and `<applied-at-on-apply>` as the respective version ID
+and timestamp values. These are reserved display placeholders, not valid
+persisted version values. The application path must not store them.
+
+See [CLI and Tooling Plan](../plan/cli-and-tooling-plan.md#schema-commands) for
+preview output and application behavior.
+
+#### Snapshot format v1
+
+The snapshot is UTF-8 JSON with this fixed structure and property order:
+
+| Value | Properties in output order |
+| --- | --- |
+| Root | `format_version`, `objects` |
+| Object type | `name`, `declared_fields`, `implicit_fields` |
+| Scalar field | `name`, `kind`, `scalar_type`, `cardinality`, `unique` |
+| Link field | `name`, `kind`, `target_type`, `cardinality`, `unique`, `inverse_field` |
+
+- `format_version` is the integer `1`; `objects`, `declared_fields`, and
+  `implicit_fields` are arrays.
+- Each object preserves declared and implicit fields in separate arrays.
+  Sort objects and each field array independently by their unescaped names
+  in ascending UTF-8 byte order, independently of locale and declaration order.
+- `kind` is `scalar` or `link`. Scalar types use the schema names `str`,
+  `int64`, `float64`, `bool`, `uuid`, and `datetime`. Cardinality is `optional`,
+  `required`, or `many`, as permitted by the validated catalog.
+- `unique` is a JSON boolean and is always included, even when false.
+  `target_type` names the referenced object type. `inverse_field` names the
+  forward field for an inverse link and is JSON `null` for a stored link.
+- Every object implicitly has the required UUID `id` field supplied by
+  `ObjectType::new`. Include it exactly once in `implicit_fields`, even when
+  `declared_fields` is empty. Its scalar snapshot has `unique: false`, matching
+  the catalog's uniqueness flag; SQLite primary-key uniqueness is unchanged.
+  The field remains implicit and cannot be declared by the schema author.
+- Internal object and field IDs, source formatting and comments, physical
+  SQLite names, version IDs, version numbers, and applied timestamps are excluded.
+
+Emit no byte-order mark, insignificant whitespace, or trailing newline. Empty
+arrays remain present. Preserve names exactly, without Unicode normalization
+or case folding. Escape quotes and backslashes as `\"` and `\\`. Use `\b`,
+`\t`, `\n`, `\f`, and `\r` for their control characters and lowercase `\u00xx`
+for the remaining U+0000 through U+001F characters. Emit all other characters
+directly as UTF-8, including `/` and non-ASCII characters.
+
+For example, a catalog containing only an empty `User` type is encoded as:
+
+```json
+{"format_version":1,"objects":[{"name":"User","declared_fields":[],"implicit_fields":[{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]}]}
+```
+
+The code block's line ending is not part of the snapshot. These rules define
+a Gelite-specific canonical representation, not full RFC 8785 compliance.
+Changes to the encoding or implicit semantics require a new format version;
+readers must reject unsupported format versions rather than reinterpret them.
+
+#### Checksum and application values
+
+- `checksum` is SHA-256 of the exact stored snapshot UTF-8 bytes, including
+  `format_version`, encoded as 64 lowercase hexadecimal characters without a
+  prefix. Hash the stored representation, not a parsed and reserialized copy.
+- `version_id` is a newly generated UUID v4 in lowercase, hyphenated
+  `8-4-4-4-12` notation. It identifies an application attempt, not schema content.
+- `applied_at` uses RFC 3339 UTC notation with uppercase `T` and `Z` and exactly
+  three fractional second digits: `YYYY-MM-DDTHH:MM:SS.sssZ`. Truncate finer
+  precision to milliseconds. It records the caller's application-attempt time,
+  not the exact commit completion time.
+- `version_number` is a positive signed 64-bit integer that defines application
+  order within a database. Initial application stores `1`. Future migration
+  application must allocate the next number after the current maximum within
+  the same write transaction as its schema changes and version insert. Reject
+  overflow rather than wrapping. Non-initial migration application remains
+  outside the current implementation.
+
+Read the latest stored version with `ORDER BY version_number DESC LIMIT 1`.
+An empty version table has no latest version. Do not require the table to
+contain exactly one row during lookup. Neither UUIDs nor timestamps define
+migration order.
+
+Databases created before `version_number` was added require an explicit metadata
+migration or recreation. Automatic upgrades are not implemented; do not infer
+historical order from UUIDs, timestamps, or SQLite rowids.
+
+Checking the snapshot checksum detects a mismatch but does not authenticate a
+record against an actor who can rewrite both values. Verifying the logical
+schema additionally requires comparing the canonical snapshot of the loaded catalog with the
+stored snapshot; this does not audit physical SQLite DDL.
+
+#### Native version verification
+
+`NativeSQLiteRunner::verify_schema_version` verifies the latest stored version
+in a single read transaction, without reading the original schema source:
+
+1. Read the highest numbered row, rejecting a missing row or invalid version number.
+2. Hash the exact stored snapshot bytes and compare with the stored checksum.
+3. Load the logical catalog from object and field metadata, including an empty
+   catalog when both tables are empty. Reject orphan fields and missing or
+   malformed implicit identity metadata instead of silently reconstructing it.
+4. Serialize the catalog using the current canonical format and compare the
+   entire snapshot byte for byte. Unsupported formats and malformed snapshots
+   cannot match this representation and are rejected.
+
+Success and failure both end the verification transaction without changing
+stored data. If the caller already has a transaction, verification fails before
+reading and leaves the caller's transaction untouched. Database errors remain
+`SQLiteRunnerError::ExecutionFailed`; checksum and snapshot mismatches are
+`SQLiteRunnerError::SchemaVerificationFailed`.
+
+Verification is explicit, not performed on every query. It verifies the latest
+version against the current catalog, not the integrity of every historical row.
 
 ### `_engine_catalog_objects`
 

@@ -7,13 +7,13 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use powersync_sqlite_nostd::{
-    ColumnType, Connection, Destructor, ManagedConnection, ManagedStmt, ResultCode,
+    ColumnType, Connection, Destructor, ManagedConnection, ManagedStmt, ResultCode, Stmt,
 };
 use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
     SingleCardinality, Uniqueness,
 };
-use sqlite_schema_plan::SQLiteValuePlan;
+use sqlite_schema_plan::{SQLiteValuePlan, schema_snapshot_checksum, serialize_schema_snapshot};
 
 use crate::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
@@ -94,10 +94,7 @@ impl NativeSQLiteRunner {
         match statement.step() {
             Ok(ResultCode::ROW) => {
                 let first = statement.column_int64(0);
-                let second = statement
-                    .column_text(1)
-                    .map_err(|error| self.result_error("read text column", error))?
-                    .to_string();
+                let second = read_text_column(&statement, 1, "read text column")?;
                 let third = match statement
                     .column_type(2)
                     .map_err(|error| self.result_error("read nullable integer column", error))?
@@ -119,9 +116,61 @@ impl NativeSQLiteRunner {
         }
     }
 
+    /// Verifies the latest snapshot checksum and logical catalog in one read transaction.
+    ///
+    /// No source file is needed. An existing caller transaction is rejected and left untouched.
+    pub fn verify_schema_version(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.begin_transaction()?;
+        let result = (|| {
+            let last_schema = self.read_latest_schema_version()?.ok_or_else(|| {
+                SQLiteRunnerError::schema_verification_failed(
+                    "database does not contain a stored schema version",
+                )
+            })?;
+            if schema_snapshot_checksum(&last_schema.schema_snapshot) != last_schema.checksum {
+                return Err(SQLiteRunnerError::schema_verification_failed(
+                    "stored schema snapshot checksum mismatch",
+                ));
+            }
+
+            let catalog = self.load_schema_catalog()?;
+            let snapshot = serialize_schema_snapshot(&catalog).map_err(|error| {
+                SQLiteRunnerError::schema_verification_failed(format!(
+                    "failed to serialize stored schema catalog: {error}",
+                ))
+            })?;
+            if snapshot != last_schema.schema_snapshot {
+                return Err(SQLiteRunnerError::schema_verification_failed(
+                    "stored schema snapshot does not match the canonical logical catalog",
+                ));
+            }
+            self.commit_transaction()
+        })();
+
+        result.map_err(|mut error: SQLiteRunnerError| {
+            if let Err(rollback_error) = self.rollback_transaction() {
+                let message = match &mut error {
+                    SQLiteRunnerError::ExecutionFailed { message }
+                    | SQLiteRunnerError::SchemaVerificationFailed { message } => message,
+                };
+                message.push_str(&format!("; rollback failed: {}", rollback_error.message()));
+            }
+            error
+        })
+    }
+
     pub fn load_schema_catalog(&self) -> Result<SchemaCatalog, SQLiteRunnerError> {
         let objects = self.read_catalog_objects()?;
         let fields = self.read_catalog_fields()?;
+        if fields.iter().any(|field| {
+            !objects
+                .iter()
+                .any(|object| object.object_id == field.object_id)
+        }) {
+            return Err(SQLiteRunnerError::execution_failed(
+                "catalog field references an unknown owner object",
+            ));
+        }
         if fields.iter().any(|field| {
             field.inverse_field_name.is_some()
                 && (field.field_kind != "link" || field.is_implicit || field.is_unique)
@@ -130,76 +179,40 @@ impl NativeSQLiteRunner {
                 "invalid inverse field metadata",
             ));
         }
+        if fields.iter().any(|field| {
+            (field.field_kind == "scalar" && field.target_object_id.is_some())
+                || (field.field_kind == "link" && field.scalar_type.is_some())
+        }) {
+            return Err(SQLiteRunnerError::execution_failed(
+                "catalog field contains metadata for a different field kind",
+            ));
+        }
 
         let mut object_types = Vec::new();
         for object in &objects {
-            let mut declared_fields = Vec::new();
-
-            for field in fields
+            let mut implicit = fields
+                .iter()
+                .filter(|field| field.object_id == object.object_id && field.is_implicit);
+            let valid_id = implicit.next().is_some_and(|field| {
+                field.name == "id"
+                    && field.field_kind == "scalar"
+                    && field.scalar_type.as_deref() == Some("uuid")
+                    && field.cardinality == "required"
+                    && !field.is_unique
+                    && field.target_object_id.is_none()
+                    && field.inverse_field_name.is_none()
+            });
+            if !valid_id || implicit.next().is_some() {
+                return Err(SQLiteRunnerError::execution_failed(format!(
+                    "catalog object `{}` must contain exactly one implicit UUID id field",
+                    object.name,
+                )));
+            }
+            let declared_fields = fields
                 .iter()
                 .filter(|field| field.object_id == object.object_id && !field.is_implicit)
-            {
-                match field.field_kind.as_str() {
-                    "scalar" => {
-                        let scalar_type =
-                            parse_scalar_type(field.scalar_type.as_deref().ok_or_else(|| {
-                                SQLiteRunnerError::execution_failed(format!(
-                                    "catalog field `{}` is missing scalar_type",
-                                    field.name
-                                ))
-                            })?)?;
-                        let cardinality = parse_single_cardinality(&field.cardinality)?;
-                        let uniqueness = parse_uniqueness(field.is_unique)?;
-
-                        declared_fields.push(Field::Scalar(ScalarField::with_uniqueness(
-                            field.name.clone(),
-                            scalar_type,
-                            cardinality,
-                            uniqueness,
-                        )));
-                    }
-                    "link" => {
-                        let target_object_id = field.target_object_id.ok_or_else(|| {
-                            SQLiteRunnerError::execution_failed(format!(
-                                "catalog link field `{}` is missing target_object_id",
-                                field.name
-                            ))
-                        })?;
-                        let target_object = objects
-                            .iter()
-                            .find(|object| object.object_id == target_object_id)
-                            .ok_or_else(|| {
-                                SQLiteRunnerError::execution_failed(format!(
-                                    "catalog link field `{}` references unknown target object id {target_object_id}",
-                                    field.name
-                                ))
-                            })?;
-                        let cardinality = parse_cardinality(&field.cardinality)?;
-                        let uniqueness = parse_uniqueness(field.is_unique)?;
-
-                        let link = match &field.inverse_field_name {
-                            Some(source) => LinkField::with_inverse(
-                                field.name.clone(),
-                                target_object.name.clone(),
-                                cardinality,
-                                source.clone(),
-                            ),
-                            None => LinkField::with_uniqueness(
-                                field.name.clone(),
-                                target_object.name.clone(),
-                                cardinality,
-                                uniqueness,
-                            ),
-                        };
-                        declared_fields.push(Field::Link(link));
-                    }
-                    kind => {
-                        return Err(SQLiteRunnerError::execution_failed(format!(
-                            "unknown catalog field kind `{kind}`"
-                        )));
-                    }
-                }
-            }
+                .map(|field| field_from_catalog_row(field, &objects))
+                .collect::<Result<Vec<_>, _>>()?;
 
             object_types.push(ObjectType::new(object.name.clone(), declared_fields));
         }
@@ -404,6 +417,42 @@ impl NativeSQLiteRunner {
         Ok(())
     }
 
+    /// Reads the highest numbered stored version without verifying its contents.
+    fn read_latest_schema_version(&self) -> Result<Option<SchemaVersionRow>, SQLiteRunnerError> {
+        let statement = self
+            .connection
+            .prepare_v2(
+                "SELECT version_id, checksum, applied_at, schema_snapshot, version_number
+                 FROM _engine_schema_versions ORDER BY version_number DESC LIMIT 1",
+            )
+            .map_err(|_| self.connection_error("prepare schema version query"))?;
+        match statement.step() {
+            Ok(ResultCode::ROW) => {
+                let version_number =
+                    read_nullable_integer_column(&statement, 4, "read version number")?
+                        .filter(|number| *number > 0)
+                        .ok_or_else(|| {
+                            SQLiteRunnerError::schema_verification_failed(
+                                "stored schema version number must be positive",
+                            )
+                        })?;
+                Ok(Some(SchemaVersionRow {
+                    version_id: read_text_column(&statement, 0, "read schema version id")?,
+                    checksum: read_text_column(&statement, 1, "read schema version checksum")?,
+                    applied_at: read_text_column(&statement, 2, "read schema version applied_at")?,
+                    schema_snapshot: read_text_column(
+                        &statement,
+                        3,
+                        "read schema version snapshot",
+                    )?,
+                    version_number,
+                }))
+            }
+            Ok(ResultCode::DONE) => Ok(None),
+            Ok(result) | Err(result) => Err(self.result_error("step schema version query", result)),
+        }
+    }
+
     fn read_catalog_objects(&self) -> Result<Vec<CatalogObjectRow>, SQLiteRunnerError> {
         let statement = self
             .connection
@@ -423,12 +472,6 @@ impl NativeSQLiteRunner {
                 Ok(result) => return Err(self.result_error("step catalog object query", result)),
                 Err(result) => return Err(self.result_error("step catalog object query", result)),
             }
-        }
-
-        if rows.is_empty() {
-            return Err(SQLiteRunnerError::execution_failed(
-                "database does not contain Gelite catalog objects",
-            ));
         }
 
         Ok(rows)
@@ -483,12 +526,6 @@ impl NativeSQLiteRunner {
             }
         }
 
-        if rows.is_empty() {
-            return Err(SQLiteRunnerError::execution_failed(
-                "database does not contain Gelite catalog fields",
-            ));
-        }
-
         Ok(rows)
     }
 
@@ -511,6 +548,16 @@ impl NativeSQLiteRunner {
     }
 }
 
+#[allow(dead_code)] // Retain the full stored row even when verification only uses its content.
+#[derive(Debug, PartialEq, Eq)]
+struct SchemaVersionRow {
+    version_id: String,
+    checksum: String,
+    applied_at: String,
+    schema_snapshot: String,
+    version_number: i64,
+}
+
 struct CatalogObjectRow {
     object_id: i64,
     name: String,
@@ -530,15 +577,90 @@ struct CatalogFieldRow {
     inverse_field_name: Option<String>,
 }
 
+fn field_from_catalog_row(
+    field: &CatalogFieldRow,
+    objects: &[CatalogObjectRow],
+) -> Result<Field, SQLiteRunnerError> {
+    match field.field_kind.as_str() {
+        "scalar" => {
+            let scalar_type =
+                parse_scalar_type(field.scalar_type.as_deref().ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(format!(
+                        "catalog field `{}` is missing scalar_type",
+                        field.name
+                    ))
+                })?)?;
+            let cardinality = parse_single_cardinality(&field.cardinality)?;
+            let uniqueness = parse_uniqueness(field.is_unique)?;
+
+            Ok(Field::Scalar(ScalarField::with_uniqueness(
+                field.name.clone(),
+                scalar_type,
+                cardinality,
+                uniqueness,
+            )))
+        }
+        "link" => {
+            let target_object_id = field.target_object_id.ok_or_else(|| {
+                SQLiteRunnerError::execution_failed(format!(
+                    "catalog link field `{}` is missing target_object_id",
+                    field.name
+                ))
+            })?;
+            let target_object = objects
+                .iter()
+                .find(|object| object.object_id == target_object_id)
+                .ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(format!(
+                        "catalog link field `{}` references unknown target object id {target_object_id}",
+                        field.name
+                    ))
+                })?;
+            let cardinality = parse_cardinality(&field.cardinality)?;
+            let uniqueness = parse_uniqueness(field.is_unique)?;
+
+            let link = match &field.inverse_field_name {
+                Some(source) => LinkField::with_inverse(
+                    field.name.clone(),
+                    target_object.name.clone(),
+                    cardinality,
+                    source.clone(),
+                ),
+                None => LinkField::with_uniqueness(
+                    field.name.clone(),
+                    target_object.name.clone(),
+                    cardinality,
+                    uniqueness,
+                ),
+            };
+            Ok(Field::Link(link))
+        }
+        kind => Err(SQLiteRunnerError::execution_failed(format!(
+            "unknown catalog field kind `{kind}`"
+        ))),
+    }
+}
+
 fn read_text_column(
     statement: &ManagedStmt,
     index: i32,
     context: &str,
 ) -> Result<String, SQLiteRunnerError> {
-    statement
-        .column_text(index)
-        .map(|value| value.to_string())
-        .map_err(|error| SQLiteRunnerError::execution_failed(format!("{context}: {error:?}")))
+    // SQLite may return a null blob pointer for empty TEXT, which is not SQL NULL.
+    if statement.column_type(index) == Ok(ColumnType::Text)
+        && statement.stmt.column_bytes(index) == 0
+    {
+        return Ok(String::new());
+    }
+    // The binding's column_text uses unchecked UTF-8 conversion, even for corrupt SQLite TEXT.
+    let bytes = statement
+        .column_blob(index)
+        .map_err(|error| SQLiteRunnerError::execution_failed(format!("{context}: {error:?}")))?;
+    core::str::from_utf8(bytes)
+        .map(ToString::to_string)
+        .map_err(|error| {
+            SQLiteRunnerError::execution_failed(format!("{context}: invalid UTF-8: {error}"))
+        })
 }
 
 fn read_nullable_text_column(
@@ -580,11 +702,11 @@ fn read_bool_column(
     index: i32,
     context: &str,
 ) -> Result<bool, SQLiteRunnerError> {
-    match statement.column_int64(index) {
-        0 => Ok(false),
-        1 => Ok(true),
+    match read_nullable_integer_column(statement, index, context)? {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
         value => Err(SQLiteRunnerError::execution_failed(format!(
-            "{context}: expected 0 or 1, got {value}"
+            "{context}: expected 0 or 1, got {value:?}"
         ))),
     }
 }
@@ -735,5 +857,149 @@ impl SQLiteTransactionRunner for NativeSQLiteRunner {
 
     fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
         NativeSQLiteRunner::rollback_transaction(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::fixtures::{native_runner_with_post_schema, rendered_post_schema_statements};
+
+    #[test]
+    fn read_latest_schema_version_uses_number_instead_of_time_uuid_or_insert_order() {
+        let mut runner = native_runner_with_post_schema();
+        let statements = rendered_post_schema_statements();
+        let Some(sqlite_schema_sqlgen::RenderedSchemaStatement::Insert(insert)) = statements.last()
+        else {
+            panic!("initial schema should end with the version insert");
+        };
+
+        // Raw history fixtures stand in for non-initial migration application.
+        // Version 10 shares the baseline timestamp; version 2 has a later time and UUID.
+        for (number, id, applied_at) in [
+            (
+                10,
+                "11111111-1111-4111-8111-111111111111",
+                crate::tests::fixtures::APPLIED_AT,
+            ),
+            (
+                2,
+                "ffffffff-ffff-4fff-bfff-ffffffffffff",
+                "2099-01-01T00:00:00.000Z",
+            ),
+        ] {
+            runner
+                .execute_with_values(
+                    insert.sql(),
+                    &[
+                        SQLiteValuePlan::Text(id.to_string()),
+                        SQLiteValuePlan::Text("unchecked checksum".to_string()),
+                        SQLiteValuePlan::Text(applied_at.to_string()),
+                        SQLiteValuePlan::Text(" {\"name\":\"雪\"}\n".to_string()),
+                        SQLiteValuePlan::Integer(number),
+                    ],
+                )
+                .expect("history fixture should be stored");
+        }
+
+        let row = runner
+            .read_latest_schema_version()
+            .expect("latest version should load");
+        // Values stay owned after the prepared statement and connection are dropped.
+        drop(runner);
+        assert_eq!(
+            row,
+            Some(SchemaVersionRow {
+                version_id: "11111111-1111-4111-8111-111111111111".to_string(),
+                checksum: "unchecked checksum".to_string(),
+                applied_at: crate::tests::fixtures::APPLIED_AT.to_string(),
+                schema_snapshot: " {\"name\":\"雪\"}\n".to_string(),
+                version_number: 10,
+            })
+        );
+    }
+
+    #[test]
+    fn read_latest_schema_version_returns_none_for_empty_table() {
+        let mut runner = native_runner_with_post_schema();
+        // Normal initial application always inserts a baseline; remove it for the read test.
+        runner
+            .execute("DELETE FROM _engine_schema_versions")
+            .expect("version should be removed");
+
+        assert_eq!(runner.read_latest_schema_version(), Ok(None));
+    }
+
+    #[test]
+    fn read_latest_schema_version_reports_missing_table() {
+        let runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+
+        let error = runner
+            .read_latest_schema_version()
+            .expect_err("missing version table should be a query error");
+
+        assert!(error.message().contains("prepare schema version query"));
+        assert!(error.message().contains("no such table"));
+        assert_eq!(runner.table_exists("_engine_schema_versions"), Ok(false));
+    }
+
+    #[test]
+    fn read_latest_schema_version_rejects_invalid_version_numbers() {
+        // Bypass normal version planning to model corrupt metadata types and ranges.
+        for value in ["0", "-1", "1.5", "'invalid'"] {
+            let mut runner = native_runner_with_post_schema();
+            runner
+                .execute(&format!(
+                    "UPDATE _engine_schema_versions SET version_number = {value}"
+                ))
+                .expect("version number should be corrupted");
+
+            runner
+                .read_latest_schema_version()
+                .expect_err("version number must be a positive integer");
+        }
+    }
+
+    #[test]
+    fn schema_version_number_is_unique() {
+        let mut runner = native_runner_with_post_schema();
+        // Normal initial application cannot produce two version IDs with the same number.
+        let error = runner.execute(
+            "INSERT INTO _engine_schema_versions (version_id, checksum, applied_at, schema_snapshot, version_number)
+             SELECT '11111111-1111-4111-8111-111111111111', checksum, applied_at, schema_snapshot, version_number
+             FROM _engine_schema_versions",
+        ).expect_err("duplicate version number should be rejected");
+
+        assert!(error.message().contains("UNIQUE constraint failed"));
+    }
+
+    #[test]
+    fn read_latest_schema_version_excludes_rolled_back_version() {
+        let mut runner = native_runner_with_post_schema();
+        let baseline = runner
+            .read_latest_schema_version()
+            .expect("baseline should load");
+        assert_eq!(baseline.as_ref().map(|row| row.version_number), Some(1));
+        runner
+            .begin_transaction()
+            .expect("transaction should begin");
+        // Raw history writes stand in for a future migration that fails before commit.
+        runner.execute(
+            "INSERT INTO _engine_schema_versions (version_id, checksum, applied_at, schema_snapshot, version_number)
+             SELECT '11111111-1111-4111-8111-111111111111', checksum, applied_at, schema_snapshot, 2
+             FROM _engine_schema_versions",
+        ).expect("pending version should be stored");
+        assert_eq!(
+            runner
+                .read_latest_schema_version()
+                .expect("pending version should load")
+                .map(|row| row.version_number),
+            Some(2)
+        );
+        runner
+            .rollback_transaction()
+            .expect("failed migration should roll back");
+
+        assert_eq!(runner.read_latest_schema_version(), Ok(baseline));
     }
 }

@@ -2,11 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use gelite_commands::{apply_schema, plan_schema};
 use sqlite_query_sqlgen::{
     SQLiteBindValue, SQLiteStatement, render_delete, render_insert, render_select, render_update,
 };
 use sqlite_runner::{
-    SQLiteCellValue, SQLiteQueryResult, SQLiteRunner, apply_schema_statements,
+    SQLiteCellValue, SQLiteQueryResult, SQLiteRunner, SQLiteRunnerError, apply_schema_statements,
     native::NativeSQLiteRunner,
 };
 use sqlite_schema_plan::SQLiteValuePlan;
@@ -25,6 +26,119 @@ type Post {
   required link author: User
 }
 "#;
+
+#[test]
+fn schema_apply_records_preview_content_and_preserves_the_initial_baseline() {
+    let preview = plan_schema(BLOG_SCHEMA_SOURCE).expect("preview");
+    let expected = preview.statements().last().unwrap().values().unwrap();
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+    apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).expect("initial apply");
+    let statement = SQLiteStatement::new(
+        "SELECT version_id, checksum, applied_at, schema_snapshot, version_number FROM _engine_schema_versions",
+        vec![],
+    );
+    let stored = runner.execute_select(&statement).expect("stored version");
+    let [row] = stored.rows() else {
+        panic!("initial apply must store exactly one version row");
+    };
+    let [
+        SQLiteCellValue::Text(id),
+        SQLiteCellValue::Text(checksum),
+        SQLiteCellValue::Text(applied_at),
+        SQLiteCellValue::Text(snapshot),
+        SQLiteCellValue::Integer(1),
+    ] = row.as_slice()
+    else {
+        panic!("version values must be text with initial version number 1");
+    };
+    assert_ne!(id, "<version-id-on-apply>");
+    assert_ne!(applied_at, "<applied-at-on-apply>");
+    assert_eq!(SQLiteValuePlan::Text(checksum.clone()), expected[1]);
+    assert_eq!(SQLiteValuePlan::Text(snapshot.clone()), expected[3]);
+    runner
+        .verify_schema_version()
+        .expect("applied logical schema should verify");
+
+    assert!(apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).is_err());
+    let after = runner
+        .execute_select(&statement)
+        .expect("original baseline");
+    assert_eq!(after.rows(), stored.rows());
+    runner
+        .verify_schema_version()
+        .expect("failed reapplication must preserve a verifiable baseline");
+}
+
+#[test]
+fn schema_apply_stores_identical_content_despite_comments_and_whitespace() {
+    let commented = BLOG_SCHEMA_SOURCE
+        .lines()
+        .map(|line| format!("\t{line}  # same logical schema\r\n"))
+        .collect::<String>();
+    let statement = SQLiteStatement::new(
+        "SELECT checksum, schema_snapshot FROM _engine_schema_versions",
+        vec![],
+    );
+    let stored = [BLOG_SCHEMA_SOURCE, commented.as_str()].map(|source| {
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+        apply_schema(source, &mut runner).expect("schema should apply");
+        runner
+            .verify_schema_version()
+            .expect("equivalent source should produce a verifiable baseline");
+        runner.execute_select(&statement).expect("stored content")
+    });
+
+    assert_eq!(stored[0].rows().len(), 1);
+    assert_eq!(stored[0].rows(), stored[1].rows());
+}
+
+#[test]
+fn schema_apply_detects_tampered_version_content_and_logical_catalog() {
+    // Raw SQL corrupts internal metadata that schema commands do not allow users to edit.
+    for mutation in [
+        "UPDATE _engine_schema_versions SET checksum = 'tampered'",
+        "UPDATE _engine_schema_versions SET schema_snapshot = schema_snapshot || ' '",
+        "UPDATE _engine_catalog_fields SET cardinality = 'optional' WHERE name = 'title'",
+    ] {
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+        apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).expect("schema should apply");
+        runner
+            .verify_schema_version()
+            .expect("original baseline should verify");
+        runner
+            .execute(mutation)
+            .expect("metadata should be changed");
+
+        let error = runner
+            .verify_schema_version()
+            .expect_err("modified metadata must fail verification");
+        assert!(
+            matches!(error, SQLiteRunnerError::SchemaVerificationFailed { .. }),
+            "{mutation}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn schema_version_verifies_after_reopening_database_without_source_file() {
+    let source_path = write_temp_geli_schema(BLOG_SCHEMA_SOURCE);
+    let database_path = source_path.with_extension("db");
+    let source = fs::read_to_string(&source_path).expect("source should load");
+    let mut runner = NativeSQLiteRunner::open(database_path.to_str().expect("UTF-8 path"))
+        .expect("database should open");
+    apply_schema(&source, &mut runner).expect("schema should apply");
+    drop(runner);
+    drop(source);
+    fs::remove_file(source_path).expect("original source should be removed");
+
+    let mut reopened = NativeSQLiteRunner::open(database_path.to_str().expect("UTF-8 path"))
+        .expect("database should reopen");
+    let result = reopened.verify_schema_version();
+    drop(reopened);
+    fs::remove_file(database_path).expect("test database should be removed");
+
+    result.expect("stored snapshot should verify without the source or original connection");
+}
 
 static TEMP_SCHEMA_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -62,7 +176,12 @@ fn unique_suffix() -> String {
 
 fn setup_blog_database() -> NativeSQLiteRunner {
     let catalog = parse_blog_catalog_from_geli_file();
-    let schema_plan = sqlite_schema_plan::plan_initial_schema(&catalog);
+    let schema_plan = sqlite_schema_plan::plan_initial_schema(
+        &catalog,
+        "9b496060-9a5c-4c7e-9f32-210f698fe497",
+        "2026-08-28T12:34:56.789Z",
+    )
+    .expect("schema snapshot should serialize");
     let schema_statements = sqlite_schema_sqlgen::render_initial_schema(&schema_plan);
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
 

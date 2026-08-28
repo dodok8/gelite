@@ -130,6 +130,75 @@ turned into a thin wrapper around the same command/repl implementation.
 
 ## Schema Commands
 
+Issue #59 defines the version-record and preview contracts below. Schema plan
+output includes deterministic version values and a preview notice; schema apply
+generates application values and records the initial version in its transaction.
+Storage requirements are defined in
+[SQLite Storage MVP Spec](../spec/storage-sqlite.md#initial-version-record-contract).
+
+### Version record implementation choices
+
+Use snapshot format v1, SHA-256, UUID v4, and UTC timestamps with millisecond
+precision as defined in the storage spec. Keep snapshot encoding and hashing
+pure in `sqlite-schema-plan`; the caller supplies application IDs and times.
+Reuse the existing `uuid` v4 dependency in `gelite-commands`.
+Format `SystemTime::now()` as UTC RFC3339 with `chrono`'s
+`to_rfc3339_opts(SecondsFormat::Millis, true)`. Enable only its `std` feature
+with default features disabled in `gelite-commands`; no date dependency is
+added to engine crates. See the [Chrono feature documentation](https://docs.rs/chrono/0.4.45/chrono/#features).
+
+For SHA-256, use RustCrypto's `sha2` in `sqlite-schema-plan` with this dependency
+configuration:
+
+```toml
+sha2 = { version = "0.11", default-features = false }
+```
+
+The [0.11.0 source](https://github.com/RustCrypto/hashes/blob/sha2-v0.11.0/sha2/src/lib.rs)
+declares `#![no_std]`. Its default features are `alloc` and `oid`; neither is
+needed for `Sha256::digest`. Keep the engine hashing path free of `std`
+requirements and do not implement SHA-256 locally. Snapshot generation,
+version-row planning, and version INSERT planning are implemented. Initial
+schema rendering appends the version INSERT after indexes, and the native
+runner applies it in the schema transaction. Schema commands supply preview
+placeholders or freshly generated application values and propagate planning errors.
+
+Initial plans also store `version_number = 1`, independently of UUIDs and
+timestamps. The native runner reads the latest row by descending version number
+with `LIMIT 1`; it does not sort the entire history in memory. Allocation of
+subsequent numbers and upgrades of older metadata tables remain deferred with
+non-initial migrations.
+
+The native verification method uses one read transaction to check the latest
+stored snapshot's checksum and compare it with a canonical snapshot of the
+loaded catalog. It reuses `serialize_schema_snapshot` and
+`schema_snapshot_checksum` from `sqlite-schema-plan`, without new dependencies
+or snapshot deserialization. It does not run automatically for each query.
+
+Use Serde-derived snapshot types and `serde_json` in `sqlite-schema-plan`:
+
+```toml
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+```
+
+These settings support `no_std` with allocation. Keep serialization types local
+to the snapshot implementation rather than deriving serialization for the
+entire schema model or catalog metadata rows. Keep each object's declared and
+implicit fields in separate arrays, sharing the field conversion logic. Sort
+objects and each field array independently before serialization. Omit internal
+IDs and emit struct properties in the order required by snapshot format v1.
+Serialize directly with `serde_json::to_string`; do not pass through `Value`
+maps or pretty-print.
+Let the JSON serializer handle string escaping and propagate serialization
+errors. Hash the resulting UTF-8 bytes without further transformation.
+`plan_initial_schema` propagates snapshot serialization failures through its
+`Result` return value.
+
+Do not build a general JSON canonicalizer for this milestone.
+Test fixed snapshot bytes and checksums, invariance under declaration order
+and source formatting changes, and sensitivity to logical schema changes.
+
 ### `gelite schema plan <schema.geli>`
 
 Purpose: show what would be applied to an empty SQLite database.
@@ -139,6 +208,7 @@ Pipeline:
 ```text
 read schema.geli
 -> schema_parser::parse_schema
+-> prepare version ID and timestamp preview placeholders
 -> sqlite_schema_plan::plan_initial_schema
 -> sqlite_schema_sqlgen::render_initial_schema
 -> print SQL statements and bind values
@@ -146,6 +216,25 @@ read schema.geli
 
 This command must not open a database. It should work in environments where
 SQLite execution is unavailable.
+
+It must not generate or reserve a version ID or read the current time. The
+version row uses these fixed display values:
+
+- `version_id`: `<version-id-on-apply>`
+- `applied_at`: `<applied-at-on-apply>`
+
+The snapshot and checksum are computed values, not placeholders. Repeated
+previews of the same source under the same snapshot format version must produce
+identical output. Preview and apply share planning and SQL generation; the
+caller supplies preview placeholders or actual application values.
+
+Output must begin with:
+
+```text
+Schema plan preview.
+Version ID and applied timestamp will be generated during schema apply.
+No database was opened or changed.
+```
 
 Output should keep SQL and bind values separate:
 
@@ -170,6 +259,10 @@ Assert:
 - metadata tables appear before object tables
 - object metadata insert statements keep bind values
 - planned indexes appear after table creation
+- the version insert follows all other schema statements
+- repeated previews produce identical output without database, clock, or
+  version ID generator access
+- the output identifies preview values and uses the exact placeholders above
 
 ### `gelite schema apply <schema.geli> --database <app.db>`
 
@@ -180,18 +273,28 @@ Pipeline:
 ```text
 read schema.geli
 -> schema_parser::parse_schema
+-> prepare the actual version ID and UTC applied timestamp once
 -> sqlite_schema_plan::plan_initial_schema
 -> sqlite_schema_sqlgen::render_initial_schema
 -> sqlite_runner::apply_schema_statements over a native runner backend
 ```
 
+`schema apply` must reread and validate the source and build its own plan. It
+does not consume preview output or replace placeholders in a saved preview.
+A preview neither freezes nor approves an execution plan; editing the source
+after previewing can change what is applied.
+
+For an equivalent logical catalog and the same snapshot format version, the
+stored snapshot and checksum must match the preview. The stored version ID and
+timestamp must be actual application values, never preview placeholders.
+
 Initial scope:
 
 - initial schema only
 - empty or newly created database
-- one transaction if the runner supports it
+- one transaction for schema DDL, catalog metadata, indexes, and the version row
 - no schema diffing
-- no migration history row until checksum and snapshot rules exist
+- exactly one initial version row
 
 First command-level test:
 
@@ -205,6 +308,10 @@ Assert:
 - metadata tables exist after apply
 - object tables exist after apply
 - catalog object rows exist after apply
+- exactly one initial version row exists and contains no preview placeholders
+- the stored snapshot and checksum match a preview of the same logical catalog
+- statement or commit failure rolls back the schema and version row together
+- reapplying an initial schema does not append or overwrite a baseline
 
 Do not implement this command before `sqlite-runner` has tests for DDL,
 prepared metadata inserts, and full rendered initial schema application.

@@ -1,22 +1,27 @@
 extern crate alloc;
 
-mod fixtures;
+pub(crate) mod fixtures;
 #[cfg(feature = "native")]
 mod native;
 
 use alloc::string::ToString;
 use alloc::vec;
-use sqlite_schema_plan::{SQLiteValuePlan, plan_initial_schema};
-use sqlite_schema_sqlgen::{RenderedSchemaStatement, render_initial_schema};
+use sqlite_schema_plan::SQLiteValuePlan;
+use sqlite_schema_sqlgen::RenderedSchemaStatement;
 
 use crate::{SQLiteRunnerError, apply_schema_statements};
-use fixtures::{RecordedCall, RecordingRunner, post_catalog, rendered_post_schema_statements};
+use fixtures::{RecordedCall, RecordingRunner, rendered_post_schema_statements};
+
+#[test]
+fn schema_verification_error_exposes_message() {
+    let error = SQLiteRunnerError::schema_verification_failed("schema snapshot checksum mismatch");
+
+    assert_eq!(error.message(), "schema snapshot checksum mismatch");
+}
 
 #[test]
 fn apply_schema_statements_executes_sql_and_insert_statements_in_order() {
-    let catalog = post_catalog();
-    let plan = plan_initial_schema(&catalog);
-    let statements = render_initial_schema(&plan);
+    let statements = rendered_post_schema_statements();
     let mut runner = RecordingRunner::default();
 
     apply_schema_statements(&mut runner, &statements).expect("schema statements should apply");
@@ -29,6 +34,16 @@ fn apply_schema_statements_executes_sql_and_insert_statements_in_order() {
     assert_eq!(
         runner.calls().last(),
         Some(&RecordedCall::Execute("COMMIT".into()))
+    );
+    let Some(RenderedSchemaStatement::Insert(version)) = statements.last() else {
+        panic!("rendered schema should end with the version INSERT");
+    };
+    assert_eq!(
+        runner.calls().get(runner.calls().len() - 2),
+        Some(&RecordedCall::ExecuteWithValues(
+            version.sql().to_string(),
+            version.values().to_vec(),
+        ))
     );
     assert!(matches!(
         runner.calls().get(1),

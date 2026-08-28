@@ -22,6 +22,7 @@ fn blog_catalog() -> SchemaCatalog {
 #[derive(Default)]
 struct RecordingRunner {
     calls: Vec<String>,
+    inserts: Vec<(String, Vec<SQLiteValuePlan>)>,
 }
 
 impl SQLiteRunner for RecordingRunner {
@@ -36,6 +37,7 @@ impl SQLiteRunner for RecordingRunner {
         values: &[SQLiteValuePlan],
     ) -> Result<(), SQLiteRunnerError> {
         self.calls.push(format!("{sql} {values:?}"));
+        self.inserts.push((sql.to_string(), values.to_vec()));
         Ok(())
     }
 }
@@ -143,7 +145,7 @@ fn schema_plan_command_renders_initial_schema_from_source() {
     let output = plan_schema(blog_schema_source()).expect("schema plan command should succeed");
     let statements = output.statements();
 
-    assert_eq!(statements.len(), 13);
+    assert_eq!(statements.len(), 14);
     assert!(
         statements[0]
             .sql()
@@ -165,6 +167,31 @@ fn schema_plan_command_renders_initial_schema_from_source() {
         statements[12].sql(),
         "CREATE INDEX \"post__author_id_idx\" ON \"post\" (\"author_id\")"
     );
+    assert_eq!(
+        statements[13].sql(),
+        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\", \"version_number\") VALUES (?, ?, ?, ?, ?)"
+    );
+    let values = statements[13].values().expect("version bindings");
+    assert_eq!(values[4], SQLiteValuePlan::Integer(1));
+    assert_eq!(
+        values[0],
+        SQLiteValuePlan::Text("<version-id-on-apply>".into())
+    );
+    assert_eq!(
+        values[2],
+        SQLiteValuePlan::Text("<applied-at-on-apply>".into())
+    );
+    assert_eq!(output, plan_schema(blog_schema_source()).unwrap());
+}
+
+#[test]
+fn schema_preview_content_ignores_comments_layout_and_declaration_order() {
+    let original = plan_schema(blog_schema_source()).expect("original schema");
+    let reordered = plan_schema(
+        "# same logical schema\ntype Post { required link author: User # author\n required title: str }\n\n\ttype User { required email: str } # end",
+    )
+    .expect("equivalent schema");
+    assert_eq!(original.statements().last(), reordered.statements().last());
 }
 
 #[test]
@@ -218,10 +245,12 @@ fn schema_plan_command_returns_parse_error_for_invalid_schema() {
 #[test]
 fn schema_apply_command_executes_rendered_schema_statements() {
     let mut runner = RecordingRunner::default();
+    let before = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now());
 
     apply_schema(blog_schema_source(), &mut runner).expect("schema apply command should succeed");
+    let after = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now());
 
-    assert_eq!(runner.calls.len(), 15);
+    assert_eq!(runner.calls.len(), 16);
     assert_eq!(runner.calls.first().map(String::as_str), Some("BEGIN"));
     assert_eq!(runner.calls.last().map(String::as_str), Some("COMMIT"));
     assert!(
@@ -235,6 +264,58 @@ fn schema_apply_command_executes_rendered_schema_statements() {
             .any(|call| call.contains("INSERT INTO \"_engine_catalog_objects\"")),
         "catalog object metadata should be inserted"
     );
+    let preview = plan_schema(blog_schema_source()).expect("preview");
+    let expected = preview.statements().last().expect("version INSERT");
+    let (sql, values) = runner.inserts.last().expect("applied version INSERT");
+    assert_eq!(sql, expected.sql());
+    assert_eq!(values[1], expected.values().unwrap()[1]);
+    assert_eq!(values[3], expected.values().unwrap()[3]);
+    let [
+        SQLiteValuePlan::Text(id),
+        _,
+        SQLiteValuePlan::Text(applied_at),
+        _,
+        SQLiteValuePlan::Integer(1),
+    ] = values.as_slice()
+    else {
+        panic!(
+            "version identifier and timestamp must be text and the initial version number must be 1"
+        );
+    };
+    let parsed_id = uuid::Uuid::parse_str(id).expect("valid UUID");
+    assert_eq!(parsed_id.get_version_num(), 4);
+    assert_eq!(*id, parsed_id.hyphenated().to_string());
+    let timestamp = chrono::DateTime::parse_from_rfc3339(applied_at).expect("RFC3339 timestamp");
+    assert_eq!(applied_at.len(), 24, "exactly three fractional digits");
+    assert!(applied_at.ends_with('Z'));
+    assert!(timestamp.timestamp_millis() >= before.timestamp_millis());
+    assert!(timestamp.timestamp_millis() <= after.timestamp_millis());
+
+    let mut second = RecordingRunner::default();
+    apply_schema(blog_schema_source(), &mut second).expect("another apply attempt");
+    assert_ne!(values[0], second.inserts.last().unwrap().1[0]);
+}
+
+#[test]
+fn schema_apply_reparses_changed_source_and_rejects_invalid_input_before_execution() {
+    let original = plan_schema(blog_schema_source()).expect("preview");
+    let changed = "type User { required name: str }";
+    let expected = plan_schema(changed).expect("changed preview");
+    let mut runner = RecordingRunner::default();
+    apply_schema(changed, &mut runner).expect("apply changed schema");
+    let (_, values) = runner.inserts.last().expect("version INSERT");
+    assert_eq!(
+        values[3],
+        expected.statements().last().unwrap().values().unwrap()[3]
+    );
+    assert_ne!(
+        values[3],
+        original.statements().last().unwrap().values().unwrap()[3]
+    );
+
+    let mut invalid = RecordingRunner::default();
+    assert!(apply_schema("type User { link missing: Unknown }", &mut invalid).is_err());
+    assert!(invalid.calls.is_empty());
 }
 
 #[test]

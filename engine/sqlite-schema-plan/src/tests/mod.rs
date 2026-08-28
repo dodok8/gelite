@@ -1,8 +1,9 @@
 extern crate alloc;
 
 use crate::{
-    SQLiteAffinity, SQLiteCatalogFieldKind, SQLiteForeignKeyAction, SQLiteValuePlan,
-    plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
+    SQLiteAffinity, SQLiteCatalogFieldKind, SQLiteForeignKeyAction, SQLiteInsertPlan,
+    SQLiteValuePlan, plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
+    plan_schema_version_insert,
 };
 use alloc::vec;
 use alloc::vec::Vec;
@@ -15,7 +16,8 @@ use schema_model::{
 fn initial_schema_plan_creates_metadata_tables() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     let table_names = plan
         .metadata_tables()
@@ -36,7 +38,8 @@ fn initial_schema_plan_creates_metadata_tables() {
 #[test]
 fn initial_schema_plan_defines_catalog_objects_metadata_table() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     assert_eq!(plan.metadata_tables()[1].name(), "_engine_catalog_objects");
     assert_eq!(plan.metadata_tables()[1].columns().len(), 2);
@@ -58,10 +61,11 @@ fn initial_schema_plan_defines_catalog_objects_metadata_table() {
 #[test]
 fn initial_schema_plan_defines_schema_versions_metadata_table() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     assert_eq!(plan.metadata_tables()[0].name(), "_engine_schema_versions");
-    assert_eq!(plan.metadata_tables()[0].columns().len(), 4);
+    assert_eq!(plan.metadata_tables()[0].columns().len(), 5);
 
     let columns = plan.metadata_tables()[0].columns();
     assert_eq!(columns[0].name(), "version_id");
@@ -87,12 +91,19 @@ fn initial_schema_plan_defines_schema_versions_metadata_table() {
     assert!(!columns[3].is_nullable());
     assert!(!columns[3].is_primary_key());
     assert!(!columns[3].is_unique());
+
+    assert_eq!(columns[4].name(), "version_number");
+    assert_eq!(columns[4].affinity(), SQLiteAffinity::Integer);
+    assert!(!columns[4].is_nullable());
+    assert!(!columns[4].is_primary_key());
+    assert!(columns[4].is_unique());
 }
 
 #[test]
 fn initial_schema_plan_defines_catalog_fields_metadata_table() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     assert_eq!(plan.metadata_tables()[2].name(), "_engine_catalog_fields");
     assert_eq!(plan.metadata_tables()[2].columns().len(), 10);
@@ -161,7 +172,8 @@ fn initial_schema_plan_defines_catalog_fields_metadata_table() {
 #[test]
 fn initial_schema_plan_defines_catalog_fields_foreign_keys() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     let catalog_fields = &plan.metadata_tables()[2];
     assert_eq!(catalog_fields.name(), "_engine_catalog_fields");
@@ -200,7 +212,8 @@ fn initial_schema_plan_creates_object_table_for_scalar_fields() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     assert_eq!(plan.object_tables().len(), 1);
 
     let user = &plan.object_tables()[0];
@@ -260,7 +273,8 @@ fn initial_schema_plan_maps_all_scalar_types_to_sqlite_affinities() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let columns = plan.object_tables()[0].columns();
 
     let expected_affinities = [
@@ -308,7 +322,8 @@ fn initial_schema_plan_creates_required_single_link_foreign_key_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let post = &plan.object_tables()[1];
     assert_eq!(post.name(), "post");
 
@@ -359,7 +374,8 @@ fn initial_schema_plan_creates_optional_single_link_foreign_key_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let post = &plan.object_tables()[1];
     assert_eq!(post.name(), "post");
 
@@ -390,7 +406,8 @@ fn schema_scalar_field_can_be_marked_unique() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     assert_eq!(plan.object_tables().len(), 1);
 
     let user = &plan.object_tables()[0];
@@ -430,7 +447,8 @@ fn initial_schema_plan_allows_optional_unique_scalar_field() {
     )])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     assert_eq!(plan.object_tables().len(), 1);
 
     let user = &plan.object_tables()[0];
@@ -466,7 +484,8 @@ fn initial_schema_plan_marks_required_unique_single_link_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     let profile = &plan.object_tables()[1];
     assert_eq!(profile.name(), "profile");
@@ -509,7 +528,8 @@ fn initial_schema_plan_marks_optional_unique_single_link_column() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     let profile = &plan.object_tables()[1];
     assert_eq!(profile.name(), "profile");
@@ -551,7 +571,8 @@ fn initial_schema_plan_creates_multi_link_join_table() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
 
     let relation_tables = plan.relation_tables();
     assert_eq!(relation_tables.len(), 1);
@@ -613,7 +634,8 @@ fn initial_schema_plan_records_catalog_object_rows() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let rows = plan.catalog_object_rows();
 
     assert_eq!(rows.len(), 2);
@@ -659,7 +681,8 @@ fn initial_schema_plan_records_catalog_field_rows() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let rows = plan.catalog_field_rows();
 
     assert_eq!(rows.len(), 6);
@@ -747,7 +770,8 @@ fn initial_schema_plan_can_plan_catalog_object_inserts() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let inserts = plan_catalog_object_inserts(&plan);
 
     assert_eq!(inserts.len(), 2);
@@ -809,7 +833,8 @@ fn initial_schema_plan_can_plan_catalog_field_inserts() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let inserts = plan_catalog_field_inserts(&plan);
 
     assert_eq!(inserts.len(), 6);
@@ -924,7 +949,8 @@ fn initial_schema_plan_creates_single_link_foreign_key_index() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let indexes = plan.indexes();
 
     assert_eq!(indexes.len(), 1);
@@ -958,7 +984,8 @@ fn initial_schema_plan_creates_multi_link_join_table_indexes() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let indexes = plan.indexes();
 
     assert_eq!(indexes.len(), 2);
@@ -999,7 +1026,8 @@ fn inverse_schema_owns_no_storage_and_records_source_metadata() {
             ),
         ])
         .expect("valid inverse schema");
-        let plan = plan_initial_schema(&catalog);
+        let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+            .expect("schema snapshot should serialize");
         assert_eq!(plan.object_tables()[0].columns().len(), 1);
         assert!(plan.object_tables()[0].foreign_keys().is_empty());
         assert!(
@@ -1029,6 +1057,423 @@ fn inverse_schema_owns_no_storage_and_records_source_metadata() {
         assert_eq!(
             inverse.values()[index],
             SQLiteValuePlan::Text("department".into())
+        );
+    }
+}
+
+const VERSION_ID: &str = "9b496060-9a5c-4c7e-9f32-210f698fe497";
+const APPLIED_AT: &str = "2026-08-28T12:34:56.789Z";
+
+const IMPLICIT_ID_SNAPSHOT: &str =
+    r#"{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}"#;
+
+fn initial_version_insert(
+    catalog: &SchemaCatalog,
+    version_id: &str,
+    applied_at: &str,
+) -> Vec<SQLiteInsertPlan> {
+    // Issue #59: the planner accepts caller-supplied application values and
+    // exposes one version insert, following the existing catalog insert API.
+    let plan = plan_initial_schema(catalog, version_id, applied_at)
+        .expect("schema snapshot should serialize");
+    plan_schema_version_insert(&plan)
+}
+
+fn initial_version_row(
+    catalog: &SchemaCatalog,
+    version_id: &str,
+    applied_at: &str,
+) -> crate::SQLiteSchemaVersionRow {
+    let mut rows = plan_initial_schema(catalog, version_id, applied_at)
+        .expect("schema snapshot should serialize")
+        .schema_versions_rows;
+    assert_eq!(
+        rows.len(),
+        1,
+        "initial planning produces exactly one version row"
+    );
+    rows.pop().expect("one version row")
+}
+
+fn version_content(row: &crate::SQLiteSchemaVersionRow) -> (&str, &str) {
+    (&row.schema_snapshot, &row.checksum)
+}
+
+fn version_catalog() -> SchemaCatalog {
+    SchemaCatalog::try_new(vec![
+        ObjectType::new(
+            "User",
+            vec![
+                Field::Link(LinkField::with_inverse(
+                    "posts",
+                    "Post",
+                    Cardinality::Many,
+                    "author",
+                )),
+                Field::Scalar(ScalarField::with_uniqueness(
+                    "name",
+                    ScalarType::Str,
+                    SingleCardinality::Optional,
+                    Uniqueness::Unique,
+                )),
+            ],
+        ),
+        ObjectType::new(
+            "Post",
+            vec![
+                Field::Scalar(ScalarField::new(
+                    "title",
+                    ScalarType::Str,
+                    SingleCardinality::Required,
+                )),
+                Field::Link(LinkField::with_uniqueness(
+                    "author",
+                    "User",
+                    Cardinality::Required,
+                    Uniqueness::Unique,
+                )),
+            ],
+        ),
+    ])
+    .expect("valid schema with scalar, stored link, and inverse fields")
+}
+
+#[test]
+fn initial_schema_version_insert_binds_values_and_includes_implicit_identity() {
+    // Digests were independently computed from the literal UTF-8 snapshots.
+    for (objects, snapshot, checksum) in [
+        (
+            vec![],
+            r#"{"format_version":1,"objects":[]}"#,
+            "f9da3ff0eb7caee22c22eb769ba23ac93e400d922e831da626a064d86091ce53",
+        ),
+        (
+            vec![ObjectType::new("User", vec![])],
+            r#"{"format_version":1,"objects":[{"name":"User","declared_fields":[],"implicit_fields":[{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]}]}"#,
+            "d957a26a164d92f2dcc65b9e7a619746db9a3ff945d1569b40287c60f57b37a2",
+        ),
+    ] {
+        let catalog = SchemaCatalog::try_new(objects).expect("valid empty schema or object");
+        let inserts = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
+        let [insert] = inserts.as_slice() else {
+            panic!("initial planning should return exactly one version INSERT");
+        };
+
+        assert_eq!(insert.table_name(), "_engine_schema_versions");
+        assert_eq!(
+            insert.columns(),
+            [
+                "version_id",
+                "checksum",
+                "applied_at",
+                "schema_snapshot",
+                "version_number"
+            ]
+        );
+        assert_eq!(
+            insert.values(),
+            [
+                SQLiteValuePlan::Text(VERSION_ID.into()),
+                SQLiteValuePlan::Text(checksum.into()),
+                SQLiteValuePlan::Text(APPLIED_AT.into()),
+                SQLiteValuePlan::Text(snapshot.into()),
+                SQLiteValuePlan::Integer(1),
+            ]
+        );
+    }
+}
+
+#[test]
+fn initial_schema_version_snapshot_matches_canonical_bytes_and_sha256() {
+    let catalog = version_catalog();
+    let row = initial_version_row(&catalog, VERSION_ID, APPLIED_AT);
+    let expected = concat!(
+        r#"{"format_version":1,"objects":["#,
+        r#"{"name":"Post","declared_fields":["#,
+        r#"{"name":"author","kind":"link","target_type":"User","cardinality":"required","unique":true,"inverse_field":null},"#,
+        r#"{"name":"title","kind":"scalar","scalar_type":"str","cardinality":"required","unique":false}"#,
+        r#"],"implicit_fields":["#,
+        r#"{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]},"#,
+        r#"{"name":"User","declared_fields":["#,
+        r#"{"name":"name","kind":"scalar","scalar_type":"str","cardinality":"optional","unique":true},"#,
+        r#"{"name":"posts","kind":"link","target_type":"Post","cardinality":"many","unique":false,"inverse_field":"author"}"#,
+        r#"],"implicit_fields":["#,
+        r#"{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]}"#,
+        r#"]}"#,
+    );
+
+    assert_eq!(
+        version_content(&row),
+        (
+            expected,
+            "109e99fab48c6de532d173f943f7d5b23d1ce479852e92eb0dfcb1c46a803fd9"
+        )
+    );
+}
+
+#[test]
+fn initial_schema_version_snapshot_ignores_declaration_order_and_catalog_ids() {
+    let catalog = version_catalog();
+    let original = initial_version_row(&catalog, VERSION_ID, APPLIED_AT);
+
+    for (reverse_objects, reverse_fields) in [(true, false), (false, true), (true, true)] {
+        let mut objects = catalog
+            .object_types()
+            .iter()
+            .map(|object| {
+                let mut fields = object.declared_fields().to_vec();
+                if reverse_fields {
+                    fields.reverse();
+                }
+                ObjectType::new(object.name(), fields)
+            })
+            .collect::<Vec<_>>();
+        if reverse_objects {
+            objects.reverse();
+        }
+        let reordered = SchemaCatalog::try_new(objects).expect("reordering preserves validity");
+        let row = initial_version_row(&reordered, VERSION_ID, APPLIED_AT);
+
+        assert_eq!(version_content(&row), version_content(&original));
+    }
+}
+
+#[test]
+fn initial_schema_version_snapshot_preserves_every_scalar_type() {
+    for (scalar_type, name) in [
+        (ScalarType::Str, "str"),
+        (ScalarType::Int64, "int64"),
+        (ScalarType::Float64, "float64"),
+        (ScalarType::Bool, "bool"),
+        (ScalarType::Uuid, "uuid"),
+        (ScalarType::DateTime, "datetime"),
+    ] {
+        let catalog = SchemaCatalog::try_new(vec![ObjectType::new(
+            "Sample",
+            vec![Field::Scalar(ScalarField::new(
+                "value",
+                scalar_type,
+                SingleCardinality::Optional,
+            ))],
+        )])
+        .expect("valid scalar schema");
+        let row = initial_version_row(&catalog, VERSION_ID, APPLIED_AT);
+        let expected = alloc::format!(
+            "{{\"format_version\":1,\"objects\":[{{\"name\":\"Sample\",\"declared_fields\":[{{\"name\":\"value\",\"kind\":\"scalar\",\"scalar_type\":\"{name}\",\"cardinality\":\"optional\",\"unique\":false}}],\"implicit_fields\":[{IMPLICIT_ID_SNAPSHOT}]}}]}}"
+        );
+
+        assert_eq!(version_content(&row).0, expected);
+    }
+}
+
+#[test]
+fn initial_schema_version_snapshot_sorts_names_by_utf8_without_normalizing() {
+    // U+E000 sorts before U+10000 in UTF-8, unlike UTF-16 ordering.
+    let catalog = SchemaCatalog::try_new(
+        ["\u{10000}", "\u{e000}", "é", "e\u{301}", "a", "A"]
+            .into_iter()
+            .map(|name| ObjectType::new(name, vec![]))
+            .collect(),
+    )
+    .expect("case and canonically equivalent Unicode names remain distinct");
+    let row = initial_version_row(&catalog, VERSION_ID, APPLIED_AT);
+    let expected = alloc::format!(
+        concat!(
+            "{{\"format_version\":1,\"objects\":[{{\"name\":\"A\",\"declared_fields\":[],\"implicit_fields\":[{0}]}},",
+            "{{\"name\":\"a\",\"declared_fields\":[],\"implicit_fields\":[{0}]}},{{\"name\":\"e\u{301}\",\"declared_fields\":[],\"implicit_fields\":[{0}]}},",
+            "{{\"name\":\"é\",\"declared_fields\":[],\"implicit_fields\":[{0}]}},{{\"name\":\"\u{e000}\",\"declared_fields\":[],\"implicit_fields\":[{0}]}},",
+            "{{\"name\":\"\u{10000}\",\"declared_fields\":[],\"implicit_fields\":[{0}]}}]}}",
+        ),
+        IMPLICIT_ID_SNAPSHOT,
+    );
+
+    assert_eq!(version_content(&row).0, expected);
+}
+
+#[test]
+fn initial_schema_version_snapshot_escapes_names_and_link_references() {
+    let name = "\0\u{1}\u{1f}\u{8}\t\n\u{c}\r\"\\/한글\u{2028}";
+    let escaped = concat!(r#"\u0000\u0001\u001f\b\t\n\f\r\"\\/한글"#, "\u{2028}");
+    let catalog = SchemaCatalog::try_new(vec![ObjectType::new(
+        name,
+        vec![
+            Field::Link(LinkField::with_inverse(
+                "back",
+                name,
+                Cardinality::Many,
+                name,
+            )),
+            Field::Link(LinkField::new(name, name, Cardinality::Optional)),
+        ],
+    )])
+    .expect("catalog names are not limited to parser identifiers");
+    let row = initial_version_row(&catalog, VERSION_ID, APPLIED_AT);
+    let expected = alloc::format!(
+        "{{\"format_version\":1,\"objects\":[{{\"name\":\"{escaped}\",\"declared_fields\":[{{\"name\":\"{escaped}\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"optional\",\"unique\":false,\"inverse_field\":null}},{{\"name\":\"back\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"many\",\"unique\":false,\"inverse_field\":\"{escaped}\"}}],\"implicit_fields\":[{IMPLICIT_ID_SNAPSHOT}]}}]}}"
+    );
+
+    assert_eq!(version_content(&row).0, expected);
+}
+
+#[test]
+fn initial_schema_version_content_changes_with_scalar_semantics() {
+    let catalog = |name, scalar_type, cardinality, uniqueness| {
+        SchemaCatalog::try_new(vec![ObjectType::new(
+            "Sample",
+            vec![Field::Scalar(ScalarField::with_uniqueness(
+                name,
+                scalar_type,
+                cardinality,
+                uniqueness,
+            ))],
+        )])
+        .expect("valid scalar variant")
+    };
+    let original = initial_version_row(
+        &catalog(
+            "value",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+            Uniqueness::NotUnique,
+        ),
+        VERSION_ID,
+        APPLIED_AT,
+    );
+    for (name, scalar_type, cardinality, uniqueness) in [
+        (
+            "renamed",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+            Uniqueness::NotUnique,
+        ),
+        (
+            "value",
+            ScalarType::Uuid,
+            SingleCardinality::Optional,
+            Uniqueness::NotUnique,
+        ),
+        (
+            "value",
+            ScalarType::Str,
+            SingleCardinality::Required,
+            Uniqueness::NotUnique,
+        ),
+        (
+            "value",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+            Uniqueness::Unique,
+        ),
+    ] {
+        let changed = initial_version_row(
+            &catalog(name, scalar_type, cardinality, uniqueness),
+            VERSION_ID,
+            APPLIED_AT,
+        );
+        assert_ne!(version_content(&original).0, version_content(&changed).0);
+        assert_ne!(version_content(&original).1, version_content(&changed).1);
+    }
+}
+
+#[test]
+fn initial_schema_version_content_distinguishes_link_and_catalog_changes() {
+    let fields = vec![
+        vec![],
+        vec![Field::Scalar(ScalarField::new(
+            "value",
+            ScalarType::Uuid,
+            SingleCardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::new(
+            "value",
+            "A",
+            Cardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::new(
+            "value",
+            "B",
+            Cardinality::Optional,
+        ))],
+        vec![Field::Link(LinkField::new(
+            "value",
+            "A",
+            Cardinality::Required,
+        ))],
+        vec![Field::Link(LinkField::new("value", "A", Cardinality::Many))],
+        vec![Field::Link(LinkField::with_uniqueness(
+            "value",
+            "A",
+            Cardinality::Optional,
+            Uniqueness::Unique,
+        ))],
+        vec![Field::Link(LinkField::with_inverse(
+            "value",
+            "A",
+            Cardinality::Many,
+            "owner",
+        ))],
+        vec![Field::Link(LinkField::with_inverse(
+            "value",
+            "A",
+            Cardinality::Many,
+            "editor",
+        ))],
+    ];
+    let mut variants = fields
+        .into_iter()
+        .map(|fields| {
+            SchemaCatalog::try_new(vec![
+                ObjectType::new("Root", fields),
+                ObjectType::new(
+                    "A",
+                    vec![
+                        Field::Link(LinkField::new("owner", "Root", Cardinality::Optional)),
+                        Field::Link(LinkField::new("editor", "Root", Cardinality::Optional)),
+                    ],
+                ),
+                ObjectType::new("B", vec![]),
+            ])
+            .expect("valid scalar, stored link, or inverse variant")
+        })
+        .collect::<Vec<_>>();
+    let mut objects = variants[0].object_types().to_vec();
+    objects.push(ObjectType::new("Extra", vec![]));
+    variants.push(SchemaCatalog::try_new(objects).expect("valid added object"));
+    let mut objects = variants[0].object_types().to_vec();
+    objects[2] = ObjectType::new("Renamed", vec![]);
+    variants.push(SchemaCatalog::try_new(objects).expect("valid renamed unreferenced object"));
+    let rows = variants
+        .iter()
+        .map(|catalog| initial_version_row(catalog, VERSION_ID, APPLIED_AT))
+        .collect::<Vec<_>>();
+
+    for (index, row) in rows.iter().enumerate() {
+        for other in &rows[..index] {
+            assert_ne!(version_content(row).0, version_content(other).0);
+            assert_ne!(version_content(row).1, version_content(other).1);
+        }
+    }
+}
+
+#[test]
+fn initial_schema_version_content_is_independent_of_application_values() {
+    let catalog = version_catalog();
+    let preview = initial_version_row(&catalog, "<version-id-on-apply>", "<applied-at-on-apply>");
+    assert_eq!(preview.version_id, "<version-id-on-apply>");
+    assert_eq!(preview.applied_at, "<applied-at-on-apply>");
+
+    for (version_id, applied_at) in [
+        (VERSION_ID, APPLIED_AT),
+        ("d735740d-6058-4531-bd1c-b9b2c2a5ecfb", APPLIED_AT),
+        (VERSION_ID, "2026-08-29T00:00:00.000Z"),
+    ] {
+        let row = initial_version_row(&catalog, version_id, applied_at);
+        assert_eq!(row.version_id, version_id);
+        assert_eq!(row.applied_at, applied_at);
+        assert_eq!(version_content(&row), version_content(&preview));
+        assert_eq!(
+            version_content(&row),
+            version_content(&initial_version_row(&catalog, version_id, applied_at))
         );
     }
 }

@@ -14,12 +14,17 @@ use sqlite_schema_plan::{
     SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyAction, SQLiteForeignKeyPlan,
     SQLiteIndexPlan, SQLitePrimaryKeyPlan, SQLiteTablePlan, SQLiteValuePlan,
     plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
+    plan_schema_version_insert,
 };
+
+const VERSION_ID: &str = "9b496060-9a5c-4c7e-9f32-210f698fe497";
+const APPLIED_AT: &str = "2026-08-28T12:34:56.789Z";
 
 #[test]
 fn render_create_table_for_catalog_fields_uses_composite_primary_key() {
     let catalog = SchemaCatalog::try_new(vec![]).unwrap();
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let catalog_fields = &plan.metadata_tables()[2];
 
     let sql = render_create_table(catalog_fields);
@@ -107,7 +112,8 @@ fn render_create_index_for_single_link_foreign_key_index() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let index = &plan.indexes()[0];
 
     let sql = render_create_index(index);
@@ -143,7 +149,8 @@ fn render_create_unique_index_uses_create_unique_index() {
 fn render_catalog_object_insert_uses_placeholders() {
     let catalog = SchemaCatalog::try_new(vec![ObjectType::new("User", vec![])]).unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let inserts = plan_catalog_object_inserts(&plan);
     let rendered = render_insert(&inserts[0]);
 
@@ -164,7 +171,8 @@ fn render_catalog_object_insert_uses_placeholders() {
 fn render_catalog_field_insert_uses_placeholders_and_preserves_null_values() {
     let catalog = SchemaCatalog::try_new(vec![ObjectType::new("User", vec![])]).unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let inserts = plan_catalog_field_inserts(&plan);
     let rendered = render_insert(&inserts[0]);
 
@@ -187,6 +195,39 @@ fn render_catalog_field_insert_uses_placeholders_and_preserves_null_values() {
             SQLiteValuePlan::Null,
         ]
     )
+}
+
+#[test]
+fn render_initial_schema_includes_version_insert_for_empty_catalog() {
+    let catalog = SchemaCatalog::try_new(vec![]).expect("valid empty catalog");
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
+    let statements = render_initial_schema(&plan);
+
+    assert_eq!(
+        statements.len(),
+        4,
+        "three metadata tables and one version INSERT"
+    );
+    let RenderedSchemaStatement::Insert(insert) = &statements[3] else {
+        panic!("the version INSERT must be last");
+    };
+    assert_eq!(
+        insert.sql(),
+        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\", \"version_number\") VALUES (?, ?, ?, ?, ?)"
+    );
+    assert_eq!(
+        insert.values(),
+        [
+            SQLiteValuePlan::Text(VERSION_ID.into()),
+            SQLiteValuePlan::Text(
+                "f9da3ff0eb7caee22c22eb769ba23ac93e400d922e831da626a064d86091ce53".into()
+            ),
+            SQLiteValuePlan::Text(APPLIED_AT.into()),
+            SQLiteValuePlan::Text(r#"{"format_version":1,"objects":[]}"#.into()),
+            SQLiteValuePlan::Integer(1),
+        ]
+    );
 }
 
 #[test]
@@ -214,14 +255,22 @@ fn render_initial_schema_outputs_deterministic_sql() {
     ])
     .unwrap();
 
-    let plan = plan_initial_schema(&catalog);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let first = render_initial_schema(&plan);
     let second = render_initial_schema(&plan);
 
     assert_eq!(first.len(), second.len());
-    assert_eq!(first.len(), 13);
+    assert_eq!(first.len(), 14);
     for (first_statement, second_statement) in first.iter().zip(second.iter()) {
         assert_eq!(first_statement.sql(), second_statement.sql());
+        match (first_statement, second_statement) {
+            (RenderedSchemaStatement::Insert(first), RenderedSchemaStatement::Insert(second)) => {
+                assert_eq!(first.values(), second.values());
+            }
+            (RenderedSchemaStatement::Sql(_), RenderedSchemaStatement::Sql(_)) => {}
+            _ => panic!("repeated rendering must preserve statement kinds"),
+        }
     }
 
     assert!(
@@ -252,6 +301,17 @@ fn render_initial_schema_outputs_deterministic_sql() {
     assert_eq!(
         first[12].sql(),
         "CREATE INDEX \"post__author_id_idx\" ON \"post\" (\"author_id\")"
+    );
+    let RenderedSchemaStatement::Insert(version) = &first[13] else {
+        panic!("the version INSERT must follow all tables, catalog rows, and indexes");
+    };
+    assert_eq!(
+        version.sql(),
+        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\", \"version_number\") VALUES (?, ?, ?, ?, ?)"
+    );
+    assert_eq!(
+        version.values(),
+        plan_schema_version_insert(&plan)[0].values()
     );
 
     match &first[5] {

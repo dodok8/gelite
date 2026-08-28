@@ -12,8 +12,11 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    SQLiteRunner, apply_schema_statements, native::NativeSQLiteRunner,
-    tests::fixtures::rendered_post_schema_statements,
+    SQLiteRunner, SQLiteRunnerError, apply_schema_statements,
+    native::NativeSQLiteRunner,
+    tests::fixtures::{
+        APPLIED_AT, VERSION_ID, native_runner_with_post_schema, rendered_post_schema_statements,
+    },
 };
 
 #[test]
@@ -430,6 +433,13 @@ fn native_runner_can_apply_rendered_initial_schema() {
     assert_eq!(runner.table_exists("_engine_catalog_fields"), Ok(true));
     assert_eq!(runner.table_exists("post"), Ok(true));
 
+    let version = runner
+        .first_three_column_row(
+            "SELECT COUNT(*), MIN(version_id), NULL FROM _engine_schema_versions",
+        )
+        .expect("applied version should be readable");
+    assert_eq!(version, Some((1, VERSION_ID.to_string(), None)));
+
     let row = runner
         .first_three_column_row(
             "SELECT object_id, name, NULL FROM _engine_catalog_objects WHERE name = 'Post'",
@@ -547,6 +557,354 @@ fn native_runner_can_load_schema_catalog_from_metadata() {
 }
 
 #[test]
+fn native_schema_verification_accepts_stored_version_without_changing_it() {
+    let mut runner = native_runner_with_post_schema();
+    let query = SQLiteStatement::new("SELECT * FROM _engine_schema_versions", vec![]);
+    let version_before = runner.execute_select(&query).expect("version should load");
+    let catalog_before = runner.load_schema_catalog().expect("catalog should load");
+
+    runner
+        .verify_schema_version()
+        .expect("stored checksum and logical catalog should match without a source file");
+    runner
+        .verify_schema_version()
+        .expect("verification should be repeatable");
+
+    assert_eq!(runner.execute_select(&query), Ok(version_before));
+    assert_eq!(runner.load_schema_catalog(), Ok(catalog_before));
+    runner
+        .begin_transaction()
+        .expect("successful verification should not leave a transaction open");
+    runner
+        .rollback_transaction()
+        .expect("transaction should end");
+}
+
+#[test]
+fn native_schema_verification_accepts_empty_catalog() {
+    let catalog = schema_model::SchemaCatalog::try_new(vec![]).expect("empty catalog is valid");
+    let plan = sqlite_schema_plan::plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("empty snapshot should serialize");
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+    apply_schema_statements(
+        &mut runner,
+        &sqlite_schema_sqlgen::render_initial_schema(&plan),
+    )
+    .expect("empty schema should apply");
+
+    runner
+        .verify_schema_version()
+        .expect("an empty catalog still has a valid initial version");
+}
+
+#[test]
+fn native_schema_verification_rejects_unsupported_snapshot_format() {
+    let catalog = schema_model::SchemaCatalog::try_new(vec![]).expect("empty catalog is valid");
+    let plan = sqlite_schema_plan::plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("empty snapshot should serialize");
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+    apply_schema_statements(
+        &mut runner,
+        &sqlite_schema_sqlgen::render_initial_schema(&plan),
+    )
+    .expect("empty schema should apply");
+    // SHA-256 of the exact unsupported-format bytes; corruption must not fail only on checksum.
+    runner
+        .execute_with_values(
+            "UPDATE _engine_schema_versions SET schema_snapshot = ?, checksum = ?",
+            &[
+                SQLiteValuePlan::Text(r#"{"format_version":2,"objects":[]}"#.to_string()),
+                SQLiteValuePlan::Text(
+                    "bf6ae26e250cb16a187eaf0e60d10d508cf06d3ddbc9223357181c8bc6a5b93b".to_string(),
+                ),
+            ],
+        )
+        .expect("unsupported snapshot and matching checksum should be stored");
+
+    let error = runner
+        .verify_schema_version()
+        .expect_err("unsupported format versions must not be reinterpreted as format v1");
+    assert!(matches!(
+        error,
+        SQLiteRunnerError::SchemaVerificationFailed { .. }
+    ));
+}
+
+#[test]
+fn native_schema_verification_rejects_checksum_tampering_and_ends_transaction() {
+    let mut runner = native_runner_with_post_schema();
+    // Raw metadata writes model corruption; normal schema application cannot produce it.
+    runner
+        .execute_with_values(
+            "UPDATE _engine_schema_versions SET checksum = ?",
+            &[SQLiteValuePlan::Text("0".repeat(64))],
+        )
+        .expect("checksum should be corrupted");
+    let query = SQLiteStatement::new("SELECT * FROM _engine_schema_versions", vec![]);
+    let corrupted = runner.execute_select(&query).expect("version should load");
+
+    let error = runner
+        .verify_schema_version()
+        .expect_err("checksum corruption should be rejected");
+
+    assert!(
+        matches!(error, SQLiteRunnerError::SchemaVerificationFailed { .. }),
+        "checksum corruption should be a verification failure: {error:?}"
+    );
+    assert!(
+        !error.message().is_empty(),
+        "verification error should explain the failure"
+    );
+    assert_eq!(runner.execute_select(&query), Ok(corrupted));
+    runner
+        .begin_transaction()
+        .expect("failed verification should not leave a transaction open");
+    runner
+        .rollback_transaction()
+        .expect("transaction should end");
+}
+
+#[test]
+fn native_schema_verification_rejects_invalid_utf8_and_ends_transaction() {
+    // Raw SQL can store invalid UTF-8 in TEXT; typed schema plans cannot produce it.
+    for mutation in [
+        "UPDATE _engine_schema_versions SET schema_snapshot = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_schema_versions SET checksum = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_schema_versions SET version_id = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_schema_versions SET applied_at = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_catalog_objects SET name = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_catalog_fields SET name = CAST(x'80' AS TEXT) WHERE name = 'title'",
+        "UPDATE _engine_catalog_fields SET scalar_type = CAST(x'80' AS TEXT) WHERE name = 'title'",
+    ] {
+        let mut runner = native_runner_with_post_schema();
+        runner
+            .execute(mutation)
+            .expect("metadata should be corrupted");
+
+        let error = runner
+            .verify_schema_version()
+            .expect_err("invalid UTF-8 must be rejected before creating a Rust string");
+        assert!(matches!(error, SQLiteRunnerError::ExecutionFailed { .. }));
+        assert!(
+            error.message().contains("invalid UTF-8"),
+            "{mutation}: {error:?}"
+        );
+        runner
+            .begin_transaction()
+            .expect("invalid UTF-8 must not leave the verification transaction open");
+        runner
+            .rollback_transaction()
+            .expect("test transaction should end");
+    }
+}
+
+#[test]
+fn native_schema_verification_hashes_exact_stored_snapshot_bytes() {
+    let mut runner = native_runner_with_post_schema();
+    // Preserve the JSON meaning while changing the stored bytes without updating the hash.
+    runner
+        .execute("UPDATE _engine_schema_versions SET schema_snapshot = schema_snapshot || ' '")
+        .expect("snapshot whitespace should be corrupted");
+
+    let error = runner
+        .verify_schema_version()
+        .expect_err("verification must not normalize snapshot bytes before hashing");
+    assert_eq!(error.message(), "stored schema snapshot checksum mismatch");
+}
+
+#[test]
+fn native_schema_verification_rejects_valid_snapshot_for_another_catalog() {
+    let mut runner = native_runner_with_post_schema();
+    let other_catalog =
+        schema_model::SchemaCatalog::try_new(vec![]).expect("empty catalog is valid");
+    let other_plan =
+        sqlite_schema_plan::plan_initial_schema(&other_catalog, VERSION_ID, APPLIED_AT)
+            .expect("other snapshot should serialize");
+    // Replace only the version with a correctly hashed snapshot; keep the Post catalog.
+    runner
+        .execute("DELETE FROM _engine_schema_versions")
+        .expect("version should be removed");
+    for insert in sqlite_schema_plan::plan_schema_version_insert(&other_plan) {
+        let rendered = sqlite_schema_sqlgen::render_insert(&insert);
+        runner
+            .execute_with_values(rendered.sql(), rendered.values())
+            .expect("other version should be stored");
+    }
+
+    let error = runner
+        .verify_schema_version()
+        .expect_err("a valid checksum alone does not prove that the logical catalog matches");
+    assert!(matches!(
+        error,
+        SQLiteRunnerError::SchemaVerificationFailed { .. }
+    ));
+}
+
+#[test]
+fn native_schema_verification_rejects_logical_catalog_tampering() {
+    let mut runner = native_runner_with_post_schema();
+    // This remains a valid catalog, but differs from the recorded required field.
+    runner
+        .execute("UPDATE _engine_catalog_fields SET cardinality = 'optional' WHERE name = 'title'")
+        .expect("catalog cardinality should change");
+    runner
+        .load_schema_catalog()
+        .expect("changed catalog remains valid");
+
+    runner
+        .verify_schema_version()
+        .expect_err("logical catalog changes should be detected even when the stored hash matches");
+}
+
+#[test]
+fn native_schema_verification_rejects_invalid_catalog_metadata() {
+    let mut runner = native_runner_with_post_schema();
+    // Invalid metadata has no valid schema-planning representation.
+    runner
+        .execute("UPDATE _engine_catalog_fields SET scalar_type = 'unknown' WHERE name = 'title'")
+        .expect("catalog scalar type should be corrupted");
+
+    runner
+        .verify_schema_version()
+        .expect_err("catalog loading errors should become verification errors, not panics");
+}
+
+#[test]
+fn native_schema_verification_rejects_incompatible_field_metadata() {
+    // Metadata writes bypass the typed schema planner.
+    for sql in [
+        "UPDATE _engine_catalog_fields SET target_object_id = 1 WHERE name = 'title'",
+        "UPDATE _engine_catalog_fields SET is_unique = 'true' WHERE name = 'title'",
+    ] {
+        let mut runner = native_runner_with_post_schema();
+        runner
+            .execute(sql)
+            .expect("field metadata should be corrupted");
+        runner
+            .verify_schema_version()
+            .expect_err("invalid field metadata must not be normalized away");
+    }
+}
+
+#[test]
+fn native_schema_verification_rejects_database_without_version_table() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+
+    runner
+        .verify_schema_version()
+        .expect_err("an unapplied database has no stored version to verify");
+
+    assert_eq!(runner.table_exists("_engine_schema_versions"), Ok(false));
+    runner
+        .begin_transaction()
+        .expect("missing-table failure should not leave a transaction open");
+    runner
+        .rollback_transaction()
+        .expect("transaction should end");
+}
+
+#[test]
+fn native_schema_verification_rejects_missing_version_row() {
+    let mut runner = native_runner_with_post_schema();
+    // Normal initial application always inserts a version row.
+    runner
+        .execute("DELETE FROM _engine_schema_versions")
+        .expect("version should be removed");
+
+    runner
+        .verify_schema_version()
+        .expect_err("missing baseline must not be treated as successful verification");
+}
+
+#[test]
+fn native_schema_verification_preserves_caller_transaction() {
+    let mut runner = native_runner_with_post_schema();
+    runner
+        .begin_transaction()
+        .expect("caller transaction should begin");
+    runner
+        .execute("INSERT INTO post (id, title) VALUES ('post-1', 'Draft')")
+        .expect("caller write should execute");
+
+    runner
+        .verify_schema_version()
+        .expect_err("verification requires its own read transaction");
+    runner
+        .commit_transaction()
+        .expect("verification must not roll back or commit caller work");
+    assert_eq!(
+        runner.first_three_column_row("SELECT COUNT(*), MIN(title), NULL FROM post"),
+        Ok(Some((1, "Draft".to_string(), None)))
+    );
+}
+
+#[test]
+fn native_schema_verification_checks_only_latest_version() {
+    let mut runner = native_runner_with_post_schema();
+    // Raw history fixtures stand in for future non-initial migrations.
+    runner.execute(
+        "INSERT INTO _engine_schema_versions (version_id, checksum, applied_at, schema_snapshot, version_number)
+         SELECT '11111111-1111-4111-8111-111111111111', checksum, applied_at, schema_snapshot, 2
+         FROM _engine_schema_versions",
+    ).expect("latest version should be stored");
+    runner.execute("UPDATE _engine_schema_versions SET checksum = 'old corruption' WHERE version_number = 1")
+        .expect("older history should be corrupted");
+
+    runner
+        .verify_schema_version()
+        .expect("valid latest version should match the catalog");
+    runner.execute("UPDATE _engine_schema_versions SET checksum = 'latest corruption' WHERE version_number = 2")
+        .expect("latest checksum should be corrupted");
+    let error = runner
+        .verify_schema_version()
+        .expect_err("latest corruption should be detected");
+    assert_eq!(error.message(), "stored schema snapshot checksum mismatch");
+}
+
+#[test]
+fn native_schema_verification_rejects_missing_or_corrupt_implicit_identity() {
+    // Metadata corruption must not disappear when ObjectType recreates the implicit id.
+    for sql in [
+        "DELETE FROM _engine_catalog_fields WHERE name = 'id'",
+        "UPDATE _engine_catalog_fields SET scalar_type = 'str' WHERE name = 'id'",
+        "UPDATE _engine_catalog_fields SET is_unique = 1 WHERE name = 'id'",
+        "INSERT INTO _engine_catalog_fields SELECT object_id, 99, 'extra_id', field_kind, cardinality, scalar_type, target_object_id, is_implicit, is_unique, inverse_field_name FROM _engine_catalog_fields WHERE name = 'id'",
+    ] {
+        let mut runner = native_runner_with_post_schema();
+        runner
+            .execute(sql)
+            .expect("implicit identity should be corrupted");
+        let error = runner
+            .verify_schema_version()
+            .expect_err("corrupt implicit identity must be rejected");
+        assert!(error.message().contains("implicit UUID id"), "{error:?}");
+        runner
+            .begin_transaction()
+            .expect("verification failure should release its transaction");
+        runner
+            .rollback_transaction()
+            .expect("test transaction should end");
+    }
+}
+
+#[test]
+fn native_schema_verification_rejects_orphaned_catalog_fields() {
+    let mut runner = native_runner_with_post_schema();
+    // External writers can bypass SQLite foreign-key enforcement.
+    runner
+        .execute("PRAGMA foreign_keys = OFF")
+        .expect("disable foreign keys for corruption fixture");
+    runner
+        .execute("UPDATE _engine_catalog_fields SET object_id = 99 WHERE name = 'title'")
+        .expect("orphan field should be stored");
+
+    let error = runner
+        .verify_schema_version()
+        .expect_err("orphan fields must not be silently ignored");
+    assert!(error.message().contains("unknown owner object"));
+}
+
+#[test]
 fn native_runner_can_execute_select_statement_with_bind_values() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
 
@@ -578,6 +936,39 @@ fn native_runner_can_execute_select_statement_with_bind_values() {
         result.rows(),
         &[vec![crate::SQLiteCellValue::Text("Hello".to_string())]]
     );
+}
+
+#[test]
+fn native_runner_reads_text_bytes_without_loss_and_rejects_invalid_utf8() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+    for value in ["", "타치바나 셰리", "before\0after"] {
+        let query = SQLiteStatement::new(
+            "SELECT ? AS value",
+            vec![sqlite_query_sqlgen::SQLiteBindValue::String(
+                value.to_string(),
+            )],
+        );
+        let result = runner
+            .execute_select(&query)
+            .expect("valid UTF-8 should load");
+        assert_eq!(
+            result.rows(),
+            &[vec![crate::SQLiteCellValue::Text(value.to_string())]]
+        );
+    }
+
+    // Invalid text requires raw SQL because typed string bindings always contain UTF-8.
+    let sql = "SELECT 1, CAST(x'80' AS TEXT), NULL";
+    for error in [
+        runner
+            .execute_select(&SQLiteStatement::new(sql, vec![]))
+            .expect_err("invalid query text"),
+        runner
+            .first_three_column_row(sql)
+            .expect_err("invalid smoke-test text"),
+    ] {
+        assert!(error.message().contains("invalid UTF-8"), "{error:?}");
+    }
 }
 
 #[test]
@@ -779,7 +1170,8 @@ fn inverse_catalog_round_trips_and_rejects_corrupt_metadata() {
         ),
     ])
     .expect("valid schema");
-    let plan = sqlite_schema_plan::plan_initial_schema(&catalog);
+    let plan = sqlite_schema_plan::plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     let statements = sqlite_schema_sqlgen::render_initial_schema(&plan);
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
     apply_schema_statements(&mut runner, &statements).expect("apply schema");
@@ -787,6 +1179,9 @@ fn inverse_catalog_round_trips_and_rejects_corrupt_metadata() {
         runner.load_schema_catalog().expect("reload catalog"),
         catalog
     );
+    runner
+        .verify_schema_version()
+        .expect("inverse links should match the stored snapshot");
     for metadata in ["field_kind = 'scalar'", "is_implicit = 1", "is_unique = 1"] {
         runner
             .execute(&format!(

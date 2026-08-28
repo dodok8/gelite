@@ -1257,10 +1257,12 @@ shows drift.
 - `checksum`
 - `applied_at`
 - `schema_snapshot`
+- `version_number`
 
-The first schema plan can create this table without inserting a version row.
-Once initial apply execution exists, the project needs a deterministic snapshot
-format and checksum rule.
+Initial schema plans insert the canonical snapshot and checksum with version
+number `1`. The native runner selects the highest version number when reading
+the latest record. UUIDs and timestamps are not ordering keys. Non-initial
+migration application and upgrades of older metadata tables remain deferred.
 
 ### Transaction boundary
 

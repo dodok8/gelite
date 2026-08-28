@@ -44,10 +44,11 @@ Parse first:
 - required single links
 - multi links
 - multiple object types in one file
+- `#` line comments, ignored when building the logical catalog
 
 Defer:
 
-- comments
+- block comments
 - string literals
 - default values
 - schema modules or namespaces
@@ -444,9 +445,9 @@ Assert the parse error wraps `schema_model::SchemaError::DuplicateTypeName`.
 
 ## Implementation Notes
 
-Keep each parser step small and test-backed. Do not add comment parsing,
-formatter support, migration syntax, or recovery until the direct
-`SchemaCatalog` path works end to end.
+Keep each parser step small and test-backed. Line comments are supported for
+the deterministic schema identity contract in issue #59. Block comments,
+formatter support, migration syntax, and recovery remain deferred.
 
 When syntax and semantic validation overlap, prefer this boundary:
 

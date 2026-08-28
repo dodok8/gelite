@@ -57,6 +57,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
 
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\r\n\f]+")]
+#[logos(skip(r"#[^\r\n]*", allow_greedy = true))]
 enum RawTokenKind {
     #[token("type")]
     Type,

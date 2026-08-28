@@ -29,6 +29,10 @@ schema language while the syntax is still allowed to change before 1.0.
 
 A schema file is a sequence of top-level `type` declarations.
 
+Whitespace and `#` line comments may appear between tokens. A comment extends
+from `#` to the next carriage return, line feed, or end of file. Comments do
+not affect the logical catalog or schema snapshot. Block comments are not supported.
+
 Example:
 
 ```text

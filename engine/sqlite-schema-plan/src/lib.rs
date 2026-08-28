@@ -13,6 +13,8 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use schema_model::{Cardinality, Field, ScalarType, SchemaCatalog};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 const SCHEMA_VERSIONS_TABLE: &str = "_engine_schema_versions";
 const CATALOG_OBJECTS_TABLE: &str = "_engine_catalog_objects";
@@ -30,6 +32,7 @@ pub struct SQLiteSchemaPlan {
     indexes: Vec<SQLiteIndexPlan>,
     catalog_object_rows: Vec<SQLiteCatalogObjectRow>,
     catalog_field_rows: Vec<SQLiteCatalogFieldRow>,
+    schema_versions_rows: Vec<SQLiteSchemaVersionRow>,
 }
 
 impl SQLiteSchemaPlan {
@@ -55,6 +58,10 @@ impl SQLiteSchemaPlan {
 
     pub fn indexes(&self) -> &[SQLiteIndexPlan] {
         &self.indexes
+    }
+
+    pub fn schema_versions_rows(&self) -> &[SQLiteSchemaVersionRow] {
+        &self.schema_versions_rows
     }
 }
 
@@ -133,7 +140,12 @@ impl SQLiteTablePlan {
 
 /// Builds the SQLite schema plan for applying a validated schema catalog to an
 /// empty SQLite database.
-pub fn plan_initial_schema(catalog: &SchemaCatalog) -> SQLiteSchemaPlan {
+/// Returns an error if the schema snapshot cannot be serialized as JSON.
+pub fn plan_initial_schema(
+    catalog: &SchemaCatalog,
+    version_id: &str,
+    applied_at: &str,
+) -> Result<SQLiteSchemaPlan, serde_json::Error> {
     let metadata_tables = vec![
         SQLiteTablePlan::new(
             SCHEMA_VERSIONS_TABLE.to_string(),
@@ -165,6 +177,13 @@ pub fn plan_initial_schema(catalog: &SchemaCatalog) -> SQLiteSchemaPlan {
                     false,
                     false,
                     false,
+                ),
+                SQLiteColumnPlan::new(
+                    "version_number".to_string(),
+                    SQLiteAffinity::Integer,
+                    false,
+                    false,
+                    true,
                 ),
             ],
         ),
@@ -271,15 +290,17 @@ pub fn plan_initial_schema(catalog: &SchemaCatalog) -> SQLiteSchemaPlan {
     let catalog_object_rows = plan_catalog_object_rows(catalog);
     let catalog_field_rows = plan_catalog_field_rows(catalog);
     let indexes = plan_indexes(catalog);
+    let schema_versions_rows = plan_schema_version_rows(catalog, version_id, applied_at)?;
 
-    SQLiteSchemaPlan {
+    Ok(SQLiteSchemaPlan {
         metadata_tables,
         object_tables,
         relation_tables,
         indexes,
         catalog_object_rows,
         catalog_field_rows,
-    }
+        schema_versions_rows,
+    })
 }
 
 fn plan_catalog_field_rows(catalog: &SchemaCatalog) -> Vec<SQLiteCatalogFieldRow> {
@@ -879,6 +900,162 @@ impl SQLiteCatalogFieldRow {
     }
 }
 
+pub struct SQLiteSchemaVersionRow {
+    version_id: String,
+    checksum: String,
+    applied_at: String,
+    schema_snapshot: String,
+    version_number: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum SnapshotScalarType {
+    Str,
+    Int64,
+    Float64,
+    Bool,
+    Uuid,
+    DateTime,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum SnapshotCardinality {
+    Optional,
+    Required,
+    Many,
+}
+
+#[derive(Serialize)]
+struct ScalarSnapshot<'a> {
+    name: &'a str,
+    kind: &'static str,
+    scalar_type: SnapshotScalarType,
+    cardinality: SnapshotCardinality,
+    unique: bool,
+}
+
+#[derive(Serialize)]
+struct LinkSnapshot<'a> {
+    name: &'a str,
+    kind: &'static str,
+    #[serde(rename = "target_type")]
+    target_type_name: &'a str,
+    cardinality: SnapshotCardinality,
+    unique: bool,
+    #[serde(rename = "inverse_field")]
+    inverse_field_name: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum FieldSnapshot<'a> {
+    Link(LinkSnapshot<'a>),
+    Scalar(ScalarSnapshot<'a>),
+}
+
+fn snapshot_field(field: &Field) -> FieldSnapshot<'_> {
+    let name = field.name();
+    let cardinality = match field.cardinality() {
+        Cardinality::Optional => SnapshotCardinality::Optional,
+        Cardinality::Required => SnapshotCardinality::Required,
+        Cardinality::Many => SnapshotCardinality::Many,
+    };
+
+    match field {
+        Field::Scalar(scalar) => FieldSnapshot::Scalar(ScalarSnapshot {
+            name,
+            kind: "scalar",
+            scalar_type: match scalar.scalar_type() {
+                ScalarType::Str => SnapshotScalarType::Str,
+                ScalarType::Int64 => SnapshotScalarType::Int64,
+                ScalarType::Float64 => SnapshotScalarType::Float64,
+                ScalarType::Bool => SnapshotScalarType::Bool,
+                ScalarType::Uuid => SnapshotScalarType::Uuid,
+                ScalarType::DateTime => SnapshotScalarType::DateTime,
+            },
+            cardinality,
+            unique: scalar.is_unique(),
+        }),
+        Field::Link(link) => FieldSnapshot::Link(LinkSnapshot {
+            name,
+            kind: "link",
+            target_type_name: link.target_type_name(),
+            cardinality,
+            unique: link.is_unique(),
+            inverse_field_name: link.inverse_field_name(),
+        }),
+    }
+}
+
+fn snapshot_fields(fields: &[Field]) -> Vec<FieldSnapshot<'_>> {
+    let mut fields: Vec<_> = fields.iter().collect();
+    fields.sort_by_key(|field| field.name());
+    fields.into_iter().map(snapshot_field).collect()
+}
+
+#[derive(Serialize)]
+struct ObjectSnapshot<'a> {
+    name: &'a str,
+    declared_fields: Vec<FieldSnapshot<'a>>,
+    implicit_fields: Vec<FieldSnapshot<'a>>,
+}
+
+#[derive(Serialize)]
+struct SchemaVersionSnapshot<'a> {
+    format_version: u32,
+    objects: Vec<ObjectSnapshot<'a>>,
+}
+
+fn snapshot_schema(catalog: &SchemaCatalog) -> SchemaVersionSnapshot<'_> {
+    let mut object_snapshots: Vec<ObjectSnapshot> = catalog
+        .object_types()
+        .iter()
+        .map(|object_type| ObjectSnapshot {
+            name: object_type.name(),
+            declared_fields: snapshot_fields(object_type.declared_fields()),
+            implicit_fields: snapshot_fields(object_type.implicit_fields()),
+        })
+        .collect();
+    object_snapshots.sort_by_key(|object| object.name);
+
+    SchemaVersionSnapshot {
+        format_version: 1,
+        objects: object_snapshots,
+    }
+}
+
+fn plan_schema_version_rows(
+    catalog: &SchemaCatalog,
+    version_id: &str,
+    applied_at: &str,
+) -> Result<Vec<SQLiteSchemaVersionRow>, serde_json::Error> {
+    let schema_snapshot = serialize_schema_snapshot(catalog)?;
+    let checksum = schema_snapshot_checksum(&schema_snapshot);
+
+    Ok(vec![SQLiteSchemaVersionRow {
+        version_number: 1,
+        version_id: version_id.to_string(),
+        applied_at: applied_at.to_string(),
+        schema_snapshot,
+        checksum,
+    }])
+}
+
+/// Serializes a logical catalog using the canonical snapshot format, without application metadata.
+pub fn serialize_schema_snapshot(catalog: &SchemaCatalog) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&snapshot_schema(catalog))
+}
+
+/// Returns lowercase SHA-256 of the exact snapshot bytes, without JSON normalization.
+pub fn schema_snapshot_checksum(schema_snapshot: &str) -> String {
+    Sha256::digest(schema_snapshot.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Kind of field recorded in the SQLite catalog metadata.
 ///
 /// The enum stays separate from `schema_model::Field` because catalog rows store the
@@ -961,6 +1138,31 @@ impl SQLiteIndexPlan {
     pub fn is_unique(&self) -> bool {
         self.unique
     }
+}
+
+/// Converts the initial plan's single version row into a list of bound INSERT plans.
+pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPlan> {
+    let [row] = plan.schema_versions_rows() else {
+        unreachable!("initial schema planning produces exactly one version row");
+    };
+
+    vec![SQLiteInsertPlan {
+        table_name: SCHEMA_VERSIONS_TABLE.to_string(),
+        columns: vec![
+            "version_id".to_string(),
+            "checksum".to_string(),
+            "applied_at".to_string(),
+            "schema_snapshot".to_string(),
+            "version_number".to_string(),
+        ],
+        values: vec![
+            SQLiteValuePlan::Text(row.version_id.clone()),
+            SQLiteValuePlan::Text(row.checksum.clone()),
+            SQLiteValuePlan::Text(row.applied_at.clone()),
+            SQLiteValuePlan::Text(row.schema_snapshot.clone()),
+            SQLiteValuePlan::Integer(row.version_number),
+        ],
+    }]
 }
 
 #[cfg(test)]
