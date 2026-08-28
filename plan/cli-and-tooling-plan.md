@@ -130,10 +130,10 @@ turned into a thin wrapper around the same command/repl implementation.
 
 ## Schema Commands
 
-Issue #59 adds the version-record and preview contracts below. They are design
-requirements, not current behavior: the runtime does not yet insert a version
-row, and schema plan output does not yet include version values or a preview
-notice. Storage requirements are defined in
+Issue #59 defines the version-record and preview contracts below. Schema plan
+output includes deterministic version values and a preview notice; schema apply
+generates application values and records the initial version in its transaction.
+Storage requirements are defined in
 [SQLite Storage MVP Spec](../spec/storage-sqlite.md#initial-version-record-contract).
 
 ### Version record implementation choices
@@ -142,6 +142,10 @@ Use snapshot format v1, SHA-256, UUID v4, and UTC timestamps with millisecond
 precision as defined in the storage spec. Keep snapshot encoding and hashing
 pure in `sqlite-schema-plan`; the caller supplies application IDs and times.
 Reuse the existing `uuid` v4 dependency in `gelite-commands`.
+Format `SystemTime::now()` as UTC RFC3339 with `chrono`'s
+`to_rfc3339_opts(SecondsFormat::Millis, true)`. Enable only its `std` feature
+with default features disabled in `gelite-commands`; no date dependency is
+added to engine crates. See the [Chrono feature documentation](https://docs.rs/chrono/0.4.45/chrono/#features).
 
 For SHA-256, use RustCrypto's `sha2` in `sqlite-schema-plan` with this dependency
 configuration:
@@ -156,7 +160,8 @@ needed for `Sha256::digest`. Keep the engine hashing path free of `std`
 requirements and do not implement SHA-256 locally. Snapshot generation,
 version-row planning, and version INSERT planning are implemented. Initial
 schema rendering appends the version INSERT after indexes, and the native
-runner applies it in the schema transaction. Command integration remains pending.
+runner applies it in the schema transaction. Schema commands supply preview
+placeholders or freshly generated application values and propagate planning errors.
 
 Use Serde-derived snapshot types and `serde_json` in `sqlite-schema-plan`:
 
@@ -277,7 +282,7 @@ Initial scope:
 - empty or newly created database
 - one transaction for schema DDL, catalog metadata, indexes, and the version row
 - no schema diffing
-- exactly one initial version row once issue #59 is implemented
+- exactly one initial version row
 
 First command-level test:
 

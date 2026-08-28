@@ -73,7 +73,12 @@ pub fn plan_schema(source: &str) -> Result<SchemaPlanOutput, CommandError> {
     let catalog = schema_parser::parse_schema(source).map_err(|error| CommandError {
         message: format!("failed to parse schema: {error:?}"),
     })?;
-    let plan = sqlite_schema_plan::plan_initial_schema(&catalog);
+    let plan = sqlite_schema_plan::plan_initial_schema(
+        &catalog,
+        "<version-id-on-apply>",
+        "<applied-at-on-apply>",
+    )
+    .map_err(|error| CommandError::new(format!("failed to plan schema: {error}")))?;
     let statements = sqlite_schema_sqlgen::render_initial_schema(&plan)
         .into_iter()
         .map(schema_plan_statement_from_rendered)
@@ -89,7 +94,11 @@ pub fn apply_schema(
     let catalog = schema_parser::parse_schema(source).map_err(|error| CommandError {
         message: format!("failed to parse schema: {error:?}"),
     })?;
-    let plan = sqlite_schema_plan::plan_initial_schema(&catalog);
+    let version_id = uuid::Uuid::new_v4().to_string();
+    let applied_at = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let plan = sqlite_schema_plan::plan_initial_schema(&catalog, &version_id, &applied_at)
+        .map_err(|error| CommandError::new(format!("failed to plan schema: {error}")))?;
     let statements = sqlite_schema_sqlgen::render_initial_schema(&plan);
 
     apply_schema_statements(runner, &statements).map_err(command_error_from_runner)

@@ -232,8 +232,8 @@ CREATE TABLE _engine_schema_versions (
 
 #### Initial version record contract
 
-The following contract is defined for issue #59. The engine plans and applies
-the initial version row; command integration remains pending.
+The following contract is defined for issue #59. The engine and schema commands
+plan and apply the initial version row.
 
 - A successful initial schema application must record exactly one version row.
 - The snapshot and checksum must be computed from the validated logical

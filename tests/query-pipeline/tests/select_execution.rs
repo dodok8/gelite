@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use gelite_commands::{apply_schema, plan_schema};
 use sqlite_query_sqlgen::{
     SQLiteBindValue, SQLiteStatement, render_delete, render_insert, render_select, render_update,
 };
@@ -25,6 +26,41 @@ type Post {
   required link author: User
 }
 "#;
+
+#[test]
+fn schema_apply_records_preview_content_and_preserves_the_initial_baseline() {
+    let preview = plan_schema(BLOG_SCHEMA_SOURCE).expect("preview");
+    let expected = preview.statements().last().unwrap().values().unwrap();
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+    apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).expect("initial apply");
+    let statement = SQLiteStatement::new(
+        "SELECT version_id, checksum, applied_at, schema_snapshot FROM _engine_schema_versions",
+        vec![],
+    );
+    let stored = runner.execute_select(&statement).expect("stored version");
+    let [row] = stored.rows() else {
+        panic!("initial apply must store exactly one version row");
+    };
+    let [
+        SQLiteCellValue::Text(id),
+        SQLiteCellValue::Text(checksum),
+        SQLiteCellValue::Text(applied_at),
+        SQLiteCellValue::Text(snapshot),
+    ] = row.as_slice()
+    else {
+        panic!("version values must be text");
+    };
+    assert_ne!(id, "<version-id-on-apply>");
+    assert_ne!(applied_at, "<applied-at-on-apply>");
+    assert_eq!(SQLiteValuePlan::Text(checksum.clone()), expected[1]);
+    assert_eq!(SQLiteValuePlan::Text(snapshot.clone()), expected[3]);
+
+    assert!(apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).is_err());
+    let after = runner
+        .execute_select(&statement)
+        .expect("original baseline");
+    assert_eq!(after.rows(), stored.rows());
+}
 
 static TEMP_SCHEMA_COUNTER: AtomicU64 = AtomicU64::new(0);
 
