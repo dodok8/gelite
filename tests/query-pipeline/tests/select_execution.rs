@@ -7,7 +7,7 @@ use sqlite_query_sqlgen::{
     SQLiteBindValue, SQLiteStatement, render_delete, render_insert, render_select, render_update,
 };
 use sqlite_runner::{
-    SQLiteCellValue, SQLiteQueryResult, SQLiteRunner, apply_schema_statements,
+    SQLiteCellValue, SQLiteQueryResult, SQLiteRunner, SQLiteRunnerError, apply_schema_statements,
     native::NativeSQLiteRunner,
 };
 use sqlite_schema_plan::SQLiteValuePlan;
@@ -67,6 +67,56 @@ fn schema_apply_records_preview_content_and_preserves_the_initial_baseline() {
     runner
         .verify_schema_version()
         .expect("failed reapplication must preserve a verifiable baseline");
+}
+
+#[test]
+fn schema_apply_stores_identical_content_despite_comments_and_whitespace() {
+    let commented = BLOG_SCHEMA_SOURCE
+        .lines()
+        .map(|line| format!("\t{line}  # same logical schema\r\n"))
+        .collect::<String>();
+    let statement = SQLiteStatement::new(
+        "SELECT checksum, schema_snapshot FROM _engine_schema_versions",
+        vec![],
+    );
+    let stored = [BLOG_SCHEMA_SOURCE, commented.as_str()].map(|source| {
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+        apply_schema(source, &mut runner).expect("schema should apply");
+        runner
+            .verify_schema_version()
+            .expect("equivalent source should produce a verifiable baseline");
+        runner.execute_select(&statement).expect("stored content")
+    });
+
+    assert_eq!(stored[0].rows().len(), 1);
+    assert_eq!(stored[0].rows(), stored[1].rows());
+}
+
+#[test]
+fn schema_apply_detects_tampered_version_content_and_logical_catalog() {
+    // Raw SQL corrupts internal metadata that schema commands do not allow users to edit.
+    for mutation in [
+        "UPDATE _engine_schema_versions SET checksum = 'tampered'",
+        "UPDATE _engine_schema_versions SET schema_snapshot = schema_snapshot || ' '",
+        "UPDATE _engine_catalog_fields SET cardinality = 'optional' WHERE name = 'title'",
+    ] {
+        let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
+        apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).expect("schema should apply");
+        runner
+            .verify_schema_version()
+            .expect("original baseline should verify");
+        runner
+            .execute(mutation)
+            .expect("metadata should be changed");
+
+        let error = runner
+            .verify_schema_version()
+            .expect_err("modified metadata must fail verification");
+        assert!(
+            matches!(error, SQLiteRunnerError::SchemaVerificationFailed { .. }),
+            "{mutation}: {error:?}"
+        );
+    }
 }
 
 #[test]
