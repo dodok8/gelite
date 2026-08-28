@@ -153,9 +153,9 @@ sha2 = { version = "0.11", default-features = false }
 The [0.11.0 source](https://github.com/RustCrypto/hashes/blob/sha2-v0.11.0/sha2/src/lib.rs)
 declares `#![no_std]`. Its default features are `alloc` and `oid`; neither is
 needed for `Sha256::digest`. Keep the engine hashing path free of `std`
-requirements and do not implement SHA-256 locally. Snapshot generation and
-version-row planning are implemented; SQL insert generation and application
-integration remain pending.
+requirements and do not implement SHA-256 locally. Snapshot generation,
+version-row planning, and version INSERT planning are implemented. Integration
+into initial-schema rendering and application remains pending.
 
 Use Serde-derived snapshot types and `serde_json` in `sqlite-schema-plan`:
 

@@ -59,6 +59,10 @@ impl SQLiteSchemaPlan {
     pub fn indexes(&self) -> &[SQLiteIndexPlan] {
         &self.indexes
     }
+
+    pub fn schema_versions_rows(&self) -> &[SQLiteSchemaVersionRow] {
+        &self.schema_versions_rows
+    }
 }
 
 pub struct SQLitePrimaryKeyPlan {
@@ -1117,8 +1121,27 @@ impl SQLiteIndexPlan {
     }
 }
 
+/// Converts the initial plan's single version row into a bound INSERT plan.
 pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> SQLiteInsertPlan {
-    todo!()
+    let [row] = plan.schema_versions_rows() else {
+        unreachable!("initial schema planning produces exactly one version row");
+    };
+
+    SQLiteInsertPlan {
+        table_name: SCHEMA_VERSIONS_TABLE.to_string(),
+        columns: vec![
+            "version_id".to_string(),
+            "checksum".to_string(),
+            "applied_at".to_string(),
+            "schema_snapshot".to_string(),
+        ],
+        values: vec![
+            SQLiteValuePlan::Text(row.version_id.clone()),
+            SQLiteValuePlan::Text(row.checksum.clone()),
+            SQLiteValuePlan::Text(row.applied_at.clone()),
+            SQLiteValuePlan::Text(row.schema_snapshot.clone()),
+        ],
+    }
 }
 
 #[cfg(test)]
