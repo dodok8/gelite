@@ -7,7 +7,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use powersync_sqlite_nostd::{
-    ColumnType, Connection, Destructor, ManagedConnection, ManagedStmt, ResultCode,
+    ColumnType, Connection, Destructor, ManagedConnection, ManagedStmt, ResultCode, Stmt,
 };
 use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
@@ -94,10 +94,7 @@ impl NativeSQLiteRunner {
         match statement.step() {
             Ok(ResultCode::ROW) => {
                 let first = statement.column_int64(0);
-                let second = statement
-                    .column_text(1)
-                    .map_err(|error| self.result_error("read text column", error))?
-                    .to_string();
+                let second = read_text_column(&statement, 1, "read text column")?;
                 let third = match statement
                     .column_type(2)
                     .map_err(|error| self.result_error("read nullable integer column", error))?
@@ -647,10 +644,21 @@ fn read_text_column(
     index: i32,
     context: &str,
 ) -> Result<String, SQLiteRunnerError> {
-    statement
-        .column_text(index)
-        .map(|value| value.to_string())
-        .map_err(|error| SQLiteRunnerError::execution_failed(format!("{context}: {error:?}")))
+    // SQLite may return a null blob pointer for empty TEXT, which is not SQL NULL.
+    if statement.column_type(index) == Ok(ColumnType::Text)
+        && statement.stmt.column_bytes(index) == 0
+    {
+        return Ok(String::new());
+    }
+    // The binding's column_text uses unchecked UTF-8 conversion, even for corrupt SQLite TEXT.
+    let bytes = statement
+        .column_blob(index)
+        .map_err(|error| SQLiteRunnerError::execution_failed(format!("{context}: {error:?}")))?;
+    core::str::from_utf8(bytes)
+        .map(ToString::to_string)
+        .map_err(|error| {
+            SQLiteRunnerError::execution_failed(format!("{context}: invalid UTF-8: {error}"))
+        })
 }
 
 fn read_nullable_text_column(

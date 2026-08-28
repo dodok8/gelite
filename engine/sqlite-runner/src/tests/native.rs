@@ -665,6 +665,40 @@ fn native_schema_verification_rejects_checksum_tampering_and_ends_transaction() 
 }
 
 #[test]
+fn native_schema_verification_rejects_invalid_utf8_and_ends_transaction() {
+    // Raw SQL can store invalid UTF-8 in TEXT; typed schema plans cannot produce it.
+    for mutation in [
+        "UPDATE _engine_schema_versions SET schema_snapshot = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_schema_versions SET checksum = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_schema_versions SET version_id = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_schema_versions SET applied_at = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_catalog_objects SET name = CAST(x'80' AS TEXT)",
+        "UPDATE _engine_catalog_fields SET name = CAST(x'80' AS TEXT) WHERE name = 'title'",
+        "UPDATE _engine_catalog_fields SET scalar_type = CAST(x'80' AS TEXT) WHERE name = 'title'",
+    ] {
+        let mut runner = native_runner_with_post_schema();
+        runner
+            .execute(mutation)
+            .expect("metadata should be corrupted");
+
+        let error = runner
+            .verify_schema_version()
+            .expect_err("invalid UTF-8 must be rejected before creating a Rust string");
+        assert!(matches!(error, SQLiteRunnerError::ExecutionFailed { .. }));
+        assert!(
+            error.message().contains("invalid UTF-8"),
+            "{mutation}: {error:?}"
+        );
+        runner
+            .begin_transaction()
+            .expect("invalid UTF-8 must not leave the verification transaction open");
+        runner
+            .rollback_transaction()
+            .expect("test transaction should end");
+    }
+}
+
+#[test]
 fn native_schema_verification_hashes_exact_stored_snapshot_bytes() {
     let mut runner = native_runner_with_post_schema();
     // Preserve the JSON meaning while changing the stored bytes without updating the hash.
@@ -902,6 +936,39 @@ fn native_runner_can_execute_select_statement_with_bind_values() {
         result.rows(),
         &[vec![crate::SQLiteCellValue::Text("Hello".to_string())]]
     );
+}
+
+#[test]
+fn native_runner_reads_text_bytes_without_loss_and_rejects_invalid_utf8() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+    for value in ["", "타치바나 셰리", "before\0after"] {
+        let query = SQLiteStatement::new(
+            "SELECT ? AS value",
+            vec![sqlite_query_sqlgen::SQLiteBindValue::String(
+                value.to_string(),
+            )],
+        );
+        let result = runner
+            .execute_select(&query)
+            .expect("valid UTF-8 should load");
+        assert_eq!(
+            result.rows(),
+            &[vec![crate::SQLiteCellValue::Text(value.to_string())]]
+        );
+    }
+
+    // Invalid text requires raw SQL because typed string bindings always contain UTF-8.
+    let sql = "SELECT 1, CAST(x'80' AS TEXT), NULL";
+    for error in [
+        runner
+            .execute_select(&SQLiteStatement::new(sql, vec![]))
+            .expect_err("invalid query text"),
+        runner
+            .first_three_column_row(sql)
+            .expect_err("invalid smoke-test text"),
+    ] {
+        assert!(error.message().contains("invalid UTF-8"), "{error:?}");
+    }
 }
 
 #[test]
