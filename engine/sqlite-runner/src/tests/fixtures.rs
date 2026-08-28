@@ -102,6 +102,7 @@ pub fn post_catalog() -> SchemaCatalog {
 
 pub fn rendered_post_schema_statements() -> Vec<RenderedSchemaStatement> {
     let catalog = post_catalog();
-    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT);
+    let plan = plan_initial_schema(&catalog, VERSION_ID, APPLIED_AT)
+        .expect("schema snapshot should serialize");
     render_initial_schema(&plan)
 }

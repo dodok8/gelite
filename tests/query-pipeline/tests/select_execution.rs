@@ -66,7 +66,8 @@ fn setup_blog_database() -> NativeSQLiteRunner {
         &catalog,
         "9b496060-9a5c-4c7e-9f32-210f698fe497",
         "2026-08-28T12:34:56.789Z",
-    );
+    )
+    .expect("schema snapshot should serialize");
     let schema_statements = sqlite_schema_sqlgen::render_initial_schema(&schema_plan);
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
 
