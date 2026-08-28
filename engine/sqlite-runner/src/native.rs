@@ -208,73 +208,11 @@ impl NativeSQLiteRunner {
                     object.name,
                 )));
             }
-            let mut declared_fields = Vec::new();
-
-            for field in fields
+            let declared_fields = fields
                 .iter()
                 .filter(|field| field.object_id == object.object_id && !field.is_implicit)
-            {
-                match field.field_kind.as_str() {
-                    "scalar" => {
-                        let scalar_type =
-                            parse_scalar_type(field.scalar_type.as_deref().ok_or_else(|| {
-                                SQLiteRunnerError::execution_failed(format!(
-                                    "catalog field `{}` is missing scalar_type",
-                                    field.name
-                                ))
-                            })?)?;
-                        let cardinality = parse_single_cardinality(&field.cardinality)?;
-                        let uniqueness = parse_uniqueness(field.is_unique)?;
-
-                        declared_fields.push(Field::Scalar(ScalarField::with_uniqueness(
-                            field.name.clone(),
-                            scalar_type,
-                            cardinality,
-                            uniqueness,
-                        )));
-                    }
-                    "link" => {
-                        let target_object_id = field.target_object_id.ok_or_else(|| {
-                            SQLiteRunnerError::execution_failed(format!(
-                                "catalog link field `{}` is missing target_object_id",
-                                field.name
-                            ))
-                        })?;
-                        let target_object = objects
-                            .iter()
-                            .find(|object| object.object_id == target_object_id)
-                            .ok_or_else(|| {
-                                SQLiteRunnerError::execution_failed(format!(
-                                    "catalog link field `{}` references unknown target object id {target_object_id}",
-                                    field.name
-                                ))
-                            })?;
-                        let cardinality = parse_cardinality(&field.cardinality)?;
-                        let uniqueness = parse_uniqueness(field.is_unique)?;
-
-                        let link = match &field.inverse_field_name {
-                            Some(source) => LinkField::with_inverse(
-                                field.name.clone(),
-                                target_object.name.clone(),
-                                cardinality,
-                                source.clone(),
-                            ),
-                            None => LinkField::with_uniqueness(
-                                field.name.clone(),
-                                target_object.name.clone(),
-                                cardinality,
-                                uniqueness,
-                            ),
-                        };
-                        declared_fields.push(Field::Link(link));
-                    }
-                    kind => {
-                        return Err(SQLiteRunnerError::execution_failed(format!(
-                            "unknown catalog field kind `{kind}`"
-                        )));
-                    }
-                }
-            }
+                .map(|field| field_from_catalog_row(field, &objects))
+                .collect::<Result<Vec<_>, _>>()?;
 
             object_types.push(ObjectType::new(object.name.clone(), declared_fields));
         }
@@ -637,6 +575,70 @@ struct CatalogFieldRow {
     is_implicit: bool,
     is_unique: bool,
     inverse_field_name: Option<String>,
+}
+
+fn field_from_catalog_row(
+    field: &CatalogFieldRow,
+    objects: &[CatalogObjectRow],
+) -> Result<Field, SQLiteRunnerError> {
+    match field.field_kind.as_str() {
+        "scalar" => {
+            let scalar_type =
+                parse_scalar_type(field.scalar_type.as_deref().ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(format!(
+                        "catalog field `{}` is missing scalar_type",
+                        field.name
+                    ))
+                })?)?;
+            let cardinality = parse_single_cardinality(&field.cardinality)?;
+            let uniqueness = parse_uniqueness(field.is_unique)?;
+
+            Ok(Field::Scalar(ScalarField::with_uniqueness(
+                field.name.clone(),
+                scalar_type,
+                cardinality,
+                uniqueness,
+            )))
+        }
+        "link" => {
+            let target_object_id = field.target_object_id.ok_or_else(|| {
+                SQLiteRunnerError::execution_failed(format!(
+                    "catalog link field `{}` is missing target_object_id",
+                    field.name
+                ))
+            })?;
+            let target_object = objects
+                .iter()
+                .find(|object| object.object_id == target_object_id)
+                .ok_or_else(|| {
+                    SQLiteRunnerError::execution_failed(format!(
+                        "catalog link field `{}` references unknown target object id {target_object_id}",
+                        field.name
+                    ))
+                })?;
+            let cardinality = parse_cardinality(&field.cardinality)?;
+            let uniqueness = parse_uniqueness(field.is_unique)?;
+
+            let link = match &field.inverse_field_name {
+                Some(source) => LinkField::with_inverse(
+                    field.name.clone(),
+                    target_object.name.clone(),
+                    cardinality,
+                    source.clone(),
+                ),
+                None => LinkField::with_uniqueness(
+                    field.name.clone(),
+                    target_object.name.clone(),
+                    cardinality,
+                    uniqueness,
+                ),
+            };
+            Ok(Field::Link(link))
+        }
+        kind => Err(SQLiteRunnerError::execution_failed(format!(
+            "unknown catalog field kind `{kind}`"
+        ))),
+    }
 }
 
 fn read_text_column(
