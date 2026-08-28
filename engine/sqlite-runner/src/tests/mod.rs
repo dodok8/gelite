@@ -28,6 +28,16 @@ fn apply_schema_statements_executes_sql_and_insert_statements_in_order() {
         runner.calls().last(),
         Some(&RecordedCall::Execute("COMMIT".into()))
     );
+    let Some(RenderedSchemaStatement::Insert(version)) = statements.last() else {
+        panic!("rendered schema should end with the version INSERT");
+    };
+    assert_eq!(
+        runner.calls().get(runner.calls().len() - 2),
+        Some(&RecordedCall::ExecuteWithValues(
+            version.sql().to_string(),
+            version.values().to_vec(),
+        ))
+    );
     assert!(matches!(
         runner.calls().get(1),
         Some(RecordedCall::Execute(sql)) if sql.starts_with("CREATE TABLE \"_engine_schema_versions\"")

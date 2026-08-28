@@ -17,6 +17,7 @@ use sqlite_schema_plan::{
     SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyAction, SQLiteForeignKeyPlan,
     SQLiteIndexPlan, SQLiteInsertPlan, SQLitePrimaryKeyPlan, SQLiteSchemaPlan, SQLiteTablePlan,
     SQLiteValuePlan, plan_catalog_field_inserts, plan_catalog_object_inserts,
+    plan_schema_version_insert,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -202,6 +203,12 @@ pub fn render_initial_schema(plan: &SQLiteSchemaPlan) -> Vec<RenderedSchemaState
             .iter()
             .map(render_create_index)
             .map(RenderedSchemaStatement::Sql),
+    );
+    statements.extend(
+        plan_schema_version_insert(plan)
+            .iter()
+            .map(render_insert)
+            .map(RenderedSchemaStatement::Insert),
     );
 
     statements

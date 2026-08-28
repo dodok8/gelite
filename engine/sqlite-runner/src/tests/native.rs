@@ -431,6 +431,13 @@ fn native_runner_can_apply_rendered_initial_schema() {
     assert_eq!(runner.table_exists("_engine_catalog_fields"), Ok(true));
     assert_eq!(runner.table_exists("post"), Ok(true));
 
+    let version = runner
+        .first_three_column_row(
+            "SELECT COUNT(*), MIN(version_id), NULL FROM _engine_schema_versions",
+        )
+        .expect("applied version should be readable");
+    assert_eq!(version, Some((1, VERSION_ID.to_string(), None)));
+
     let row = runner
         .first_three_column_row(
             "SELECT object_id, name, NULL FROM _engine_catalog_objects WHERE name = 'Post'",
