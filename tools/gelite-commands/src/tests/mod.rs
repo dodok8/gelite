@@ -185,10 +185,10 @@ fn schema_plan_command_renders_initial_schema_from_source() {
 }
 
 #[test]
-fn schema_preview_content_ignores_source_layout_and_declaration_order() {
+fn schema_preview_content_ignores_comments_layout_and_declaration_order() {
     let original = plan_schema(blog_schema_source()).expect("original schema");
     let reordered = plan_schema(
-        "type Post { required link author: User required title: str }\n\n\ttype User { required email: str }",
+        "# same logical schema\ntype Post { required link author: User # author\n required title: str }\n\n\ttype User { required email: str } # end",
     )
     .expect("equivalent schema");
     assert_eq!(original.statements().last(), reordered.statements().last());

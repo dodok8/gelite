@@ -3,6 +3,23 @@ use alloc::string::ToString;
 use schema_model::{Cardinality, Field, ScalarType, SchemaError, Uniqueness};
 
 #[test]
+fn lexer_ignores_line_comments_and_preserves_source_spans() {
+    let source = "# 주석 @ {}\r\ntype User { # header\r\n  name: str # field\r\n}# end";
+    let tokens = lex(source).expect("line comments should lex");
+    assert_eq!(tokens[3].kind(), &TokenKind::Ident("name".to_string()));
+    assert_eq!(tokens[3].span().start().line(), 3);
+    assert_eq!(tokens[3].span().start().column(), 3);
+    assert_eq!(
+        parse_schema(source),
+        parse_schema("type User { name: str }")
+    );
+    assert_eq!(
+        parse_schema("# comment without a trailing newline"),
+        parse_schema("")
+    );
+}
+
+#[test]
 fn lexer_tokenizes_empty_type_declaration() {
     let tokens = lex("type User {}").expect("schema should lex");
 
