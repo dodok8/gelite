@@ -214,7 +214,7 @@ fn render_initial_schema_includes_version_insert_for_empty_catalog() {
     };
     assert_eq!(
         insert.sql(),
-        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\") VALUES (?, ?, ?, ?)"
+        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\", \"version_number\") VALUES (?, ?, ?, ?, ?)"
     );
     assert_eq!(
         insert.values(),
@@ -225,6 +225,7 @@ fn render_initial_schema_includes_version_insert_for_empty_catalog() {
             ),
             SQLiteValuePlan::Text(APPLIED_AT.into()),
             SQLiteValuePlan::Text(r#"{"format_version":1,"objects":[]}"#.into()),
+            SQLiteValuePlan::Integer(1),
         ]
     );
 }
@@ -306,7 +307,7 @@ fn render_initial_schema_outputs_deterministic_sql() {
     };
     assert_eq!(
         version.sql(),
-        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\") VALUES (?, ?, ?, ?)"
+        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\", \"version_number\") VALUES (?, ?, ?, ?, ?)"
     );
     assert_eq!(
         version.values(),

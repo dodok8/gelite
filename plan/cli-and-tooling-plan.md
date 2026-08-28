@@ -163,6 +163,12 @@ schema rendering appends the version INSERT after indexes, and the native
 runner applies it in the schema transaction. Schema commands supply preview
 placeholders or freshly generated application values and propagate planning errors.
 
+Initial plans also store `version_number = 1`, independently of UUIDs and
+timestamps. The native runner reads the latest row by descending version number
+with `LIMIT 1`; it does not sort the entire history in memory. Allocation of
+subsequent numbers and upgrades of older metadata tables remain deferred with
+non-initial migrations.
+
 Use Serde-derived snapshot types and `serde_json` in `sqlite-schema-plan`:
 
 ```toml

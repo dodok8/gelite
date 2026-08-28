@@ -65,7 +65,7 @@ fn initial_schema_plan_defines_schema_versions_metadata_table() {
         .expect("schema snapshot should serialize");
 
     assert_eq!(plan.metadata_tables()[0].name(), "_engine_schema_versions");
-    assert_eq!(plan.metadata_tables()[0].columns().len(), 4);
+    assert_eq!(plan.metadata_tables()[0].columns().len(), 5);
 
     let columns = plan.metadata_tables()[0].columns();
     assert_eq!(columns[0].name(), "version_id");
@@ -91,6 +91,12 @@ fn initial_schema_plan_defines_schema_versions_metadata_table() {
     assert!(!columns[3].is_nullable());
     assert!(!columns[3].is_primary_key());
     assert!(!columns[3].is_unique());
+
+    assert_eq!(columns[4].name(), "version_number");
+    assert_eq!(columns[4].affinity(), SQLiteAffinity::Integer);
+    assert!(!columns[4].is_nullable());
+    assert!(!columns[4].is_primary_key());
+    assert!(columns[4].is_unique());
 }
 
 #[test]
@@ -1259,7 +1265,13 @@ fn initial_schema_version_insert_binds_values_and_includes_implicit_identity() {
         assert_eq!(insert.table_name(), "_engine_schema_versions");
         assert_eq!(
             insert.columns(),
-            ["version_id", "checksum", "applied_at", "schema_snapshot"]
+            [
+                "version_id",
+                "checksum",
+                "applied_at",
+                "schema_snapshot",
+                "version_number"
+            ]
         );
         assert_eq!(
             insert.values(),
@@ -1268,6 +1280,7 @@ fn initial_schema_version_insert_binds_values_and_includes_implicit_identity() {
                 SQLiteValuePlan::Text(checksum.into()),
                 SQLiteValuePlan::Text(APPLIED_AT.into()),
                 SQLiteValuePlan::Text(snapshot.into()),
+                SQLiteValuePlan::Integer(1),
             ]
         );
     }

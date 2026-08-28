@@ -226,7 +226,8 @@ CREATE TABLE _engine_schema_versions (
   version_id TEXT PRIMARY KEY,
   checksum TEXT NOT NULL,
   applied_at TEXT NOT NULL,
-  schema_snapshot TEXT NOT NULL
+  schema_snapshot TEXT NOT NULL,
+  version_number INTEGER NOT NULL UNIQUE
 );
 ```
 
@@ -236,6 +237,8 @@ The following contract is defined for issue #59. The engine and schema commands
 plan and apply the initial version row.
 
 - A successful initial schema application must record exactly one version row.
+- The initial row has `version_number = 1`, including in previews. The number
+  records application order and is excluded from the snapshot and checksum.
 - The snapshot and checksum must be computed from the validated logical
   `SchemaCatalog`, not from the original source text. Equivalent catalogs must
   produce identical snapshots and checksums under the same snapshot format
@@ -286,7 +289,7 @@ The snapshot is UTF-8 JSON with this fixed structure and property order:
   the catalog's uniqueness flag; SQLite primary-key uniqueness is unchanged.
   The field remains implicit and cannot be declared by the schema author.
 - Internal object and field IDs, source formatting and comments, physical
-  SQLite names, version IDs, and applied timestamps are excluded.
+  SQLite names, version IDs, version numbers, and applied timestamps are excluded.
 
 Emit no byte-order mark, insignificant whitespace, or trailing newline. Empty
 arrays remain present. Preserve names exactly, without Unicode normalization
@@ -317,11 +320,25 @@ readers must reject unsupported format versions rather than reinterpret them.
   three fractional second digits: `YYYY-MM-DDTHH:MM:SS.sssZ`. Truncate finer
   precision to milliseconds. It records the caller's application-attempt time,
   not the exact commit completion time.
+- `version_number` is a positive signed 64-bit integer that defines application
+  order within a database. Initial application stores `1`. Future migration
+  application must allocate the next number after the current maximum within
+  the same write transaction as its schema changes and version insert. Reject
+  overflow rather than wrapping. Non-initial migration application remains
+  outside the current implementation.
 
-Neither UUIDs nor timestamps define migration order. Checking the snapshot
-checksum detects a mismatch but does not authenticate a record against an
-actor who can rewrite both values. Verifying the logical schema additionally
-requires comparing the canonical snapshot of the loaded catalog with the
+Read the latest stored version with `ORDER BY version_number DESC LIMIT 1`.
+An empty version table has no latest version. Do not require the table to
+contain exactly one row during lookup. Neither UUIDs nor timestamps define
+migration order.
+
+Databases created before `version_number` was added require an explicit metadata
+migration or recreation. Automatic upgrades are not implemented; do not infer
+historical order from UUIDs, timestamps, or SQLite rowids.
+
+Checking the snapshot checksum detects a mismatch but does not authenticate a
+record against an actor who can rewrite both values. Verifying the logical
+schema additionally requires comparing the canonical snapshot of the loaded catalog with the
 stored snapshot; this does not audit physical SQLite DDL.
 
 ### `_engine_catalog_objects`

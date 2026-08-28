@@ -169,9 +169,10 @@ fn schema_plan_command_renders_initial_schema_from_source() {
     );
     assert_eq!(
         statements[13].sql(),
-        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\") VALUES (?, ?, ?, ?)"
+        "INSERT INTO \"_engine_schema_versions\" (\"version_id\", \"checksum\", \"applied_at\", \"schema_snapshot\", \"version_number\") VALUES (?, ?, ?, ?, ?)"
     );
     let values = statements[13].values().expect("version bindings");
+    assert_eq!(values[4], SQLiteValuePlan::Integer(1));
     assert_eq!(
         values[0],
         SQLiteValuePlan::Text("<version-id-on-apply>".into())
@@ -274,9 +275,12 @@ fn schema_apply_command_executes_rendered_schema_statements() {
         _,
         SQLiteValuePlan::Text(applied_at),
         _,
+        SQLiteValuePlan::Integer(1),
     ] = values.as_slice()
     else {
-        panic!("version identifier and timestamp must be text");
+        panic!(
+            "version identifier and timestamp must be text and the initial version number must be 1"
+        );
     };
     let parsed_id = uuid::Uuid::parse_str(id).expect("valid UUID");
     assert_eq!(parsed_id.get_version_num(), 4);

@@ -34,7 +34,7 @@ fn schema_apply_records_preview_content_and_preserves_the_initial_baseline() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("database");
     apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).expect("initial apply");
     let statement = SQLiteStatement::new(
-        "SELECT version_id, checksum, applied_at, schema_snapshot FROM _engine_schema_versions",
+        "SELECT version_id, checksum, applied_at, schema_snapshot, version_number FROM _engine_schema_versions",
         vec![],
     );
     let stored = runner.execute_select(&statement).expect("stored version");
@@ -46,9 +46,10 @@ fn schema_apply_records_preview_content_and_preserves_the_initial_baseline() {
         SQLiteCellValue::Text(checksum),
         SQLiteCellValue::Text(applied_at),
         SQLiteCellValue::Text(snapshot),
+        SQLiteCellValue::Integer(1),
     ] = row.as_slice()
     else {
-        panic!("version values must be text");
+        panic!("version values must be text with initial version number 1");
     };
     assert_ne!(id, "<version-id-on-apply>");
     assert_ne!(applied_at, "<applied-at-on-apply>");

@@ -178,6 +178,13 @@ pub fn plan_initial_schema(
                     false,
                     false,
                 ),
+                SQLiteColumnPlan::new(
+                    "version_number".to_string(),
+                    SQLiteAffinity::Integer,
+                    false,
+                    false,
+                    true,
+                ),
             ],
         ),
         SQLiteTablePlan::new(
@@ -898,6 +905,7 @@ pub struct SQLiteSchemaVersionRow {
     checksum: String,
     applied_at: String,
     schema_snapshot: String,
+    version_number: i64,
 }
 
 #[derive(Serialize)]
@@ -1030,6 +1038,7 @@ fn plan_schema_version_rows(
         .collect();
 
     Ok(vec![SQLiteSchemaVersionRow {
+        version_number: 1,
         version_id: version_id.to_string(),
         applied_at: applied_at.to_string(),
         schema_snapshot,
@@ -1134,12 +1143,14 @@ pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPl
             "checksum".to_string(),
             "applied_at".to_string(),
             "schema_snapshot".to_string(),
+            "version_number".to_string(),
         ],
         values: vec![
             SQLiteValuePlan::Text(row.version_id.clone()),
             SQLiteValuePlan::Text(row.checksum.clone()),
             SQLiteValuePlan::Text(row.applied_at.clone()),
             SQLiteValuePlan::Text(row.schema_snapshot.clone()),
+            SQLiteValuePlan::Integer(row.version_number),
         ],
     }]
 }
