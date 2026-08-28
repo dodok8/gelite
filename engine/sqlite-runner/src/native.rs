@@ -17,7 +17,7 @@ use sqlite_schema_plan::SQLiteValuePlan;
 
 use crate::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
-    SQLiteTransactionRunner,
+    SQLiteTransactionRunner, SchemaVerificationError,
 };
 
 /// Native SQLite runner backed by an owned SQLite connection.
@@ -117,6 +117,11 @@ impl NativeSQLiteRunner {
             Ok(result) => Err(self.result_error("step read-back query", result)),
             Err(result) => Err(self.result_error("step read-back query", result)),
         }
+    }
+
+    /// Verifies the stored initial version checksum and logical catalog without source files.
+    pub fn verify_schema_version(&mut self) -> Result<(), SchemaVerificationError> {
+        todo!()
     }
 
     pub fn load_schema_catalog(&self) -> Result<SchemaCatalog, SQLiteRunnerError> {

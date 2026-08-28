@@ -300,5 +300,11 @@ pub fn apply_schema_statements(
     })
 }
 
+/// Failure to verify a stored schema version against its snapshot and catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaVerificationError {
+    VerifyFailed { message: String },
+}
+
 #[cfg(test)]
 mod tests;
