@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    SQLiteRunner, SchemaVerificationError, apply_schema_statements,
+    SQLiteRunner, SQLiteRunnerError, apply_schema_statements,
     native::NativeSQLiteRunner,
     tests::fixtures::{
         APPLIED_AT, VERSION_ID, native_runner_with_post_schema, rendered_post_schema_statements,
@@ -639,12 +639,16 @@ fn native_schema_verification_rejects_checksum_tampering_and_ends_transaction() 
     let query = SQLiteStatement::new("SELECT * FROM _engine_schema_versions", vec![]);
     let corrupted = runner.execute_select(&query).expect("version should load");
 
-    let SchemaVerificationError::VerifyFailed { message } = runner
+    let error = runner
         .verify_schema_version()
         .expect_err("checksum corruption should be rejected");
 
     assert!(
-        !message.is_empty(),
+        matches!(error, SQLiteRunnerError::SchemaVerificationFailed { .. }),
+        "checksum corruption should be a verification failure: {error:?}"
+    );
+    assert!(
+        !error.message().is_empty(),
         "verification error should explain the failure"
     );
     assert_eq!(runner.execute_select(&query), Ok(corrupted));

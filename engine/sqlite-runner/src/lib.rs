@@ -25,12 +25,13 @@ pub mod wasm;
 
 /// Error type returned by runner operations.
 ///
-/// The first version only needs a binding-neutral execution failure. Concrete
-/// backends can convert their driver errors into this type without exposing the
+/// Execution and schema verification failures share this binding-neutral type.
+/// Concrete backends can convert their driver errors without exposing the
 /// driver through public planner or command APIs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SQLiteRunnerError {
     ExecutionFailed { message: String },
+    SchemaVerificationFailed { message: String },
 }
 
 impl SQLiteRunnerError {
@@ -40,9 +41,17 @@ impl SQLiteRunnerError {
         }
     }
 
+    pub fn schema_verification_failed(message: impl Into<String>) -> Self {
+        Self::SchemaVerificationFailed {
+            message: message.into(),
+        }
+    }
+
     pub fn message(&self) -> &str {
         match self {
-            Self::ExecutionFailed { message } => message,
+            Self::ExecutionFailed { message } | Self::SchemaVerificationFailed { message } => {
+                message
+            }
         }
     }
 }
@@ -298,12 +307,6 @@ pub fn apply_schema_statements(
             rollback_error.message(),
         )),
     })
-}
-
-/// Failure to verify a stored schema version against its snapshot and catalog.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SchemaVerificationError {
-    VerifyFailed { message: String },
 }
 
 #[cfg(test)]
