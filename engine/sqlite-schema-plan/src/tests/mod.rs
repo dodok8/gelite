@@ -1036,6 +1036,9 @@ fn inverse_schema_owns_no_storage_and_records_source_metadata() {
 const VERSION_ID: &str = "9b496060-9a5c-4c7e-9f32-210f698fe497";
 const APPLIED_AT: &str = "2026-08-28T12:34:56.789Z";
 
+const IMPLICIT_ID_SNAPSHOT: &str =
+    r#"{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}"#;
+
 fn initial_version_insert(
     catalog: &SchemaCatalog,
     version_id: &str,
@@ -1100,7 +1103,7 @@ fn version_catalog() -> SchemaCatalog {
 }
 
 #[test]
-fn initial_schema_version_insert_binds_values_and_omits_implicit_identity() {
+fn initial_schema_version_insert_binds_values_and_includes_implicit_identity() {
     // Digests were independently computed from the literal UTF-8 snapshots.
     for (objects, snapshot, checksum) in [
         (
@@ -1110,8 +1113,8 @@ fn initial_schema_version_insert_binds_values_and_omits_implicit_identity() {
         ),
         (
             vec![ObjectType::new("User", vec![])],
-            r#"{"format_version":1,"objects":[{"name":"User","fields":[]}]}"#,
-            "c24b341cc751d78ec9ca7da1aca92c9bcfe90c7b47ef6cb6d36547842e508397",
+            r#"{"format_version":1,"objects":[{"name":"User","fields":[{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false}]}]}"#,
+            "99fef689466c3fda409fc6033a2086d35e3e04c8348ee0c9248ec4ac91fe502f",
         ),
     ] {
         let catalog = SchemaCatalog::try_new(objects).expect("valid empty schema or object");
@@ -1141,8 +1144,10 @@ fn initial_schema_version_snapshot_matches_canonical_bytes_and_sha256() {
     let expected = concat!(
         r#"{"format_version":1,"objects":[{"name":"Post","fields":["#,
         r#"{"name":"author","kind":"link","target_type":"User","cardinality":"required","unique":true,"inverse_field":null},"#,
+        r#"{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false},"#,
         r#"{"name":"title","kind":"scalar","scalar_type":"str","cardinality":"required","unique":false}]},"#,
         r#"{"name":"User","fields":["#,
+        r#"{"name":"id","kind":"scalar","scalar_type":"uuid","cardinality":"required","unique":false},"#,
         r#"{"name":"name","kind":"scalar","scalar_type":"str","cardinality":"optional","unique":true},"#,
         r#"{"name":"posts","kind":"link","target_type":"Post","cardinality":"many","unique":false,"inverse_field":"author"}]}]}"#,
     );
@@ -1151,7 +1156,7 @@ fn initial_schema_version_snapshot_matches_canonical_bytes_and_sha256() {
         version_content(&insert),
         (
             expected,
-            "40bdaa3e66c1b8a14be4221d35348439f145eb71d776c8c9e9a59ba83d1222a6"
+            "64fdfd1cddc1c44858b3b2169d6bbba40b7d4c0f2854bb8cc5861e7eda2f87b0"
         )
     );
 }
@@ -1204,7 +1209,7 @@ fn initial_schema_version_snapshot_preserves_every_scalar_type() {
         .expect("valid scalar schema");
         let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
         let expected = alloc::format!(
-            "{{\"format_version\":1,\"objects\":[{{\"name\":\"Sample\",\"fields\":[{{\"name\":\"value\",\"kind\":\"scalar\",\"scalar_type\":\"{name}\",\"cardinality\":\"optional\",\"unique\":false}}]}}]}}"
+            "{{\"format_version\":1,\"objects\":[{{\"name\":\"Sample\",\"fields\":[{IMPLICIT_ID_SNAPSHOT},{{\"name\":\"value\",\"kind\":\"scalar\",\"scalar_type\":\"{name}\",\"cardinality\":\"optional\",\"unique\":false}}]}}]}}"
         );
 
         assert_eq!(version_content(&insert).0, expected);
@@ -1222,11 +1227,14 @@ fn initial_schema_version_snapshot_sorts_names_by_utf8_without_normalizing() {
     )
     .expect("case and canonically equivalent Unicode names remain distinct");
     let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
-    let expected = concat!(
-        r#"{"format_version":1,"objects":[{"name":"A","fields":[]},"#,
-        "{\"name\":\"a\",\"fields\":[]},{\"name\":\"e\u{301}\",\"fields\":[]},",
-        "{\"name\":\"é\",\"fields\":[]},{\"name\":\"\u{e000}\",\"fields\":[]},",
-        "{\"name\":\"\u{10000}\",\"fields\":[]}]}",
+    let expected = alloc::format!(
+        concat!(
+            "{{\"format_version\":1,\"objects\":[{{\"name\":\"A\",\"fields\":[{0}]}},",
+            "{{\"name\":\"a\",\"fields\":[{0}]}},{{\"name\":\"e\u{301}\",\"fields\":[{0}]}},",
+            "{{\"name\":\"é\",\"fields\":[{0}]}},{{\"name\":\"\u{e000}\",\"fields\":[{0}]}},",
+            "{{\"name\":\"\u{10000}\",\"fields\":[{0}]}}]}}",
+        ),
+        IMPLICIT_ID_SNAPSHOT,
     );
 
     assert_eq!(version_content(&insert).0, expected);
@@ -1251,7 +1259,7 @@ fn initial_schema_version_snapshot_escapes_names_and_link_references() {
     .expect("catalog names are not limited to parser identifiers");
     let insert = initial_version_insert(&catalog, VERSION_ID, APPLIED_AT);
     let expected = alloc::format!(
-        "{{\"format_version\":1,\"objects\":[{{\"name\":\"{escaped}\",\"fields\":[{{\"name\":\"{escaped}\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"optional\",\"unique\":false,\"inverse_field\":null}},{{\"name\":\"back\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"many\",\"unique\":false,\"inverse_field\":\"{escaped}\"}}]}}]}}"
+        "{{\"format_version\":1,\"objects\":[{{\"name\":\"{escaped}\",\"fields\":[{{\"name\":\"{escaped}\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"optional\",\"unique\":false,\"inverse_field\":null}},{{\"name\":\"back\",\"kind\":\"link\",\"target_type\":\"{escaped}\",\"cardinality\":\"many\",\"unique\":false,\"inverse_field\":\"{escaped}\"}},{IMPLICIT_ID_SNAPSHOT}]}}]}}"
     );
 
     assert_eq!(version_content(&insert).0, expected);
