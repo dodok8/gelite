@@ -1,6 +1,6 @@
 extern crate alloc;
 
-mod fixtures;
+pub(crate) mod fixtures;
 #[cfg(feature = "native")]
 mod native;
 

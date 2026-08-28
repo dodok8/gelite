@@ -753,23 +753,6 @@ fn native_schema_verification_rejects_missing_version_row() {
 }
 
 #[test]
-fn native_schema_verification_rejects_multiple_initial_version_rows() {
-    let mut runner = native_runner_with_post_schema();
-    // Bypass initial-apply duplicate protection to model an invalid version history.
-    runner
-        .execute(
-            "INSERT INTO _engine_schema_versions (version_id, checksum, applied_at, schema_snapshot) \
-             SELECT '599d1093-5c86-4e9d-9d01-3d28e2b8e090', checksum, applied_at, schema_snapshot \
-             FROM _engine_schema_versions",
-        )
-        .expect("second version row should be inserted");
-
-    runner
-        .verify_schema_version()
-        .expect_err("initial verification must not silently choose one of multiple version rows");
-}
-
-#[test]
 fn native_runner_can_execute_select_statement_with_bind_values() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
 

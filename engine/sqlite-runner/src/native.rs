@@ -409,6 +409,37 @@ impl NativeSQLiteRunner {
         Ok(())
     }
 
+    /// Reads stored rows without validating their content, count, or migration order.
+    #[allow(dead_code)] // Used once verify_schema_version is implemented.
+    fn read_schema_versions(&self) -> Result<Vec<SchemaVersionRow>, SQLiteRunnerError> {
+        let statement = self
+            .connection
+            .prepare_v2(
+                "SELECT version_id, checksum, applied_at, schema_snapshot FROM _engine_schema_versions",
+            )
+            .map_err(|_| self.connection_error("prepare schema version query"))?;
+        let mut rows = Vec::new();
+
+        loop {
+            match statement.step() {
+                Ok(ResultCode::ROW) => rows.push(SchemaVersionRow {
+                    version_id: read_text_column(&statement, 0, "read schema version id")?,
+                    checksum: read_text_column(&statement, 1, "read schema version checksum")?,
+                    applied_at: read_text_column(&statement, 2, "read schema version applied_at")?,
+                    schema_snapshot: read_text_column(
+                        &statement,
+                        3,
+                        "read schema version snapshot",
+                    )?,
+                }),
+                Ok(ResultCode::DONE) => return Ok(rows),
+                Ok(result) | Err(result) => {
+                    return Err(self.result_error("step schema version query", result));
+                }
+            }
+        }
+    }
+
     fn read_catalog_objects(&self) -> Result<Vec<CatalogObjectRow>, SQLiteRunnerError> {
         let statement = self
             .connection
@@ -514,6 +545,15 @@ impl NativeSQLiteRunner {
 
         SQLiteRunnerError::execution_failed(format!("{context}: {result:?}: {message}"))
     }
+}
+
+#[allow(dead_code)] // Used once verify_schema_version is implemented.
+#[derive(Debug, PartialEq, Eq)]
+struct SchemaVersionRow {
+    version_id: String,
+    checksum: String,
+    applied_at: String,
+    schema_snapshot: String,
 }
 
 struct CatalogObjectRow {
@@ -740,5 +780,75 @@ impl SQLiteTransactionRunner for NativeSQLiteRunner {
 
     fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
         NativeSQLiteRunner::rollback_transaction(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::fixtures::{native_runner_with_post_schema, rendered_post_schema_statements};
+
+    #[test]
+    fn read_schema_versions_returns_all_stored_values_without_verifying_them() {
+        let mut runner = native_runner_with_post_schema();
+        let statements = rendered_post_schema_statements();
+        let Some(sqlite_schema_sqlgen::RenderedSchemaStatement::Insert(insert)) = statements.last()
+        else {
+            panic!("initial schema should end with the version insert");
+        };
+
+        // Raw metadata writes exercise byte preservation and multiple rows, not schema apply.
+        let additional_values = vec![
+            SQLiteValuePlan::Text("599d1093-5c86-4e9d-9d01-3d28e2b8e090".to_string()),
+            SQLiteValuePlan::Text("unchecked checksum".to_string()),
+            SQLiteValuePlan::Text("2026-08-28T12:35:00.000Z".to_string()),
+            SQLiteValuePlan::Text(" {\"name\":\"雪\"}\n".to_string()),
+        ];
+        runner
+            .execute_with_values(insert.sql(), &additional_values)
+            .expect("additional version should be stored");
+
+        let rows = runner.read_schema_versions().expect("versions should load");
+        // Values stay owned after the prepared statement and connection are dropped.
+        drop(runner);
+        let values: Vec<_> = rows
+            .into_iter()
+            .map(|row| {
+                vec![
+                    SQLiteValuePlan::Text(row.version_id),
+                    SQLiteValuePlan::Text(row.checksum),
+                    SQLiteValuePlan::Text(row.applied_at),
+                    SQLiteValuePlan::Text(row.schema_snapshot),
+                ]
+            })
+            .collect();
+
+        assert_eq!(values.len(), 2);
+        assert!(values.iter().any(|row| row == insert.values()));
+        assert!(values.contains(&additional_values));
+    }
+
+    #[test]
+    fn read_schema_versions_returns_empty_rows_for_empty_table() {
+        let mut runner = native_runner_with_post_schema();
+        // Normal initial application always inserts a baseline; remove it for the read test.
+        runner
+            .execute("DELETE FROM _engine_schema_versions")
+            .expect("version should be removed");
+
+        assert_eq!(runner.read_schema_versions(), Ok(vec![]));
+    }
+
+    #[test]
+    fn read_schema_versions_reports_missing_table() {
+        let runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+
+        let error = runner
+            .read_schema_versions()
+            .expect_err("missing version table should be a query error");
+
+        assert!(error.message().contains("prepare schema version query"));
+        assert!(error.message().contains("no such table"));
+        assert_eq!(runner.table_exists("_engine_schema_versions"), Ok(false));
     }
 }
