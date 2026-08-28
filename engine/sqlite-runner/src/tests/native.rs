@@ -621,9 +621,13 @@ fn native_schema_verification_rejects_unsupported_snapshot_format() {
         )
         .expect("unsupported snapshot and matching checksum should be stored");
 
-    runner
+    let error = runner
         .verify_schema_version()
         .expect_err("unsupported format versions must not be reinterpreted as format v1");
+    assert!(matches!(
+        error,
+        SQLiteRunnerError::SchemaVerificationFailed { .. }
+    ));
 }
 
 #[test]
@@ -668,9 +672,10 @@ fn native_schema_verification_hashes_exact_stored_snapshot_bytes() {
         .execute("UPDATE _engine_schema_versions SET schema_snapshot = schema_snapshot || ' '")
         .expect("snapshot whitespace should be corrupted");
 
-    runner
+    let error = runner
         .verify_schema_version()
         .expect_err("verification must not normalize snapshot bytes before hashing");
+    assert_eq!(error.message(), "stored schema snapshot checksum mismatch");
 }
 
 #[test]
@@ -692,9 +697,13 @@ fn native_schema_verification_rejects_valid_snapshot_for_another_catalog() {
             .expect("other version should be stored");
     }
 
-    runner
+    let error = runner
         .verify_schema_version()
         .expect_err("a valid checksum alone does not prove that the logical catalog matches");
+    assert!(matches!(
+        error,
+        SQLiteRunnerError::SchemaVerificationFailed { .. }
+    ));
 }
 
 #[test]
@@ -727,6 +736,23 @@ fn native_schema_verification_rejects_invalid_catalog_metadata() {
 }
 
 #[test]
+fn native_schema_verification_rejects_incompatible_field_metadata() {
+    // Metadata writes bypass the typed schema planner.
+    for sql in [
+        "UPDATE _engine_catalog_fields SET target_object_id = 1 WHERE name = 'title'",
+        "UPDATE _engine_catalog_fields SET is_unique = 'true' WHERE name = 'title'",
+    ] {
+        let mut runner = native_runner_with_post_schema();
+        runner
+            .execute(sql)
+            .expect("field metadata should be corrupted");
+        runner
+            .verify_schema_version()
+            .expect_err("invalid field metadata must not be normalized away");
+    }
+}
+
+#[test]
 fn native_schema_verification_rejects_database_without_version_table() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
 
@@ -754,6 +780,94 @@ fn native_schema_verification_rejects_missing_version_row() {
     runner
         .verify_schema_version()
         .expect_err("missing baseline must not be treated as successful verification");
+}
+
+#[test]
+fn native_schema_verification_preserves_caller_transaction() {
+    let mut runner = native_runner_with_post_schema();
+    runner
+        .begin_transaction()
+        .expect("caller transaction should begin");
+    runner
+        .execute("INSERT INTO post (id, title) VALUES ('post-1', 'Draft')")
+        .expect("caller write should execute");
+
+    runner
+        .verify_schema_version()
+        .expect_err("verification requires its own read transaction");
+    runner
+        .commit_transaction()
+        .expect("verification must not roll back or commit caller work");
+    assert_eq!(
+        runner.first_three_column_row("SELECT COUNT(*), MIN(title), NULL FROM post"),
+        Ok(Some((1, "Draft".to_string(), None)))
+    );
+}
+
+#[test]
+fn native_schema_verification_checks_only_latest_version() {
+    let mut runner = native_runner_with_post_schema();
+    // Raw history fixtures stand in for future non-initial migrations.
+    runner.execute(
+        "INSERT INTO _engine_schema_versions (version_id, checksum, applied_at, schema_snapshot, version_number)
+         SELECT '11111111-1111-4111-8111-111111111111', checksum, applied_at, schema_snapshot, 2
+         FROM _engine_schema_versions",
+    ).expect("latest version should be stored");
+    runner.execute("UPDATE _engine_schema_versions SET checksum = 'old corruption' WHERE version_number = 1")
+        .expect("older history should be corrupted");
+
+    runner
+        .verify_schema_version()
+        .expect("valid latest version should match the catalog");
+    runner.execute("UPDATE _engine_schema_versions SET checksum = 'latest corruption' WHERE version_number = 2")
+        .expect("latest checksum should be corrupted");
+    let error = runner
+        .verify_schema_version()
+        .expect_err("latest corruption should be detected");
+    assert_eq!(error.message(), "stored schema snapshot checksum mismatch");
+}
+
+#[test]
+fn native_schema_verification_rejects_missing_or_corrupt_implicit_identity() {
+    // Metadata corruption must not disappear when ObjectType recreates the implicit id.
+    for sql in [
+        "DELETE FROM _engine_catalog_fields WHERE name = 'id'",
+        "UPDATE _engine_catalog_fields SET scalar_type = 'str' WHERE name = 'id'",
+        "UPDATE _engine_catalog_fields SET is_unique = 1 WHERE name = 'id'",
+        "INSERT INTO _engine_catalog_fields SELECT object_id, 99, 'extra_id', field_kind, cardinality, scalar_type, target_object_id, is_implicit, is_unique, inverse_field_name FROM _engine_catalog_fields WHERE name = 'id'",
+    ] {
+        let mut runner = native_runner_with_post_schema();
+        runner
+            .execute(sql)
+            .expect("implicit identity should be corrupted");
+        let error = runner
+            .verify_schema_version()
+            .expect_err("corrupt implicit identity must be rejected");
+        assert!(error.message().contains("implicit UUID id"), "{error:?}");
+        runner
+            .begin_transaction()
+            .expect("verification failure should release its transaction");
+        runner
+            .rollback_transaction()
+            .expect("test transaction should end");
+    }
+}
+
+#[test]
+fn native_schema_verification_rejects_orphaned_catalog_fields() {
+    let mut runner = native_runner_with_post_schema();
+    // External writers can bypass SQLite foreign-key enforcement.
+    runner
+        .execute("PRAGMA foreign_keys = OFF")
+        .expect("disable foreign keys for corruption fixture");
+    runner
+        .execute("UPDATE _engine_catalog_fields SET object_id = 99 WHERE name = 'title'")
+        .expect("orphan field should be stored");
+
+    let error = runner
+        .verify_schema_version()
+        .expect_err("orphan fields must not be silently ignored");
+    assert!(error.message().contains("unknown owner object"));
 }
 
 #[test]
@@ -998,6 +1112,9 @@ fn inverse_catalog_round_trips_and_rejects_corrupt_metadata() {
         runner.load_schema_catalog().expect("reload catalog"),
         catalog
     );
+    runner
+        .verify_schema_version()
+        .expect("inverse links should match the stored snapshot");
     for metadata in ["field_kind = 'scalar'", "is_implicit = 1", "is_unique = 1"] {
         runner
             .execute(&format!(

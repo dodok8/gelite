@@ -13,7 +13,7 @@ use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
     SingleCardinality, Uniqueness,
 };
-use sqlite_schema_plan::SQLiteValuePlan;
+use sqlite_schema_plan::{SQLiteValuePlan, schema_snapshot_checksum, serialize_schema_snapshot};
 
 use crate::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
@@ -119,14 +119,61 @@ impl NativeSQLiteRunner {
         }
     }
 
-    /// Verifies the stored initial version checksum and logical catalog without source files.
+    /// Verifies the latest snapshot checksum and logical catalog in one read transaction.
+    ///
+    /// No source file is needed. An existing caller transaction is rejected and left untouched.
     pub fn verify_schema_version(&mut self) -> Result<(), SQLiteRunnerError> {
-        todo!()
+        self.begin_transaction()?;
+        let result = (|| {
+            let last_schema = self.read_latest_schema_version()?.ok_or_else(|| {
+                SQLiteRunnerError::schema_verification_failed(
+                    "database does not contain a stored schema version",
+                )
+            })?;
+            if schema_snapshot_checksum(&last_schema.schema_snapshot) != last_schema.checksum {
+                return Err(SQLiteRunnerError::schema_verification_failed(
+                    "stored schema snapshot checksum mismatch",
+                ));
+            }
+
+            let catalog = self.load_schema_catalog()?;
+            let snapshot = serialize_schema_snapshot(&catalog).map_err(|error| {
+                SQLiteRunnerError::schema_verification_failed(format!(
+                    "failed to serialize stored schema catalog: {error}",
+                ))
+            })?;
+            if snapshot != last_schema.schema_snapshot {
+                return Err(SQLiteRunnerError::schema_verification_failed(
+                    "stored schema snapshot does not match the canonical logical catalog",
+                ));
+            }
+            self.commit_transaction()
+        })();
+
+        result.map_err(|mut error: SQLiteRunnerError| {
+            if let Err(rollback_error) = self.rollback_transaction() {
+                let message = match &mut error {
+                    SQLiteRunnerError::ExecutionFailed { message }
+                    | SQLiteRunnerError::SchemaVerificationFailed { message } => message,
+                };
+                message.push_str(&format!("; rollback failed: {}", rollback_error.message()));
+            }
+            error
+        })
     }
 
     pub fn load_schema_catalog(&self) -> Result<SchemaCatalog, SQLiteRunnerError> {
         let objects = self.read_catalog_objects()?;
         let fields = self.read_catalog_fields()?;
+        if fields.iter().any(|field| {
+            !objects
+                .iter()
+                .any(|object| object.object_id == field.object_id)
+        }) {
+            return Err(SQLiteRunnerError::execution_failed(
+                "catalog field references an unknown owner object",
+            ));
+        }
         if fields.iter().any(|field| {
             field.inverse_field_name.is_some()
                 && (field.field_kind != "link" || field.is_implicit || field.is_unique)
@@ -135,9 +182,35 @@ impl NativeSQLiteRunner {
                 "invalid inverse field metadata",
             ));
         }
+        if fields.iter().any(|field| {
+            (field.field_kind == "scalar" && field.target_object_id.is_some())
+                || (field.field_kind == "link" && field.scalar_type.is_some())
+        }) {
+            return Err(SQLiteRunnerError::execution_failed(
+                "catalog field contains metadata for a different field kind",
+            ));
+        }
 
         let mut object_types = Vec::new();
         for object in &objects {
+            let mut implicit = fields
+                .iter()
+                .filter(|field| field.object_id == object.object_id && field.is_implicit);
+            let valid_id = implicit.next().is_some_and(|field| {
+                field.name == "id"
+                    && field.field_kind == "scalar"
+                    && field.scalar_type.as_deref() == Some("uuid")
+                    && field.cardinality == "required"
+                    && !field.is_unique
+                    && field.target_object_id.is_none()
+                    && field.inverse_field_name.is_none()
+            });
+            if !valid_id || implicit.next().is_some() {
+                return Err(SQLiteRunnerError::execution_failed(format!(
+                    "catalog object `{}` must contain exactly one implicit UUID id field",
+                    object.name,
+                )));
+            }
             let mut declared_fields = Vec::new();
 
             for field in fields
@@ -410,7 +483,6 @@ impl NativeSQLiteRunner {
     }
 
     /// Reads the highest numbered stored version without verifying its contents.
-    #[allow(dead_code)] // Used once verify_schema_version is implemented.
     fn read_latest_schema_version(&self) -> Result<Option<SchemaVersionRow>, SQLiteRunnerError> {
         let statement = self
             .connection
@@ -467,12 +539,6 @@ impl NativeSQLiteRunner {
             }
         }
 
-        if rows.is_empty() {
-            return Err(SQLiteRunnerError::execution_failed(
-                "database does not contain Gelite catalog objects",
-            ));
-        }
-
         Ok(rows)
     }
 
@@ -523,12 +589,6 @@ impl NativeSQLiteRunner {
                 Ok(result) => return Err(self.result_error("step catalog field query", result)),
                 Err(result) => return Err(self.result_error("step catalog field query", result)),
             }
-        }
-
-        if rows.is_empty() {
-            return Err(SQLiteRunnerError::execution_failed(
-                "database does not contain Gelite catalog fields",
-            ));
         }
 
         Ok(rows)
@@ -632,11 +692,11 @@ fn read_bool_column(
     index: i32,
     context: &str,
 ) -> Result<bool, SQLiteRunnerError> {
-    match statement.column_int64(index) {
-        0 => Ok(false),
-        1 => Ok(true),
+    match read_nullable_integer_column(statement, index, context)? {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
         value => Err(SQLiteRunnerError::execution_failed(format!(
-            "{context}: expected 0 or 1, got {value}"
+            "{context}: expected 0 or 1, got {value:?}"
         ))),
     }
 }

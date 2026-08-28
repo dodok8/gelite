@@ -341,6 +341,29 @@ record against an actor who can rewrite both values. Verifying the logical
 schema additionally requires comparing the canonical snapshot of the loaded catalog with the
 stored snapshot; this does not audit physical SQLite DDL.
 
+#### Native version verification
+
+`NativeSQLiteRunner::verify_schema_version` verifies the latest stored version
+in a single read transaction, without reading the original schema source:
+
+1. Read the highest numbered row, rejecting a missing row or invalid version number.
+2. Hash the exact stored snapshot bytes and compare with the stored checksum.
+3. Load the logical catalog from object and field metadata, including an empty
+   catalog when both tables are empty. Reject orphan fields and missing or
+   malformed implicit identity metadata instead of silently reconstructing it.
+4. Serialize the catalog using the current canonical format and compare the
+   entire snapshot byte for byte. Unsupported formats and malformed snapshots
+   cannot match this representation and are rejected.
+
+Success and failure both end the verification transaction without changing
+stored data. If the caller already has a transaction, verification fails before
+reading and leaves the caller's transaction untouched. Database errors remain
+`SQLiteRunnerError::ExecutionFailed`; checksum and snapshot mismatches are
+`SQLiteRunnerError::SchemaVerificationFailed`.
+
+Verification is explicit, not performed on every query. It verifies the latest
+version against the current catalog, not the integrity of every historical row.
+
 ### `_engine_catalog_objects`
 
 Stores semantic object definitions for diagnostics and diff support.

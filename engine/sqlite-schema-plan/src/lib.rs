@@ -1031,11 +1031,8 @@ fn plan_schema_version_rows(
     version_id: &str,
     applied_at: &str,
 ) -> Result<Vec<SQLiteSchemaVersionRow>, serde_json::Error> {
-    let schema_snapshot = serde_json::to_string(&snapshot_schema(catalog))?;
-    let checksum = Sha256::digest(schema_snapshot.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let schema_snapshot = serialize_schema_snapshot(catalog)?;
+    let checksum = schema_snapshot_checksum(&schema_snapshot);
 
     Ok(vec![SQLiteSchemaVersionRow {
         version_number: 1,
@@ -1044,6 +1041,19 @@ fn plan_schema_version_rows(
         schema_snapshot,
         checksum,
     }])
+}
+
+/// Serializes a logical catalog using the canonical snapshot format, without application metadata.
+pub fn serialize_schema_snapshot(catalog: &SchemaCatalog) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&snapshot_schema(catalog))
+}
+
+/// Returns lowercase SHA-256 of the exact snapshot bytes, without JSON normalization.
+pub fn schema_snapshot_checksum(schema_snapshot: &str) -> String {
+    Sha256::digest(schema_snapshot.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Kind of field recorded in the SQLite catalog metadata.

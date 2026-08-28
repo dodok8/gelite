@@ -169,6 +169,12 @@ with `LIMIT 1`; it does not sort the entire history in memory. Allocation of
 subsequent numbers and upgrades of older metadata tables remain deferred with
 non-initial migrations.
 
+The native verification method uses one read transaction to check the latest
+stored snapshot's checksum and compare it with a canonical snapshot of the
+loaded catalog. It reuses `serialize_schema_snapshot` and
+`schema_snapshot_checksum` from `sqlite-schema-plan`, without new dependencies
+or snapshot deserialization. It does not run automatically for each query.
+
 Use Serde-derived snapshot types and `serde_json` in `sqlite-schema-plan`:
 
 ```toml

@@ -55,12 +55,39 @@ fn schema_apply_records_preview_content_and_preserves_the_initial_baseline() {
     assert_ne!(applied_at, "<applied-at-on-apply>");
     assert_eq!(SQLiteValuePlan::Text(checksum.clone()), expected[1]);
     assert_eq!(SQLiteValuePlan::Text(snapshot.clone()), expected[3]);
+    runner
+        .verify_schema_version()
+        .expect("applied logical schema should verify");
 
     assert!(apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).is_err());
     let after = runner
         .execute_select(&statement)
         .expect("original baseline");
     assert_eq!(after.rows(), stored.rows());
+    runner
+        .verify_schema_version()
+        .expect("failed reapplication must preserve a verifiable baseline");
+}
+
+#[test]
+fn schema_version_verifies_after_reopening_database_without_source_file() {
+    let source_path = write_temp_geli_schema(BLOG_SCHEMA_SOURCE);
+    let database_path = source_path.with_extension("db");
+    let source = fs::read_to_string(&source_path).expect("source should load");
+    let mut runner = NativeSQLiteRunner::open(database_path.to_str().expect("UTF-8 path"))
+        .expect("database should open");
+    apply_schema(&source, &mut runner).expect("schema should apply");
+    drop(runner);
+    drop(source);
+    fs::remove_file(source_path).expect("original source should be removed");
+
+    let mut reopened = NativeSQLiteRunner::open(database_path.to_str().expect("UTF-8 path"))
+        .expect("database should reopen");
+    let result = reopened.verify_schema_version();
+    drop(reopened);
+    fs::remove_file(database_path).expect("test database should be removed");
+
+    result.expect("stored snapshot should verify without the source or original connection");
 }
 
 static TEMP_SCHEMA_COUNTER: AtomicU64 = AtomicU64::new(0);
