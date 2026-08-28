@@ -387,6 +387,10 @@ impl ObjectType {
         &self.declared_fields
     }
 
+    pub fn implicit_fields(&self) -> &[Field] {
+        &self.implicit_fields
+    }
+
     pub fn find_field(&self, name: &str) -> Option<&Field> {
         self.implicit_fields
             .iter()

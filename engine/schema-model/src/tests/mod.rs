@@ -97,6 +97,7 @@ fn implicit_id_field_exists_on_every_object_type() {
         .find_field("id")
         .expect("implicit field `id` should exist on every object type");
 
+    assert_eq!(user.implicit_fields(), core::slice::from_ref(id_field));
     assert!(id_field.is_scalar());
     assert!(!id_field.is_link());
     assert_eq!(id_field.cardinality(), crate::Cardinality::Required);
