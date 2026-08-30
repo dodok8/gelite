@@ -65,6 +65,7 @@ impl SQLiteSchemaPlan {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct SQLitePrimaryKeyPlan {
     column_names: Vec<String>,
 }
@@ -85,6 +86,7 @@ impl SQLitePrimaryKeyPlan {
 /// SQLite. It does not record whether the table came from engine metadata,
 /// an object type, or a relation table; callers keep those groups separate in
 /// the surrounding `SQLiteSchemaPlan`.
+#[derive(Debug, PartialEq, Eq)]
 pub struct SQLiteTablePlan {
     name: String,
     columns: Vec<SQLiteColumnPlan>,
@@ -671,6 +673,7 @@ pub enum SQLiteAffinity {
 /// The booleans model the constraints currently needed by the metadata table
 /// contract. Foreign keys are intentionally not part of this type; they should
 /// be modeled as table-level plans once the first foreign-key test is added.
+#[derive(Debug, PartialEq, Eq)]
 pub struct SQLiteColumnPlan {
     name: String,
     affinity: SQLiteAffinity,
@@ -722,6 +725,7 @@ pub enum SQLiteForeignKeyAction {
 }
 
 /// Planned table-level foreign key before DDL rendering.
+#[derive(Debug, PartialEq, Eq)]
 pub struct SQLiteForeignKeyPlan {
     column_name: String,
     target_table: String,
@@ -1077,6 +1081,7 @@ pub enum SQLiteCatalogFieldKind {
 /// Insert plans fix the target table, column order, and bindable values while
 /// still avoiding SQL string construction. The renderer can later serialize
 /// this shape into `INSERT` statements with placeholders and bound values.
+#[derive(Debug, PartialEq, Eq)]
 pub struct SQLiteInsertPlan {
     table_name: String,
     columns: Vec<String>,
@@ -1107,6 +1112,7 @@ pub enum SQLiteValuePlan {
     Null,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct SQLiteIndexPlan {
     name: String,
     table_name: String,
@@ -1171,6 +1177,7 @@ pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPl
     }]
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum SQLiteSchemaMigrationOperation {
     CreateTable(SQLiteTablePlan),
     AddColumn {
@@ -1409,24 +1416,20 @@ fn validate_added_column_name(
     let Some(column) = stored_column_name(field) else {
         return Ok(());
     };
-    let collides = object
-        .declared_fields()
-        .iter()
-        .filter(|other| other.name() != field.name())
-        .filter_map(stored_column_name)
-        .any(|other| other == column);
-
-    if collides {
-        Err(
-            SQLiteSchemaMigrationUnsupportedError::PhysicalColumnNameCollision {
-                object_type: object.name().to_string(),
-                field: field.name().to_string(),
-                column,
-            },
-        )
-    } else {
-        Ok(())
+    if !object.declared_fields().iter().any(|other| {
+        other.name() != field.name()
+            && stored_column_name(other).as_deref() == Some(column.as_str())
+    }) {
+        return Ok(());
     }
+
+    Err(
+        SQLiteSchemaMigrationUnsupportedError::PhysicalColumnNameCollision {
+            object_type: object.name().to_string(),
+            field: field.name().to_string(),
+            column,
+        },
+    )
 }
 
 fn validate_existing_field(
@@ -1528,18 +1531,16 @@ fn migration_object_id(
     new_objects: &[&ObjectType],
     object_name: &str,
 ) -> i64 {
-    current.find_type_ref(object_name).map_or_else(
-        || {
-            current.object_types().len() as i64
-                + new_objects
-                    .iter()
-                    .position(|object| object.name() == object_name)
-                    .expect("desired link target should exist among new objects")
-                    as i64
-                + 1
-        },
-        |object| object.id().value(),
-    )
+    if let Some(object) = current.find_type_ref(object_name) {
+        return object.id().value();
+    }
+
+    current.object_types().len() as i64
+        + new_objects
+            .iter()
+            .position(|object| object.name() == object_name)
+            .expect("desired link target should exist among new objects") as i64
+        + 1
 }
 
 fn migration_field_row(

@@ -1481,11 +1481,9 @@ fn initial_schema_version_content_is_independent_of_application_values() {
 mod migration {
     use super::*;
     use crate::{
-        SQLiteSchemaMigrationOperation, SQLiteSchemaMigrationPlan,
-        SQLiteSchemaMigrationUnsupportedError, plan_schema_migration,
+        SQLiteSchemaMigrationOperation, SQLiteSchemaMigrationUnsupportedError,
+        plan_schema_migration,
     };
-    use alloc::format;
-    use alloc::string::String;
 
     fn catalog(fields: Vec<Field>) -> SchemaCatalog {
         SchemaCatalog::try_new(vec![
@@ -1495,47 +1493,36 @@ mod migration {
         .unwrap()
     }
 
-    fn operation_keys(plan: &SQLiteSchemaMigrationPlan) -> Vec<String> {
-        plan.operations()
-            .iter()
-            .map(|operation| match operation {
-                SQLiteSchemaMigrationOperation::CreateTable(table) => {
-                    format!("create-table:{}", table.name())
-                }
-                SQLiteSchemaMigrationOperation::AddColumn {
-                    table_name, column, ..
-                } => format!("add-column:{table_name}:{}", column.name()),
-                SQLiteSchemaMigrationOperation::CreateIndex(index) => {
-                    format!("create-index:{}", index.name())
-                }
-                SQLiteSchemaMigrationOperation::InsertMetadata(insert) => {
-                    format!("insert:{}:{:?}", insert.table_name(), insert.values())
-                }
-            })
-            .collect()
+    fn scalar(name: &str, scalar_type: ScalarType, cardinality: SingleCardinality) -> Field {
+        Field::Scalar(ScalarField::new(name, scalar_type, cardinality))
+    }
+
+    fn unique_scalar(name: &str, scalar_type: ScalarType, cardinality: SingleCardinality) -> Field {
+        Field::Scalar(ScalarField::with_uniqueness(
+            name,
+            scalar_type,
+            cardinality,
+            Uniqueness::Unique,
+        ))
+    }
+
+    fn link(name: &str, target: &str, cardinality: Cardinality) -> Field {
+        Field::Link(LinkField::new(name, target, cardinality))
     }
 
     #[test]
     fn schema_migration_plan_is_empty_for_identical_or_reordered_catalogs() {
         let current = catalog(vec![
-            Field::Scalar(ScalarField::new(
-                "name",
-                ScalarType::Str,
-                SingleCardinality::Optional,
-            )),
-            Field::Link(LinkField::new("other", "Other", Cardinality::Optional)),
+            scalar("name", ScalarType::Str, SingleCardinality::Optional),
+            link("other", "Other", Cardinality::Optional),
         ]);
         let reordered = SchemaCatalog::try_new(vec![
             ObjectType::new("Other", vec![]),
             ObjectType::new(
                 "Root",
                 vec![
-                    Field::Link(LinkField::new("other", "Other", Cardinality::Optional)),
-                    Field::Scalar(ScalarField::new(
-                        "name",
-                        ScalarType::Str,
-                        SingleCardinality::Optional,
-                    )),
+                    link("other", "Other", Cardinality::Optional),
+                    scalar("name", ScalarType::Str, SingleCardinality::Optional),
                 ],
             ),
         ])
@@ -1563,23 +1550,12 @@ mod migration {
             ObjectType::new(
                 "Root",
                 vec![
-                    Field::Scalar(ScalarField::new(
-                        "nickname",
-                        ScalarType::Str,
-                        SingleCardinality::Optional,
-                    )),
-                    Field::Link(LinkField::new("parent", "Root", Cardinality::Optional)),
-                    Field::Link(LinkField::new("others", "Other", Cardinality::Many)),
+                    scalar("nickname", ScalarType::Str, SingleCardinality::Optional),
+                    link("parent", "Root", Cardinality::Optional),
+                    link("others", "Other", Cardinality::Many),
                 ],
             ),
-            ObjectType::new(
-                "Post",
-                vec![Field::Link(LinkField::new(
-                    "author",
-                    "Root",
-                    Cardinality::Optional,
-                ))],
-            ),
+            ObjectType::new("Post", vec![link("author", "Root", Cardinality::Optional)]),
         ])
         .unwrap();
         let plan = plan_schema_migration(&current, &desired).unwrap();
@@ -1650,12 +1626,8 @@ mod migration {
             ObjectType::new(
                 "Root",
                 vec![
-                    Field::Link(LinkField::new("other", "Other", Cardinality::Optional)),
-                    Field::Scalar(ScalarField::new(
-                        "name",
-                        ScalarType::Str,
-                        SingleCardinality::Optional,
-                    )),
+                    link("other", "Other", Cardinality::Optional),
+                    scalar("name", ScalarType::Str, SingleCardinality::Optional),
                 ],
             ),
             ObjectType::new("Other", vec![]),
@@ -1668,20 +1640,20 @@ mod migration {
             ObjectType::new(
                 "Root",
                 vec![
-                    Field::Scalar(ScalarField::new(
-                        "name",
-                        ScalarType::Str,
-                        SingleCardinality::Optional,
-                    )),
-                    Field::Link(LinkField::new("other", "Other", Cardinality::Optional)),
+                    scalar("name", ScalarType::Str, SingleCardinality::Optional),
+                    link("other", "Other", Cardinality::Optional),
                 ],
             ),
         ])
         .unwrap();
 
         assert_eq!(
-            operation_keys(&plan_schema_migration(&current, &first).unwrap()),
-            operation_keys(&plan_schema_migration(&current, &second).unwrap())
+            plan_schema_migration(&current, &first)
+                .unwrap()
+                .operations(),
+            plan_schema_migration(&current, &second)
+                .unwrap()
+                .operations()
         );
     }
 
@@ -1698,18 +1670,10 @@ mod migration {
 
     #[test]
     fn schema_migration_plan_rejects_colliding_physical_column_names() {
-        let current = catalog(vec![Field::Link(LinkField::new(
-            "other",
-            "Other",
-            Cardinality::Optional,
-        ))]);
+        let current = catalog(vec![link("other", "Other", Cardinality::Optional)]);
         let desired = catalog(vec![
-            Field::Link(LinkField::new("other", "Other", Cardinality::Optional)),
-            Field::Scalar(ScalarField::new(
-                "other_id",
-                ScalarType::Str,
-                SingleCardinality::Optional,
-            )),
+            link("other", "Other", Cardinality::Optional),
+            scalar("other_id", ScalarType::Str, SingleCardinality::Optional),
         ]);
 
         assert_unsupported(
@@ -1733,97 +1697,76 @@ mod migration {
             },
         );
         assert_unsupported(
-            catalog(vec![Field::Scalar(ScalarField::new(
+            catalog(vec![scalar(
                 "old",
                 ScalarType::Str,
                 SingleCardinality::Optional,
-            ))]),
-            catalog(vec![Field::Scalar(ScalarField::new(
+            )]),
+            catalog(vec![scalar(
                 "new",
                 ScalarType::Str,
                 SingleCardinality::Optional,
-            ))]),
+            )]),
             SQLiteSchemaMigrationUnsupportedError::FieldRemoval {
                 object_type: "Root".into(),
                 field: "old".into(),
             },
         );
         assert_unsupported(
-            catalog(vec![Field::Scalar(ScalarField::new(
+            catalog(vec![scalar(
                 "value",
                 ScalarType::Str,
                 SingleCardinality::Optional,
-            ))]),
-            catalog(vec![Field::Link(LinkField::new(
-                "value",
-                "Other",
-                Cardinality::Optional,
-            ))]),
+            )]),
+            catalog(vec![link("value", "Other", Cardinality::Optional)]),
             SQLiteSchemaMigrationUnsupportedError::FieldKindChange {
                 object_type: "Root".into(),
                 field: "value".into(),
             },
         );
         assert_unsupported(
-            catalog(vec![Field::Scalar(ScalarField::new(
+            catalog(vec![scalar(
                 "value",
                 ScalarType::Str,
                 SingleCardinality::Optional,
-            ))]),
-            catalog(vec![Field::Scalar(ScalarField::new(
+            )]),
+            catalog(vec![scalar(
                 "value",
                 ScalarType::Int64,
                 SingleCardinality::Optional,
-            ))]),
+            )]),
             SQLiteSchemaMigrationUnsupportedError::ScalarTypeChange {
                 object_type: "Root".into(),
                 field: "value".into(),
             },
         );
         assert_unsupported(
-            catalog(vec![Field::Link(LinkField::new(
-                "value",
-                "Other",
-                Cardinality::Optional,
-            ))]),
-            catalog(vec![Field::Link(LinkField::new(
-                "value",
-                "Root",
-                Cardinality::Optional,
-            ))]),
+            catalog(vec![link("value", "Other", Cardinality::Optional)]),
+            catalog(vec![link("value", "Root", Cardinality::Optional)]),
             SQLiteSchemaMigrationUnsupportedError::LinkTargetChange {
                 object_type: "Root".into(),
                 field: "value".into(),
             },
         );
         assert_unsupported(
-            catalog(vec![Field::Link(LinkField::new(
-                "value",
-                "Other",
-                Cardinality::Optional,
-            ))]),
-            catalog(vec![Field::Link(LinkField::new(
-                "value",
-                "Other",
-                Cardinality::Many,
-            ))]),
+            catalog(vec![link("value", "Other", Cardinality::Optional)]),
+            catalog(vec![link("value", "Other", Cardinality::Many)]),
             SQLiteSchemaMigrationUnsupportedError::CardinalityChange {
                 object_type: "Root".into(),
                 field: "value".into(),
             },
         );
         assert_unsupported(
-            catalog(vec![Field::Scalar(ScalarField::new(
+            catalog(vec![scalar(
                 "value",
                 ScalarType::Str,
                 SingleCardinality::Optional,
-            ))]),
-            catalog(vec![Field::Scalar(ScalarField::with_uniqueness(
+            )]),
+            catalog(vec![unique_scalar(
                 "value",
                 ScalarType::Str,
                 SingleCardinality::Optional,
-                Uniqueness::Unique,
-            ))]),
+            )]),
             SQLiteSchemaMigrationUnsupportedError::UniquenessChange {
                 object_type: "Root".into(),
                 field: "value".into(),
@@ -1831,11 +1774,11 @@ mod migration {
         );
         assert_unsupported(
             catalog(vec![]),
-            catalog(vec![Field::Scalar(ScalarField::new(
+            catalog(vec![scalar(
                 "value",
                 ScalarType::Str,
                 SingleCardinality::Required,
-            ))]),
+            )]),
             SQLiteSchemaMigrationUnsupportedError::RequiredFieldAddition {
                 object_type: "Root".into(),
                 field: "value".into(),
@@ -1843,12 +1786,11 @@ mod migration {
         );
         assert_unsupported(
             catalog(vec![]),
-            catalog(vec![Field::Scalar(ScalarField::with_uniqueness(
+            catalog(vec![unique_scalar(
                 "value",
                 ScalarType::Str,
                 SingleCardinality::Optional,
-                Uniqueness::Unique,
-            ))]),
+            )]),
             SQLiteSchemaMigrationUnsupportedError::UniqueFieldAddition {
                 object_type: "Root".into(),
                 field: "value".into(),
@@ -1869,8 +1811,8 @@ mod migration {
                 ObjectType::new(
                     "Other",
                     vec![
-                        Field::Link(LinkField::new("owner", "Root", Cardinality::Optional)),
-                        Field::Link(LinkField::new("editor", "Root", Cardinality::Optional)),
+                        link("owner", "Root", Cardinality::Optional),
+                        link("editor", "Root", Cardinality::Optional),
                     ],
                 ),
             ])
