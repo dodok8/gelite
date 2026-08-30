@@ -59,7 +59,8 @@ fn schema_apply_records_preview_content_and_preserves_the_initial_baseline() {
         .verify_schema_version()
         .expect("applied logical schema should verify");
 
-    assert!(apply_schema(BLOG_SCHEMA_SOURCE, &mut runner).is_err());
+    apply_schema(BLOG_SCHEMA_SOURCE, &mut runner)
+        .expect("reapplying an identical schema should be a no-op");
     let after = runner
         .execute_select(&statement)
         .expect("original baseline");
@@ -116,7 +117,128 @@ fn schema_apply_detects_tampered_version_content_and_logical_catalog() {
             matches!(error, SQLiteRunnerError::SchemaVerificationFailed { .. }),
             "{mutation}: {error:?}"
         );
+        let error = apply_schema(
+            &format!("{BLOG_SCHEMA_SOURCE}\ntype Comment {{ body: str }}"),
+            &mut runner,
+        )
+        .expect_err("schema apply must verify stored metadata before migration");
+        assert!(error.message().contains("failed to apply schema"));
+        assert_eq!(runner.table_exists("comment"), Ok(false));
     }
+}
+
+#[test]
+fn schema_apply_migrates_existing_data_and_records_one_successor_version() {
+    let initial = "type User { required name: str } type Other {}";
+    let desired = r#"
+        type User {
+          required name: str
+          nickname: str
+          link manager: User
+          multi link others: Other
+        }
+        type Other {}
+        type Post {
+          required title: str
+          link author: User
+        }
+    "#;
+    let source_path = write_temp_geli_schema(initial);
+    let database_path = source_path.with_extension("db");
+    let database = database_path.to_str().expect("UTF-8 database path");
+    let mut runner = NativeSQLiteRunner::open(database).expect("database should open");
+    apply_schema(initial, &mut runner).expect("initial schema should apply");
+    runner
+        .execute("INSERT INTO user (id, name) VALUES ('user-1', 'Alice')")
+        .expect("existing row should be stored");
+
+    apply_schema(desired, &mut runner).expect("supported migration should apply");
+
+    assert_eq!(runner.table_exists("post"), Ok(true));
+    assert_eq!(runner.table_exists("user__others"), Ok(true));
+    let user = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT id, name, nickname, manager_id FROM user",
+            vec![],
+        ))
+        .expect("migrated user table should be readable");
+    assert_eq!(
+        user.rows(),
+        [vec![
+            SQLiteCellValue::Text("user-1".to_string()),
+            SQLiteCellValue::Text("Alice".to_string()),
+            SQLiteCellValue::Null,
+            SQLiteCellValue::Null,
+        ]]
+    );
+    let versions = SQLiteStatement::new(
+        "SELECT COUNT(*), MAX(version_number) FROM _engine_schema_versions",
+        vec![],
+    );
+    assert_eq!(
+        runner.execute_select(&versions).unwrap().rows(),
+        [vec![
+            SQLiteCellValue::Integer(2),
+            SQLiteCellValue::Integer(2),
+        ]]
+    );
+    drop(runner);
+
+    let mut reopened = NativeSQLiteRunner::open(database).expect("database should reopen");
+    let stored = reopened
+        .load_verified_schema()
+        .expect("migrated schema should verify")
+        .expect("stored schema should exist");
+    assert_eq!(stored.version_number, 2);
+    assert_eq!(
+        sqlite_schema_plan::serialize_schema_snapshot(&stored.catalog).unwrap(),
+        sqlite_schema_plan::serialize_schema_snapshot(
+            &schema_parser::parse_schema(desired).unwrap()
+        )
+        .unwrap()
+    );
+
+    apply_schema(desired, &mut reopened).expect("identical migration should be a no-op");
+    assert_eq!(
+        reopened.execute_select(&versions).unwrap().rows()[0][0],
+        SQLiteCellValue::Integer(2)
+    );
+
+    drop(reopened);
+    fs::remove_file(source_path).expect("temporary schema should be removed");
+    fs::remove_file(database_path).expect("temporary database should be removed");
+}
+
+#[test]
+fn schema_apply_rolls_back_migration_ddl_metadata_and_history() {
+    let initial = "type User { name: str } type Other {}";
+    let desired = "type User { name: str nickname: str multi link others: Other } type Other {}";
+    let initial_catalog = schema_parser::parse_schema(initial).unwrap();
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+    apply_schema(initial, &mut runner).expect("initial schema should apply");
+    runner
+        .execute(
+            "CREATE TRIGGER reject_schema_migration
+             BEFORE INSERT ON _engine_schema_versions
+             WHEN NEW.version_number > 1
+             BEGIN SELECT RAISE(ABORT, 'reject migration version'); END",
+        )
+        .expect("version failure trigger should be created");
+
+    apply_schema(desired, &mut runner).expect_err("version insert should fail migration");
+
+    assert_eq!(runner.table_exists("user__others"), Ok(false));
+    assert!(
+        runner
+            .execute_select(&SQLiteStatement::new("SELECT nickname FROM user", vec![]))
+            .is_err()
+    );
+    let stored = runner
+        .load_verified_schema()
+        .expect("original schema should remain verifiable")
+        .expect("original schema should remain stored");
+    assert_eq!(stored.version_number, 1);
+    assert_eq!(stored.catalog, initial_catalog);
 }
 
 #[test]

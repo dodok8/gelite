@@ -17,7 +17,51 @@ When running from this repository, prefix each command with
 ## Schema modes
 
 `schema plan` prints initial SQLite DDL and metadata bind values without opening
-a database. `schema apply` creates the initial schema in a new database.
+a database. `schema apply` creates the initial schema in a new database or
+applies supported append-only additions to an existing Gelite database.
+
+Existing databases are verified against their latest stored checksum and
+logical catalog before migration planning. New objects, nullable scalar fields,
+optional single links, and multi links are supported. An identical schema is a
+no-op; unsupported changes fail before migration DDL executes. Successful
+non-empty migrations append one schema-version row in the same transaction as
+their DDL and catalog metadata.
+
+### Append-only migration example
+
+Start with `schema.geli`:
+
+```gel
+type User {
+  required name: str
+}
+```
+
+Apply it to a new database:
+
+```console
+cargo run -p gelite-cli -- schema apply schema.geli --database app.db
+```
+
+Then extend the same file with supported additions:
+
+```gel
+type User {
+  required name: str
+  nickname: str
+  link manager: User
+  multi link projects: Project
+}
+
+type Project {
+  required title: str
+}
+```
+
+Run the same command again. Gelite preserves existing `User` rows, adds the
+nullable `nickname` and `manager` storage, creates the `Project` and multi-link
+tables, and records the complete updated schema as the next version. Running
+the command once more without changing the schema is a no-op.
 
 ## Query modes
 

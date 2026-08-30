@@ -292,7 +292,7 @@ pub fn plan_initial_schema(
     let catalog_object_rows = plan_catalog_object_rows(catalog);
     let catalog_field_rows = plan_catalog_field_rows(catalog);
     let indexes = plan_indexes(catalog);
-    let schema_versions_rows = plan_schema_version_rows(catalog, version_id, applied_at)?;
+    let schema_versions_rows = vec![plan_schema_version_row(catalog, version_id, applied_at, 1)?];
 
     Ok(SQLiteSchemaPlan {
         metadata_tables,
@@ -1036,21 +1036,22 @@ fn snapshot_schema(catalog: &SchemaCatalog) -> SchemaVersionSnapshot<'_> {
     }
 }
 
-fn plan_schema_version_rows(
+fn plan_schema_version_row(
     catalog: &SchemaCatalog,
     version_id: &str,
     applied_at: &str,
-) -> Result<Vec<SQLiteSchemaVersionRow>, serde_json::Error> {
+    version_number: i64,
+) -> Result<SQLiteSchemaVersionRow, serde_json::Error> {
     let schema_snapshot = serialize_schema_snapshot(catalog)?;
     let checksum = schema_snapshot_checksum(&schema_snapshot);
 
-    Ok(vec![SQLiteSchemaVersionRow {
-        version_number: 1,
+    Ok(SQLiteSchemaVersionRow {
+        version_number,
         version_id: version_id.to_string(),
         applied_at: applied_at.to_string(),
         schema_snapshot,
         checksum,
-    }])
+    })
 }
 
 /// Serializes a logical catalog using the canonical snapshot format, without application metadata.
@@ -1158,7 +1159,21 @@ pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPl
         unreachable!("initial schema planning produces exactly one version row");
     };
 
-    vec![SQLiteInsertPlan {
+    vec![schema_version_insert(row)]
+}
+
+pub fn plan_schema_migration_version_insert(
+    catalog: &SchemaCatalog,
+    version_id: &str,
+    applied_at: &str,
+    version_number: i64,
+) -> Result<SQLiteInsertPlan, serde_json::Error> {
+    plan_schema_version_row(catalog, version_id, applied_at, version_number)
+        .map(|row| schema_version_insert(&row))
+}
+
+fn schema_version_insert(row: &SQLiteSchemaVersionRow) -> SQLiteInsertPlan {
+    SQLiteInsertPlan {
         table_name: SCHEMA_VERSIONS_TABLE.to_string(),
         columns: vec![
             "version_id".to_string(),
@@ -1174,7 +1189,7 @@ pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPl
             SQLiteValuePlan::Text(row.schema_snapshot.clone()),
             SQLiteValuePlan::Integer(row.version_number),
         ],
-    }]
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

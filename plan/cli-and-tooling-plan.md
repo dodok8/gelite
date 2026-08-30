@@ -266,16 +266,19 @@ Assert:
 
 ### `gelite schema apply <schema.geli> --database <app.db>`
 
-Purpose: apply the initial schema to an empty SQLite database.
+Purpose: apply an initial schema or a supported append-only migration to a
+SQLite database.
 
 Pipeline:
 
 ```text
 read schema.geli
 -> schema_parser::parse_schema
--> prepare the actual version ID and UTC applied timestamp once
--> sqlite_schema_plan::plan_initial_schema
--> sqlite_schema_sqlgen::render_initial_schema
+-> load and verify existing engine metadata when present
+-> sqlite_schema_plan::plan_initial_schema or plan_schema_migration
+-> return without writes for an empty migration plan
+-> prepare the actual version ID, UTC applied timestamp, and next version number
+-> sqlite_schema_sqlgen::render_initial_schema or render_schema_migration
 -> sqlite_runner::apply_schema_statements over a native runner backend
 ```
 
@@ -288,13 +291,14 @@ For an equivalent logical catalog and the same snapshot format version, the
 stored snapshot and checksum must match the preview. The stored version ID and
 timestamp must be actual application values, never preview placeholders.
 
-Initial scope:
+Scope:
 
-- initial schema only
-- empty or newly created database
+- initial schema application to a new database
+- append-only additions supported by `plan_schema_migration`
+- stored checksum and logical catalog verification before migration planning
 - one transaction for schema DDL, catalog metadata, indexes, and the version row
-- no schema diffing
-- exactly one initial version row
+- no write transaction or new version row for an empty migration plan
+- unsupported changes rejected before the first DDL statement
 
 First command-level test:
 
@@ -311,7 +315,9 @@ Assert:
 - exactly one initial version row exists and contains no preview placeholders
 - the stored snapshot and checksum match a preview of the same logical catalog
 - statement or commit failure rolls back the schema and version row together
-- reapplying an initial schema does not append or overwrite a baseline
+- a supported migration preserves existing rows and appends one version row
+- reapplying an identical schema does not append or overwrite a version
+- checksum tampering and unsupported changes do not mutate the database
 
 Do not implement this command before `sqlite-runner` has tests for DDL,
 prepared metadata inserts, and full rendered initial schema application.

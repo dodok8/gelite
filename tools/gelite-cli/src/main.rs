@@ -281,7 +281,10 @@ mod tests {
     use sqlite_query_sqlgen::{SQLiteBindValue, SQLiteStatement};
     use sqlite_runner::{SQLiteCellValue, SQLiteRunner, native::NativeSQLiteRunner};
 
-    use super::{Cli, Command, QueryCommand, execute_request, run_query_command};
+    use super::{
+        Cli, Command, QueryCommand, SchemaCommand, execute_request, run_query_command,
+        run_schema_command,
+    };
 
     #[test]
     fn query_plan_accepts_query_file_and_schema_option() {
@@ -360,6 +363,37 @@ mod tests {
         })
         .expect("query run should succeed");
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn schema_apply_migrates_an_existing_database() {
+        let directory = temporary_directory("schema-migration");
+        let database = directory.join("app.db");
+        let schema_file = directory.join("schema.geli");
+        fs::write(&schema_file, "type User { name: str }").unwrap();
+
+        run_schema_command(SchemaCommand::Apply {
+            schema_file: schema_file.clone(),
+            database: database.clone(),
+        })
+        .expect("initial schema should apply");
+        fs::write(&schema_file, "type User { name: str nickname: str }").unwrap();
+        run_schema_command(SchemaCommand::Apply {
+            schema_file,
+            database: database.clone(),
+        })
+        .expect("schema migration should apply");
+
+        let mut runner = NativeSQLiteRunner::open(database.to_str().unwrap()).unwrap();
+        let stored = runner
+            .load_verified_schema()
+            .expect("stored schema should verify")
+            .expect("stored schema should exist");
+        assert_eq!(stored.version_number, 2);
+        assert!(stored.catalog.find_field("User", "nickname").is_some());
+
+        drop(runner);
         fs::remove_dir_all(directory).unwrap();
     }
 

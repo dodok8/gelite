@@ -321,11 +321,10 @@ readers must reject unsupported format versions rather than reinterpret them.
   precision to milliseconds. It records the caller's application-attempt time,
   not the exact commit completion time.
 - `version_number` is a positive signed 64-bit integer that defines application
-  order within a database. Initial application stores `1`. Future migration
-  application must allocate the next number after the current maximum within
-  the same write transaction as its schema changes and version insert. Reject
-  overflow rather than wrapping. Non-initial migration application remains
-  outside the current implementation.
+  order within a database. Initial application stores `1`. Migration
+  application uses the next number after the verified latest version and
+  inserts it in the same write transaction as its schema changes. Reject
+  overflow rather than wrapping.
 
 Read the latest stored version with `ORDER BY version_number DESC LIMIT 1`.
 An empty version table has no latest version. Do not require the table to
@@ -453,9 +452,26 @@ Scalar and single-link fields that lower to the same physical column name are
 also rejected before the planner emits an operation.
 
 The initial and migration planners share the same local physical table, column,
-relation-table, index, and metadata insert helpers. Migration SQL rendering,
-transactional execution, and non-initial schema-version recording remain work
-for the runtime and schema SQL generator.
+relation-table, index, and metadata insert helpers.
+
+Schema application distinguishes a new database from an existing Gelite
+database by the three engine metadata tables. If none exist, it uses the
+initial schema path. If only some exist, it rejects the partial metadata rather
+than treating the database as new. If all exist, it verifies and loads the
+latest stored schema before planning a migration.
+
+A migration version row contains the canonical snapshot and checksum of the
+complete desired catalog, not only the added fields. Its version number is the
+verified latest number plus one, checked for signed 64-bit overflow. The row is
+rendered after all migration operations and is committed with the DDL and
+catalog metadata through the shared schema transaction. A runtime failure
+rolls all of them back.
+
+An empty migration plan succeeds without a write transaction or a new version
+row. Unsupported changes and stored-schema verification failures are reported
+before the first migration DDL statement executes. Concurrent and online
+migration coordination remains outside the MVP; the unique version number
+prevents two attempts from recording the same successor version.
 
 ## Query Lowering Assumptions
 

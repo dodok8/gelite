@@ -1482,7 +1482,8 @@ mod migration {
     use super::*;
     use crate::{
         SQLiteSchemaMigrationOperation, SQLiteSchemaMigrationUnsupportedError,
-        plan_schema_migration,
+        plan_schema_migration, plan_schema_migration_version_insert, schema_snapshot_checksum,
+        serialize_schema_snapshot,
     };
 
     fn catalog(fields: Vec<Field>) -> SchemaCatalog {
@@ -1539,6 +1540,32 @@ mod migration {
                 .unwrap()
                 .operations()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn schema_migration_version_insert_records_the_complete_desired_catalog() {
+        let desired = catalog(vec![scalar(
+            "nickname",
+            ScalarType::Str,
+            SingleCardinality::Optional,
+        )]);
+        let snapshot = serialize_schema_snapshot(&desired).unwrap();
+        let checksum = schema_snapshot_checksum(&snapshot);
+
+        let insert =
+            plan_schema_migration_version_insert(&desired, VERSION_ID, APPLIED_AT, 2).unwrap();
+
+        assert_eq!(insert.table_name(), "_engine_schema_versions");
+        assert_eq!(
+            insert.values(),
+            [
+                SQLiteValuePlan::Text(VERSION_ID.into()),
+                SQLiteValuePlan::Text(checksum),
+                SQLiteValuePlan::Text(APPLIED_AT.into()),
+                SQLiteValuePlan::Text(snapshot),
+                SQLiteValuePlan::Integer(2),
+            ]
         );
     }
 

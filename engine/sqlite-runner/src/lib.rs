@@ -11,6 +11,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use schema_model::SchemaCatalog;
 #[cfg(feature = "native")]
 use sqlite_query_sqlgen::SQLiteResultShape;
 use sqlite_query_sqlgen::SQLiteStatement;
@@ -68,6 +69,16 @@ pub trait SQLiteRunner {
         sql: &str,
         values: &[SQLiteValuePlan],
     ) -> Result<(), SQLiteRunnerError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SQLiteStoredSchema {
+    pub catalog: SchemaCatalog,
+    pub version_number: i64,
+}
+
+pub trait SQLiteSchemaReader {
+    fn load_verified_schema(&mut self) -> Result<Option<SQLiteStoredSchema>, SQLiteRunnerError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
