@@ -15,9 +15,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use sqlite_schema_plan::{
     SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyAction, SQLiteForeignKeyPlan,
-    SQLiteIndexPlan, SQLiteInsertPlan, SQLitePrimaryKeyPlan, SQLiteSchemaPlan, SQLiteTablePlan,
-    SQLiteValuePlan, plan_catalog_field_inserts, plan_catalog_object_inserts,
-    plan_schema_version_insert,
+    SQLiteIndexPlan, SQLiteInsertPlan, SQLitePrimaryKeyPlan, SQLiteSchemaMigrationOperation,
+    SQLiteSchemaMigrationPlan, SQLiteSchemaPlan, SQLiteTablePlan, SQLiteValuePlan,
+    plan_catalog_field_inserts, plan_catalog_object_inserts, plan_schema_version_insert,
 };
 
 fn quote_identifier(identifier: &str) -> String {
@@ -90,8 +90,15 @@ fn render_primary_key(primary_key: &SQLitePrimaryKeyPlan) -> String {
 
 fn render_foreign_key(foreign_key: &SQLiteForeignKeyPlan) -> String {
     format!(
-        "FOREIGN KEY ({}) REFERENCES {}({}) ON DELETE {}",
+        "FOREIGN KEY ({}) {}",
         quote_identifier(foreign_key.column_name()),
+        render_reference(foreign_key),
+    )
+}
+
+fn render_reference(foreign_key: &SQLiteForeignKeyPlan) -> String {
+    format!(
+        "REFERENCES {}({}) ON DELETE {}",
         quote_identifier(foreign_key.target_table()),
         quote_identifier(foreign_key.target_column()),
         match foreign_key.on_delete() {
@@ -99,6 +106,23 @@ fn render_foreign_key(foreign_key: &SQLiteForeignKeyPlan) -> String {
             SQLiteForeignKeyAction::Cascade => "CASCADE",
         }
     )
+}
+
+fn render_add_column(
+    table_name: &str,
+    column: &SQLiteColumnPlan,
+    foreign_key: Option<&SQLiteForeignKeyPlan>,
+) -> String {
+    let mut sql = format!(
+        "ALTER TABLE {} ADD COLUMN {}",
+        quote_identifier(table_name),
+        render_column(column),
+    );
+    if let Some(foreign_key) = foreign_key {
+        sql.push(' ');
+        sql.push_str(&render_reference(foreign_key));
+    }
+    sql
 }
 
 pub fn render_create_index(index: &SQLiteIndexPlan) -> String {
@@ -212,6 +236,32 @@ pub fn render_initial_schema(plan: &SQLiteSchemaPlan) -> Vec<RenderedSchemaState
     );
 
     statements
+}
+
+pub fn render_schema_migration(plan: &SQLiteSchemaMigrationPlan) -> Vec<RenderedSchemaStatement> {
+    plan.operations()
+        .iter()
+        .map(|operation| match operation {
+            SQLiteSchemaMigrationOperation::CreateTable(table) => {
+                RenderedSchemaStatement::Sql(render_create_table(table))
+            }
+            SQLiteSchemaMigrationOperation::AddColumn {
+                table_name,
+                column,
+                foreign_key,
+            } => RenderedSchemaStatement::Sql(render_add_column(
+                table_name,
+                column,
+                foreign_key.as_ref(),
+            )),
+            SQLiteSchemaMigrationOperation::CreateIndex(index) => {
+                RenderedSchemaStatement::Sql(render_create_index(index))
+            }
+            SQLiteSchemaMigrationOperation::InsertMetadata(insert) => {
+                RenderedSchemaStatement::Insert(render_insert(insert))
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
