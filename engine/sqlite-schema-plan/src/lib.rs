@@ -12,7 +12,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use schema_model::{Cardinality, Field, ScalarType, SchemaCatalog};
+use schema_model::{Cardinality, Field, ObjectType, ScalarType, SchemaCatalog};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -369,75 +369,83 @@ fn plan_catalog_object_rows(catalog: &SchemaCatalog) -> Vec<SQLiteCatalogObjectR
 pub fn plan_catalog_object_inserts(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPlan> {
     plan.catalog_object_rows()
         .iter()
-        .map(|row| SQLiteInsertPlan {
-            table_name: CATALOG_OBJECTS_TABLE.to_string(),
-            columns: vec!["object_id".to_string(), "name".to_string()],
-            values: vec![
-                SQLiteValuePlan::Integer(row.object_id()),
-                SQLiteValuePlan::Text(row.name().to_string()),
-            ],
-        })
+        .map(catalog_object_insert)
         .collect()
+}
+
+fn catalog_object_insert(row: &SQLiteCatalogObjectRow) -> SQLiteInsertPlan {
+    SQLiteInsertPlan {
+        table_name: CATALOG_OBJECTS_TABLE.to_string(),
+        columns: vec!["object_id".to_string(), "name".to_string()],
+        values: vec![
+            SQLiteValuePlan::Integer(row.object_id()),
+            SQLiteValuePlan::Text(row.name().to_string()),
+        ],
+    }
 }
 
 fn plan_objects(catalog: &SchemaCatalog) -> Vec<SQLiteTablePlan> {
     catalog
         .object_types()
         .iter()
-        .map(|object_type| {
-            let declared_fields = object_type.declared_fields();
-            let mut columns = vec![SQLiteColumnPlan::new(
-                "id",
-                SQLiteAffinity::Text,
-                false,
-                true,
-                true,
-            )];
+        .map(|object_type| plan_object_table(object_type.name(), object_type.declared_fields()))
+        .collect()
+}
 
-            columns.extend(declared_fields.iter().filter_map(|field| match field {
-                Field::Scalar(scalar) => Some(SQLiteColumnPlan::new(
-                    field.name(),
-                    sqlite_affinity(scalar.scalar_type()),
+fn plan_object_table<'a>(
+    object_name: &str,
+    fields: impl IntoIterator<Item = &'a Field>,
+) -> SQLiteTablePlan {
+    let mut columns = vec![SQLiteColumnPlan::new(
+        "id",
+        SQLiteAffinity::Text,
+        false,
+        true,
+        true,
+    )];
+    let mut foreign_keys = Vec::new();
+
+    fields.into_iter().for_each(|field| {
+        if let Some((column, foreign_key)) = plan_stored_field(field) {
+            columns.push(column);
+            foreign_keys.extend(foreign_key);
+        }
+    });
+
+    SQLiteTablePlan::new_with_foreign_keys(object_name.to_ascii_lowercase(), columns, foreign_keys)
+}
+
+fn plan_stored_field(field: &Field) -> Option<(SQLiteColumnPlan, Option<SQLiteForeignKeyPlan>)> {
+    match field {
+        Field::Scalar(scalar) => Some((
+            SQLiteColumnPlan::new(
+                field.name(),
+                sqlite_affinity(scalar.scalar_type()),
+                field.cardinality() != Cardinality::Required,
+                false,
+                scalar.is_unique(),
+            ),
+            None,
+        )),
+        Field::Link(link) if link.cardinality() != Cardinality::Many => {
+            let column_name = format!("{}_id", field.name());
+            Some((
+                SQLiteColumnPlan::new(
+                    column_name.clone(),
+                    SQLiteAffinity::Text,
                     field.cardinality() != Cardinality::Required,
                     false,
-                    scalar.is_unique(),
+                    link.is_unique(),
+                ),
+                Some(SQLiteForeignKeyPlan::new(
+                    column_name,
+                    link.target_type_name().to_ascii_lowercase(),
+                    "id",
                 )),
-                Field::Link(link) => match link.cardinality() {
-                    Cardinality::Many => None,
-                    Cardinality::Optional | Cardinality::Required => Some(SQLiteColumnPlan::new(
-                        format!("{}_id", field.name()),
-                        SQLiteAffinity::Text,
-                        field.cardinality() != Cardinality::Required,
-                        false,
-                        link.is_unique(),
-                    )),
-                },
-            }));
-
-            let foreign_keys = declared_fields
-                .iter()
-                .filter_map(|field| match field {
-                    Field::Scalar(_) => None,
-                    Field::Link(link) => match link.cardinality() {
-                        Cardinality::Many => None,
-                        Cardinality::Optional | Cardinality::Required => {
-                            Some(SQLiteForeignKeyPlan::new(
-                                format!("{}_id", field.name()),
-                                link.target_type_name().to_ascii_lowercase(),
-                                "id",
-                            ))
-                        }
-                    },
-                })
-                .collect();
-
-            SQLiteTablePlan::new_with_foreign_keys(
-                object_type.name().to_ascii_lowercase(),
-                columns,
-                foreign_keys,
-            )
-        })
-        .collect()
+            ))
+        }
+        Field::Link(_) => None,
+    }
 }
 
 fn plan_relation_tables(catalog: &SchemaCatalog) -> Vec<SQLiteTablePlan> {
@@ -448,63 +456,47 @@ fn plan_relation_tables(catalog: &SchemaCatalog) -> Vec<SQLiteTablePlan> {
             object_type
                 .declared_fields()
                 .iter()
-                .filter_map(|field| match field {
-                    Field::Scalar(_) => None,
-                    Field::Link(link)
-                        if link.cardinality() == Cardinality::Many
-                            && link.inverse_field_name().is_none() =>
-                    {
-                        let source_table = object_type.name().to_ascii_lowercase();
-                        let target_table = link.target_type_name().to_ascii_lowercase();
-                        Some(SQLiteTablePlan::new_with_constraints(
-                            format!("{}__{}", source_table, field.name()),
-                            vec![
-                                SQLiteColumnPlan::new(
-                                    "source_id",
-                                    SQLiteAffinity::Text,
-                                    false,
-                                    false,
-                                    false,
-                                ),
-                                SQLiteColumnPlan::new(
-                                    "target_id",
-                                    SQLiteAffinity::Text,
-                                    false,
-                                    false,
-                                    false,
-                                ),
-                                SQLiteColumnPlan::new(
-                                    "position",
-                                    SQLiteAffinity::Integer,
-                                    true,
-                                    false,
-                                    false,
-                                ),
-                            ],
-                            Some(SQLitePrimaryKeyPlan::new(vec![
-                                "source_id".to_string(),
-                                "target_id".to_string(),
-                            ])),
-                            vec![
-                                SQLiteForeignKeyPlan::new_with_on_delete(
-                                    "source_id",
-                                    source_table,
-                                    "id",
-                                    SQLiteForeignKeyAction::Cascade,
-                                ),
-                                SQLiteForeignKeyPlan::new_with_on_delete(
-                                    "target_id",
-                                    target_table,
-                                    "id",
-                                    SQLiteForeignKeyAction::Cascade,
-                                ),
-                            ],
-                        ))
-                    }
-                    Field::Link(_) => None,
-                })
+                .filter_map(|field| plan_relation_table(object_type.name(), field))
         })
         .collect()
+}
+
+fn plan_relation_table(object_name: &str, field: &Field) -> Option<SQLiteTablePlan> {
+    let Field::Link(link) = field else {
+        return None;
+    };
+    if link.cardinality() != Cardinality::Many || link.inverse_field_name().is_some() {
+        return None;
+    }
+
+    let source_table = object_name.to_ascii_lowercase();
+    let target_table = link.target_type_name().to_ascii_lowercase();
+    Some(SQLiteTablePlan::new_with_constraints(
+        format!("{}__{}", source_table, field.name()),
+        vec![
+            SQLiteColumnPlan::new("source_id", SQLiteAffinity::Text, false, false, false),
+            SQLiteColumnPlan::new("target_id", SQLiteAffinity::Text, false, false, false),
+            SQLiteColumnPlan::new("position", SQLiteAffinity::Integer, true, false, false),
+        ],
+        Some(SQLitePrimaryKeyPlan::new(vec![
+            "source_id".to_string(),
+            "target_id".to_string(),
+        ])),
+        vec![
+            SQLiteForeignKeyPlan::new_with_on_delete(
+                "source_id",
+                source_table,
+                "id",
+                SQLiteForeignKeyAction::Cascade,
+            ),
+            SQLiteForeignKeyPlan::new_with_on_delete(
+                "target_id",
+                target_table,
+                "id",
+                SQLiteForeignKeyAction::Cascade,
+            ),
+        ],
+    ))
 }
 
 fn sqlite_affinity(scalar_type: ScalarType) -> SQLiteAffinity {
@@ -521,38 +513,42 @@ fn sqlite_affinity(scalar_type: ScalarType) -> SQLiteAffinity {
 pub fn plan_catalog_field_inserts(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPlan> {
     plan.catalog_field_rows()
         .iter()
-        .map(|row| SQLiteInsertPlan {
-            table_name: CATALOG_FIELDS_TABLE.to_string(),
-            columns: vec![
-                "object_id".to_string(),
-                "field_id".to_string(),
-                "name".to_string(),
-                "field_kind".to_string(),
-                "cardinality".to_string(),
-                "scalar_type".to_string(),
-                "target_object_id".to_string(),
-                "is_implicit".to_string(),
-                "is_unique".to_string(),
-                "inverse_field_name".to_string(),
-            ],
-            values: vec![
-                SQLiteValuePlan::Integer(row.object_id()),
-                SQLiteValuePlan::Integer(row.field_id()),
-                SQLiteValuePlan::Text(row.name().to_string()),
-                field_kind_value(row.field_kind()),
-                cardinality_value(row.cardinality()),
-                optional_scalar_type_value(row.scalar_type()),
-                optional_i64_value(row.target_object_id()),
-                bool_value(row.is_implicit()),
-                bool_value(row.is_unique()),
-                row.inverse_field_name
-                    .as_ref()
-                    .map_or(SQLiteValuePlan::Null, |name| {
-                        SQLiteValuePlan::Text(name.clone())
-                    }),
-            ],
-        })
+        .map(catalog_field_insert)
         .collect()
+}
+
+fn catalog_field_insert(row: &SQLiteCatalogFieldRow) -> SQLiteInsertPlan {
+    SQLiteInsertPlan {
+        table_name: CATALOG_FIELDS_TABLE.to_string(),
+        columns: vec![
+            "object_id".to_string(),
+            "field_id".to_string(),
+            "name".to_string(),
+            "field_kind".to_string(),
+            "cardinality".to_string(),
+            "scalar_type".to_string(),
+            "target_object_id".to_string(),
+            "is_implicit".to_string(),
+            "is_unique".to_string(),
+            "inverse_field_name".to_string(),
+        ],
+        values: vec![
+            SQLiteValuePlan::Integer(row.object_id()),
+            SQLiteValuePlan::Integer(row.field_id()),
+            SQLiteValuePlan::Text(row.name().to_string()),
+            field_kind_value(row.field_kind()),
+            cardinality_value(row.cardinality()),
+            optional_scalar_type_value(row.scalar_type()),
+            optional_i64_value(row.target_object_id()),
+            bool_value(row.is_implicit()),
+            bool_value(row.is_unique()),
+            row.inverse_field_name
+                .as_ref()
+                .map_or(SQLiteValuePlan::Null, |name| {
+                    SQLiteValuePlan::Text(name.clone())
+                }),
+        ],
+    }
 }
 
 fn bool_value(value: bool) -> SQLiteValuePlan {
@@ -598,54 +594,55 @@ fn cardinality_value(cardinality: Cardinality) -> SQLiteValuePlan {
 }
 
 fn plan_indexes(catalog: &SchemaCatalog) -> Vec<SQLiteIndexPlan> {
-    let mut indexes = Vec::new();
+    catalog
+        .object_types()
+        .iter()
+        .flat_map(|object_type| {
+            object_type
+                .declared_fields()
+                .iter()
+                .flat_map(|field| plan_field_indexes(object_type.name(), field))
+        })
+        .collect()
+}
 
-    for object_type in catalog.object_types() {
-        let table_name = object_type.name().to_ascii_lowercase();
-
-        for field in object_type.declared_fields() {
-            let Field::Link(link) = field else {
-                continue;
-            };
-
-            if link.inverse_field_name().is_some() {
-                continue;
-            }
-
-            match link.cardinality() {
-                Cardinality::Optional | Cardinality::Required => {
-                    let column_name = format!("{}_id", field.name());
-                    let index_name = format!("{}__{}_idx", table_name, column_name);
-
-                    indexes.push(SQLiteIndexPlan::new(
-                        index_name,
-                        table_name.clone(),
-                        vec![column_name],
-                        false,
-                    ));
-                }
-                Cardinality::Many => {
-                    let join_table_name = format!("{}__{}", table_name, field.name());
-
-                    indexes.push(SQLiteIndexPlan::new(
-                        format!("{}__source_id_idx", join_table_name),
-                        join_table_name.clone(),
-                        vec!["source_id".to_string()],
-                        false,
-                    ));
-
-                    indexes.push(SQLiteIndexPlan::new(
-                        format!("{}__target_id_idx", join_table_name),
-                        join_table_name,
-                        vec!["target_id".to_string()],
-                        false,
-                    ));
-                }
-            }
-        }
+fn plan_field_indexes(object_name: &str, field: &Field) -> Vec<SQLiteIndexPlan> {
+    let Field::Link(link) = field else {
+        return Vec::new();
+    };
+    if link.inverse_field_name().is_some() {
+        return Vec::new();
     }
 
-    indexes
+    let table_name = object_name.to_ascii_lowercase();
+    match link.cardinality() {
+        Cardinality::Optional | Cardinality::Required => {
+            let column_name = format!("{}_id", field.name());
+            vec![SQLiteIndexPlan::new(
+                format!("{}__{}_idx", table_name, column_name),
+                table_name,
+                vec![column_name],
+                false,
+            )]
+        }
+        Cardinality::Many => {
+            let join_table_name = format!("{}__{}", table_name, field.name());
+            vec![
+                SQLiteIndexPlan::new(
+                    format!("{}__source_id_idx", join_table_name),
+                    join_table_name.clone(),
+                    vec!["source_id".to_string()],
+                    false,
+                ),
+                SQLiteIndexPlan::new(
+                    format!("{}__target_id_idx", join_table_name),
+                    join_table_name,
+                    vec!["target_id".to_string()],
+                    false,
+                ),
+            ]
+        }
+    }
 }
 
 /// SQLite type affinity used by physical column plans.
@@ -1163,6 +1160,342 @@ pub fn plan_schema_version_insert(plan: &SQLiteSchemaPlan) -> Vec<SQLiteInsertPl
             SQLiteValuePlan::Integer(row.version_number),
         ],
     }]
+}
+
+pub enum SQLiteSchemaMigrationOperation {
+    CreateTable(SQLiteTablePlan),
+    AddColumn {
+        table_name: String,
+        column: SQLiteColumnPlan,
+        foreign_key: Option<SQLiteForeignKeyPlan>,
+    },
+    CreateIndex(SQLiteIndexPlan),
+    InsertMetadata(SQLiteInsertPlan),
+}
+
+pub struct SQLiteSchemaMigrationPlan {
+    operations: Vec<SQLiteSchemaMigrationOperation>,
+}
+
+impl SQLiteSchemaMigrationPlan {
+    pub fn operations(&self) -> &[SQLiteSchemaMigrationOperation] {
+        &self.operations
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SQLiteSchemaMigrationUnsupportedError {
+    ObjectRemoval { object_type: String },
+    FieldRemoval { object_type: String, field: String },
+    FieldKindChange { object_type: String, field: String },
+    ScalarTypeChange { object_type: String, field: String },
+    LinkTargetChange { object_type: String, field: String },
+    CardinalityChange { object_type: String, field: String },
+    UniquenessChange { object_type: String, field: String },
+    RequiredFieldAddition { object_type: String, field: String },
+    UniqueFieldAddition { object_type: String, field: String },
+    InverseLinkChange { object_type: String, field: String },
+}
+
+pub fn plan_schema_migration(
+    current: &SchemaCatalog,
+    desired: &SchemaCatalog,
+) -> Result<SQLiteSchemaMigrationPlan, SQLiteSchemaMigrationUnsupportedError> {
+    validate_schema_migration(current, desired)?;
+
+    let new_objects = sorted_objects(desired)
+        .into_iter()
+        .filter(|object| current.find_type(object.name()).is_none())
+        .collect::<Vec<_>>();
+    let mut object_tables = Vec::new();
+    let mut relation_tables = Vec::new();
+    let mut columns = Vec::new();
+    let mut indexes = Vec::new();
+    let mut object_metadata = Vec::new();
+    let mut field_metadata = Vec::new();
+
+    new_objects
+        .iter()
+        .enumerate()
+        .for_each(|(object_index, object)| {
+            let fields = sorted_fields(object);
+            let object_id = current.object_types().len() as i64 + object_index as i64 + 1;
+
+            object_tables.push(SQLiteSchemaMigrationOperation::CreateTable(
+                plan_object_table(object.name(), fields.iter().copied()),
+            ));
+            relation_tables.extend(fields.iter().filter_map(|field| {
+                plan_relation_table(object.name(), field)
+                    .map(SQLiteSchemaMigrationOperation::CreateTable)
+            }));
+            indexes.extend(
+                fields
+                    .iter()
+                    .flat_map(|field| plan_field_indexes(object.name(), field))
+                    .map(SQLiteSchemaMigrationOperation::CreateIndex),
+            );
+            object_metadata.push(SQLiteSchemaMigrationOperation::InsertMetadata(
+                catalog_object_insert(&SQLiteCatalogObjectRow::new(object_id, object.name())),
+            ));
+            field_metadata.push(SQLiteSchemaMigrationOperation::InsertMetadata(
+                catalog_field_insert(&SQLiteCatalogFieldRow::implicit_id(object_id)),
+            ));
+            field_metadata.extend(fields.iter().enumerate().map(|(field_index, field)| {
+                SQLiteSchemaMigrationOperation::InsertMetadata(catalog_field_insert(
+                    &migration_field_row(
+                        current,
+                        &new_objects,
+                        object_id,
+                        field_index as i64 + 2,
+                        field,
+                    ),
+                ))
+            }));
+        });
+
+    sorted_objects(desired)
+        .into_iter()
+        .filter_map(|desired_object| {
+            current
+                .find_type(desired_object.name())
+                .map(|current_object| (current_object, desired_object))
+        })
+        .for_each(|(current_object, desired_object)| {
+            sorted_fields(desired_object)
+                .into_iter()
+                .filter(|field| current_object.find_declared_field(field.name()).is_none())
+                .enumerate()
+                .for_each(|(field_index, field)| {
+                    if let Some((column, foreign_key)) = plan_stored_field(field) {
+                        columns.push(SQLiteSchemaMigrationOperation::AddColumn {
+                            table_name: desired_object.name().to_ascii_lowercase(),
+                            column,
+                            foreign_key,
+                        });
+                    }
+                    if let Some(table) = plan_relation_table(desired_object.name(), field) {
+                        relation_tables.push(SQLiteSchemaMigrationOperation::CreateTable(table));
+                    }
+                    indexes.extend(
+                        plan_field_indexes(desired_object.name(), field)
+                            .into_iter()
+                            .map(SQLiteSchemaMigrationOperation::CreateIndex),
+                    );
+
+                    let object_id = current
+                        .find_type_ref(current_object.name())
+                        .expect("current object came from the current catalog")
+                        .id()
+                        .value();
+                    let field_id =
+                        current_object.declared_fields().len() as i64 + field_index as i64 + 2;
+                    field_metadata.push(SQLiteSchemaMigrationOperation::InsertMetadata(
+                        catalog_field_insert(&migration_field_row(
+                            current,
+                            &new_objects,
+                            object_id,
+                            field_id,
+                            field,
+                        )),
+                    ));
+                });
+        });
+
+    Ok(SQLiteSchemaMigrationPlan {
+        operations: object_tables
+            .into_iter()
+            .chain(relation_tables)
+            .chain(columns)
+            .chain(indexes)
+            .chain(object_metadata)
+            .chain(field_metadata)
+            .collect(),
+    })
+}
+
+fn validate_schema_migration(
+    current: &SchemaCatalog,
+    desired: &SchemaCatalog,
+) -> Result<(), SQLiteSchemaMigrationUnsupportedError> {
+    sorted_objects(current)
+        .into_iter()
+        .try_for_each(|current_object| {
+            let desired_object = desired.find_type(current_object.name()).ok_or_else(|| {
+                SQLiteSchemaMigrationUnsupportedError::ObjectRemoval {
+                    object_type: current_object.name().to_string(),
+                }
+            })?;
+
+            sorted_fields(current_object)
+                .into_iter()
+                .try_for_each(|current_field| {
+                    let desired_field = desired_object
+                        .find_declared_field(current_field.name())
+                        .ok_or_else(|| SQLiteSchemaMigrationUnsupportedError::FieldRemoval {
+                            object_type: current_object.name().to_string(),
+                            field: current_field.name().to_string(),
+                        })?;
+                    validate_existing_field(current_object.name(), current_field, desired_field)
+                })
+        })?;
+
+    sorted_objects(desired)
+        .into_iter()
+        .filter_map(|desired_object| {
+            current
+                .find_type(desired_object.name())
+                .map(|current_object| (current_object, desired_object))
+        })
+        .try_for_each(|(current_object, desired_object)| {
+            sorted_fields(desired_object)
+                .into_iter()
+                .filter(|field| current_object.find_declared_field(field.name()).is_none())
+                .try_for_each(|field| validate_field_addition(desired_object.name(), field))
+        })
+}
+
+fn validate_existing_field(
+    object_type: &str,
+    current: &Field,
+    desired: &Field,
+) -> Result<(), SQLiteSchemaMigrationUnsupportedError> {
+    let field = current.name().to_string();
+    let object_type = object_type.to_string();
+
+    match (current, desired) {
+        (Field::Scalar(current), Field::Scalar(desired)) => {
+            if current.scalar_type() != desired.scalar_type() {
+                return Err(SQLiteSchemaMigrationUnsupportedError::ScalarTypeChange {
+                    object_type,
+                    field,
+                });
+            }
+        }
+        (Field::Link(current), Field::Link(desired)) => {
+            if current.target_type_name() != desired.target_type_name() {
+                return Err(SQLiteSchemaMigrationUnsupportedError::LinkTargetChange {
+                    object_type,
+                    field,
+                });
+            }
+        }
+        _ => {
+            return Err(SQLiteSchemaMigrationUnsupportedError::FieldKindChange {
+                object_type,
+                field,
+            });
+        }
+    }
+
+    if current.cardinality() != desired.cardinality() {
+        return Err(SQLiteSchemaMigrationUnsupportedError::CardinalityChange {
+            object_type,
+            field,
+        });
+    }
+    if field_is_unique(current) != field_is_unique(desired) {
+        return Err(SQLiteSchemaMigrationUnsupportedError::UniquenessChange { object_type, field });
+    }
+    if let (Field::Link(current), Field::Link(desired)) = (current, desired)
+        && current.inverse_field_name() != desired.inverse_field_name()
+    {
+        return Err(SQLiteSchemaMigrationUnsupportedError::InverseLinkChange {
+            object_type,
+            field,
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_field_addition(
+    object_type: &str,
+    field: &Field,
+) -> Result<(), SQLiteSchemaMigrationUnsupportedError> {
+    if field.cardinality() == Cardinality::Required {
+        return Err(
+            SQLiteSchemaMigrationUnsupportedError::RequiredFieldAddition {
+                object_type: object_type.to_string(),
+                field: field.name().to_string(),
+            },
+        );
+    }
+    if field_is_unique(field) {
+        return Err(SQLiteSchemaMigrationUnsupportedError::UniqueFieldAddition {
+            object_type: object_type.to_string(),
+            field: field.name().to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn field_is_unique(field: &Field) -> bool {
+    match field {
+        Field::Scalar(field) => field.is_unique(),
+        Field::Link(field) => field.is_unique(),
+    }
+}
+
+fn sorted_objects(catalog: &SchemaCatalog) -> Vec<&ObjectType> {
+    let mut objects = catalog.object_types().iter().collect::<Vec<_>>();
+    objects.sort_unstable_by(|left, right| left.name().cmp(right.name()));
+    objects
+}
+
+fn sorted_fields(object: &ObjectType) -> Vec<&Field> {
+    let mut fields = object.declared_fields().iter().collect::<Vec<_>>();
+    fields.sort_unstable_by(|left, right| left.name().cmp(right.name()));
+    fields
+}
+
+fn migration_object_id(
+    current: &SchemaCatalog,
+    new_objects: &[&ObjectType],
+    object_name: &str,
+) -> i64 {
+    current.find_type_ref(object_name).map_or_else(
+        || {
+            current.object_types().len() as i64
+                + new_objects
+                    .iter()
+                    .position(|object| object.name() == object_name)
+                    .expect("desired link target should exist among new objects")
+                    as i64
+                + 1
+        },
+        |object| object.id().value(),
+    )
+}
+
+fn migration_field_row(
+    current: &SchemaCatalog,
+    new_objects: &[&ObjectType],
+    object_id: i64,
+    field_id: i64,
+    field: &Field,
+) -> SQLiteCatalogFieldRow {
+    match field {
+        Field::Scalar(scalar) => SQLiteCatalogFieldRow::scalar(
+            object_id,
+            field_id,
+            field.name(),
+            field.cardinality(),
+            scalar.scalar_type(),
+            scalar.is_unique(),
+        ),
+        Field::Link(link) => {
+            let mut row = SQLiteCatalogFieldRow::link(
+                object_id,
+                field_id,
+                field.name(),
+                field.cardinality(),
+                migration_object_id(current, new_objects, link.target_type_name()),
+                link.is_unique(),
+            );
+            row.inverse_field_name = link.inverse_field_name().map(ToString::to_string);
+            row
+        }
+    }
 }
 
 #[cfg(test)]
