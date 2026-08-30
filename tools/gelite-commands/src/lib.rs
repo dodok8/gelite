@@ -11,7 +11,7 @@ use sqlite_query_plan::SQLiteFollowUpFetchPlan;
 use sqlite_query_sqlgen::{SQLiteResultField, SQLiteResultShape, SQLiteStatement};
 use sqlite_runner::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
-    SQLiteTransactionRunner, apply_schema_statements,
+    SQLiteSchemaReader, SQLiteTransactionRunner, apply_schema_statements,
 };
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
@@ -89,19 +89,55 @@ pub fn plan_schema(source: &str) -> Result<SchemaPlanOutput, CommandError> {
 
 pub fn apply_schema(
     source: &str,
-    runner: &mut (impl SQLiteRunner + SQLiteTransactionRunner),
+    runner: &mut (impl SQLiteRunner + SQLiteSchemaReader + SQLiteTransactionRunner),
 ) -> Result<(), CommandError> {
     let catalog = schema_parser::parse_schema(source).map_err(|error| CommandError {
         message: format!("failed to parse schema: {error:?}"),
     })?;
-    let version_id = uuid::Uuid::new_v4().to_string();
-    let applied_at = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let stored = runner
+        .load_verified_schema()
+        .map_err(command_error_from_runner)?;
+
+    if let Some(stored) = stored {
+        let plan = sqlite_schema_plan::plan_schema_migration(stored.catalog(), &catalog).map_err(
+            |error| CommandError::new(format!("failed to plan schema migration: {error:?}")),
+        )?;
+        if plan.operations().is_empty() {
+            return Ok(());
+        }
+
+        let version_number = stored.version_number().checked_add(1).ok_or_else(|| {
+            CommandError::new("schema version number exceeds i64 range".to_string())
+        })?;
+        let (version_id, applied_at) = schema_application_values();
+        let version_insert = sqlite_schema_plan::plan_schema_migration_version_insert(
+            &catalog,
+            &version_id,
+            &applied_at,
+            version_number,
+        )
+        .map_err(|error| CommandError::new(format!("failed to plan schema: {error}")))?;
+        let mut statements = sqlite_schema_sqlgen::render_schema_migration(&plan);
+        statements.push(RenderedSchemaStatement::Insert(
+            sqlite_schema_sqlgen::render_insert(&version_insert),
+        ));
+
+        return apply_schema_statements(runner, &statements).map_err(command_error_from_runner);
+    }
+
+    let (version_id, applied_at) = schema_application_values();
     let plan = sqlite_schema_plan::plan_initial_schema(&catalog, &version_id, &applied_at)
         .map_err(|error| CommandError::new(format!("failed to plan schema: {error}")))?;
     let statements = sqlite_schema_sqlgen::render_initial_schema(&plan);
 
     apply_schema_statements(runner, &statements).map_err(command_error_from_runner)
+}
+
+fn schema_application_values() -> (String, String) {
+    let version_id = uuid::Uuid::new_v4().to_string();
+    let applied_at = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    (version_id, applied_at)
 }
 
 fn command_error_from_runner(error: SQLiteRunnerError) -> CommandError {

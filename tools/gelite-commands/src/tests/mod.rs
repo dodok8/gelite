@@ -5,7 +5,7 @@ use sqlite_query_sqlgen::SQLiteBindValue;
 use sqlite_query_sqlgen::SQLiteStatement;
 use sqlite_runner::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
-    SQLiteTransactionRunner,
+    SQLiteSchemaReader, SQLiteStoredSchema, SQLiteTransactionRunner,
 };
 use sqlite_schema_plan::SQLiteValuePlan;
 
@@ -23,6 +23,16 @@ fn blog_catalog() -> SchemaCatalog {
 struct RecordingRunner {
     calls: Vec<String>,
     inserts: Vec<(String, Vec<SQLiteValuePlan>)>,
+    stored_schema: Option<SQLiteStoredSchema>,
+}
+
+impl RecordingRunner {
+    fn with_stored_schema(catalog: SchemaCatalog, version_number: i64) -> Self {
+        Self {
+            stored_schema: Some(SQLiteStoredSchema::new(catalog, version_number)),
+            ..Self::default()
+        }
+    }
 }
 
 impl SQLiteRunner for RecordingRunner {
@@ -53,6 +63,12 @@ impl SQLiteTransactionRunner for RecordingRunner {
 
     fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
         self.execute("ROLLBACK")
+    }
+}
+
+impl SQLiteSchemaReader for RecordingRunner {
+    fn load_verified_schema(&mut self) -> Result<Option<SQLiteStoredSchema>, SQLiteRunnerError> {
+        Ok(self.stored_schema.clone())
     }
 }
 
@@ -316,6 +332,64 @@ fn schema_apply_reparses_changed_source_and_rejects_invalid_input_before_executi
     let mut invalid = RecordingRunner::default();
     assert!(apply_schema("type User { link missing: Unknown }", &mut invalid).is_err());
     assert!(invalid.calls.is_empty());
+}
+
+#[test]
+fn schema_apply_command_applies_migrations_and_appends_the_next_version() {
+    let current = schema_parser::parse_schema("type User { name: str }").unwrap();
+    let desired = "type User { name: str nickname: str }";
+    let desired_catalog = schema_parser::parse_schema(desired).unwrap();
+    let mut runner = RecordingRunner::with_stored_schema(current, 7);
+
+    apply_schema(desired, &mut runner).expect("supported migration should apply");
+
+    assert_eq!(runner.calls.first().map(String::as_str), Some("BEGIN"));
+    assert_eq!(runner.calls.last().map(String::as_str), Some("COMMIT"));
+    assert!(
+        runner
+            .calls
+            .iter()
+            .any(|call| { call == "ALTER TABLE \"user\" ADD COLUMN \"nickname\" TEXT NULL" })
+    );
+    let (_, values) = runner
+        .inserts
+        .last()
+        .expect("version INSERT should be last");
+    assert_eq!(values[4], SQLiteValuePlan::Integer(8));
+    assert_eq!(
+        values[3],
+        SQLiteValuePlan::Text(
+            sqlite_schema_plan::serialize_schema_snapshot(&desired_catalog).unwrap()
+        )
+    );
+}
+
+#[test]
+fn schema_apply_command_skips_empty_migrations() {
+    let source = "type User { name: str }";
+    let catalog = schema_parser::parse_schema(source).unwrap();
+    let mut runner = RecordingRunner::with_stored_schema(catalog, 3);
+
+    apply_schema(source, &mut runner).expect("identical schema should be a no-op");
+
+    assert!(runner.calls.is_empty());
+    assert!(runner.inserts.is_empty());
+}
+
+#[test]
+fn schema_apply_command_rejects_unsupported_changes_and_version_overflow_before_writes() {
+    let current = schema_parser::parse_schema("type User { name: str }").unwrap();
+    let mut unsupported = RecordingRunner::with_stored_schema(current.clone(), 1);
+    let error = apply_schema("type User {}", &mut unsupported)
+        .expect_err("field removal should be unsupported");
+    assert!(error.message().contains("FieldRemoval"));
+    assert!(unsupported.calls.is_empty());
+
+    let mut overflow = RecordingRunner::with_stored_schema(current, i64::MAX);
+    let error = apply_schema("type User { name: str nickname: str }", &mut overflow)
+        .expect_err("version overflow should fail");
+    assert_eq!(error.message(), "schema version number exceeds i64 range");
+    assert!(overflow.calls.is_empty());
 }
 
 #[test]
