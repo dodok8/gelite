@@ -16,8 +16,10 @@ limitations are:
   Use `--debug` to inspect SQL and bind values.
 - `gelite repl --database` executes `select`, `insert`, `update`, and `delete`.
   It does not provide a JSON result format.
-- Initial schema application expects a new database. Migration diffing and
-  migration history are not implemented.
+- Schema application supports new objects, nullable scalar fields, optional
+  single links, and multi links. Removal, rename inference, required or unique
+  additions to existing objects, table rebuilds, backfills, and concurrent or
+  online migration coordination are not implemented.
 - Inserts and regular updates accept scalar literals, single-link ID strings,
   and single-link selects narrowed by an implicit `id` or declared `unique`
   scalar field. Multi-link updates support one `+=` or `-=` operation per

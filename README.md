@@ -69,12 +69,12 @@ Gelite's current scope includes:
   and explicit transaction validation
 - explicit `start transaction`, `commit`, and `rollback` commands in the
   database-backed interactive REPL
-- initial schema planning: `.geli` parsing, SQLite schema planning, and DDL SQL
-  rendering
+- initial and append-only schema planning: `.geli` parsing, catalog diffing,
+  SQLite schema planning, and DDL SQL rendering
 
-It can apply the initial schema to a SQLite database and execute the current
-query subset through the CLI REPL. It does not yet provide migration diffing, a
-server, or a web UI.
+It can apply an initial schema or a supported append-only migration to a SQLite
+database and execute the current query subset through the CLI REPL. It does not
+yet provide table-rebuilding migrations, a server, or a web UI.
 
 That is intentional for this stage. The first useful milestone is to make the
 language and schema pipelines correct and understandable before building
@@ -167,9 +167,8 @@ as a stable snapshot or reproducible plan artifact.
 - `query-ir`: backend-independent Semantic IR for supported queries.
 - `sqlite-query-plan`: SQLite-specific structured query plans.
 - `sqlite-query-sqlgen`: SQL renderer that emits bind placeholders.
-- `sqlite-schema-plan`: SQLite-specific initial schema plan.
-- `sqlite-schema-sqlgen`: SQL renderer for initial schema DDL and metadata
-  inserts.
+- `sqlite-schema-plan`: SQLite-specific initial and append-only migration plans.
+- `sqlite-schema-sqlgen`: SQL renderer for schema DDL and metadata inserts.
 - `sqlite-runner`: native schema, query, and transaction execution, including
   nested single- and multi-link result shaping.
 - `tools/gelite-cli`: top-level command-line binary.
@@ -178,7 +177,8 @@ as a stable snapshot or reproducible plan artifact.
 
 ## What is not implemented yet
 
-- Migration diffing and migration history.
+- Table-rebuilding migrations, renames, backfills, and online migration
+  coordination.
 - HTTP API.
 - Web playground.
 

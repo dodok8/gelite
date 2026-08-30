@@ -1,8 +1,8 @@
 # Getting started
 
 Gelite compiles a Gel-like schema and query language to SQLite. The current CLI
-can plan or apply an initial schema and can compile or execute queries through
-the REPL.
+can plan an initial schema, apply initial and supported append-only schemas, and
+compile or execute queries through the REPL.
 
 ## Apply the example schema
 
@@ -12,9 +12,9 @@ From the repository root:
 cargo run -p gelite-cli -- schema apply examples/organization.geli --database organization.db
 ```
 
-This creates a SQLite database for the organization example. Schema application
-is for a new database; migration diffing and migration history are not
-implemented.
+This creates a SQLite database for the organization example. Re-running the
+command with a supported append-only schema preserves existing rows and records
+the new schema version. Identical schemas are a no-op.
 
 ## Open the REPL
 

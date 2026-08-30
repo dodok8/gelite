@@ -17,7 +17,15 @@ When running from this repository, prefix each command with
 ## Schema modes
 
 `schema plan` prints initial SQLite DDL and metadata bind values without opening
-a database. `schema apply` creates the initial schema in a new database.
+a database. `schema apply` creates the initial schema in a new database or
+applies supported append-only additions to an existing Gelite database.
+
+Existing databases are verified against their latest stored checksum and
+logical catalog before migration planning. New objects, nullable scalar fields,
+optional single links, and multi links are supported. An identical schema is a
+no-op; unsupported changes fail before migration DDL executes. Successful
+non-empty migrations append one schema-version row in the same transaction as
+their DDL and catalog metadata.
 
 ## Query modes
 
