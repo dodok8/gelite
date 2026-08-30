@@ -416,10 +416,12 @@ fn plan_object_table<'a>(
 }
 
 fn plan_stored_field(field: &Field) -> Option<(SQLiteColumnPlan, Option<SQLiteForeignKeyPlan>)> {
+    let column_name = stored_column_name(field)?;
+
     match field {
         Field::Scalar(scalar) => Some((
             SQLiteColumnPlan::new(
-                field.name(),
+                column_name,
                 sqlite_affinity(scalar.scalar_type()),
                 field.cardinality() != Cardinality::Required,
                 false,
@@ -427,22 +429,29 @@ fn plan_stored_field(field: &Field) -> Option<(SQLiteColumnPlan, Option<SQLiteFo
             ),
             None,
         )),
+        Field::Link(link) if link.cardinality() != Cardinality::Many => Some((
+            SQLiteColumnPlan::new(
+                column_name.clone(),
+                SQLiteAffinity::Text,
+                field.cardinality() != Cardinality::Required,
+                false,
+                link.is_unique(),
+            ),
+            Some(SQLiteForeignKeyPlan::new(
+                column_name,
+                link.target_type_name().to_ascii_lowercase(),
+                "id",
+            )),
+        )),
+        Field::Link(_) => None,
+    }
+}
+
+fn stored_column_name(field: &Field) -> Option<String> {
+    match field {
+        Field::Scalar(_) => Some(field.name().to_string()),
         Field::Link(link) if link.cardinality() != Cardinality::Many => {
-            let column_name = format!("{}_id", field.name());
-            Some((
-                SQLiteColumnPlan::new(
-                    column_name.clone(),
-                    SQLiteAffinity::Text,
-                    field.cardinality() != Cardinality::Required,
-                    false,
-                    link.is_unique(),
-                ),
-                Some(SQLiteForeignKeyPlan::new(
-                    column_name,
-                    link.target_type_name().to_ascii_lowercase(),
-                    "id",
-                )),
-            ))
+            Some(format!("{}_id", field.name()))
         }
         Field::Link(_) => None,
     }
@@ -1185,16 +1194,50 @@ impl SQLiteSchemaMigrationPlan {
 
 #[derive(Debug, PartialEq)]
 pub enum SQLiteSchemaMigrationUnsupportedError {
-    ObjectRemoval { object_type: String },
-    FieldRemoval { object_type: String, field: String },
-    FieldKindChange { object_type: String, field: String },
-    ScalarTypeChange { object_type: String, field: String },
-    LinkTargetChange { object_type: String, field: String },
-    CardinalityChange { object_type: String, field: String },
-    UniquenessChange { object_type: String, field: String },
-    RequiredFieldAddition { object_type: String, field: String },
-    UniqueFieldAddition { object_type: String, field: String },
-    InverseLinkChange { object_type: String, field: String },
+    ObjectRemoval {
+        object_type: String,
+    },
+    FieldRemoval {
+        object_type: String,
+        field: String,
+    },
+    FieldKindChange {
+        object_type: String,
+        field: String,
+    },
+    ScalarTypeChange {
+        object_type: String,
+        field: String,
+    },
+    LinkTargetChange {
+        object_type: String,
+        field: String,
+    },
+    CardinalityChange {
+        object_type: String,
+        field: String,
+    },
+    UniquenessChange {
+        object_type: String,
+        field: String,
+    },
+    RequiredFieldAddition {
+        object_type: String,
+        field: String,
+    },
+    UniqueFieldAddition {
+        object_type: String,
+        field: String,
+    },
+    InverseLinkChange {
+        object_type: String,
+        field: String,
+    },
+    PhysicalColumnNameCollision {
+        object_type: String,
+        field: String,
+        column: String,
+    },
 }
 
 pub fn plan_schema_migration(
@@ -1341,17 +1384,49 @@ fn validate_schema_migration(
 
     sorted_objects(desired)
         .into_iter()
-        .filter_map(|desired_object| {
-            current
-                .find_type(desired_object.name())
-                .map(|current_object| (current_object, desired_object))
-        })
-        .try_for_each(|(current_object, desired_object)| {
+        .try_for_each(|desired_object| {
+            let current_object = current.find_type(desired_object.name());
+
             sorted_fields(desired_object)
                 .into_iter()
-                .filter(|field| current_object.find_declared_field(field.name()).is_none())
-                .try_for_each(|field| validate_field_addition(desired_object.name(), field))
+                .filter(|field| {
+                    current_object
+                        .is_none_or(|object| object.find_declared_field(field.name()).is_none())
+                })
+                .try_for_each(|field| {
+                    if current_object.is_some() {
+                        validate_field_addition(desired_object.name(), field)?;
+                    }
+                    validate_added_column_name(desired_object, field)
+                })
         })
+}
+
+fn validate_added_column_name(
+    object: &ObjectType,
+    field: &Field,
+) -> Result<(), SQLiteSchemaMigrationUnsupportedError> {
+    let Some(column) = stored_column_name(field) else {
+        return Ok(());
+    };
+    let collides = object
+        .declared_fields()
+        .iter()
+        .filter(|other| other.name() != field.name())
+        .filter_map(stored_column_name)
+        .any(|other| other == column);
+
+    if collides {
+        Err(
+            SQLiteSchemaMigrationUnsupportedError::PhysicalColumnNameCollision {
+                object_type: object.name().to_string(),
+                field: field.name().to_string(),
+                column,
+            },
+        )
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_existing_field(

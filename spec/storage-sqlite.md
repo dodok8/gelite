@@ -449,6 +449,8 @@ scalar type, link target, cardinality, uniqueness, or inverse-link meaning is
 also unsupported. Adding a required or unique field to an existing object is
 rejected until an explicit backfill or validation strategy exists. These cases
 return typed unsupported errors rather than a partial migration plan.
+Scalar and single-link fields that lower to the same physical column name are
+also rejected before the planner emits an operation.
 
 The initial and migration planners share the same local physical table, column,
 relation-table, index, and metadata insert helpers. Migration SQL rendering,

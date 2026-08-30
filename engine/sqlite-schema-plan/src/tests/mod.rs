@@ -1697,6 +1697,33 @@ mod migration {
     }
 
     #[test]
+    fn schema_migration_plan_rejects_colliding_physical_column_names() {
+        let current = catalog(vec![Field::Link(LinkField::new(
+            "other",
+            "Other",
+            Cardinality::Optional,
+        ))]);
+        let desired = catalog(vec![
+            Field::Link(LinkField::new("other", "Other", Cardinality::Optional)),
+            Field::Scalar(ScalarField::new(
+                "other_id",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )),
+        ]);
+
+        assert_unsupported(
+            current,
+            desired,
+            SQLiteSchemaMigrationUnsupportedError::PhysicalColumnNameCollision {
+                object_type: "Root".into(),
+                field: "other_id".into(),
+                column: "other_id".into(),
+            },
+        );
+    }
+
+    #[test]
     fn schema_migration_plan_rejects_unsupported_changes() {
         assert_unsupported(
             catalog(vec![]),
