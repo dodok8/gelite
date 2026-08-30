@@ -99,14 +99,14 @@ pub fn apply_schema(
         .map_err(command_error_from_runner)?;
 
     if let Some(stored) = stored {
-        let plan = sqlite_schema_plan::plan_schema_migration(stored.catalog(), &catalog).map_err(
+        let plan = sqlite_schema_plan::plan_schema_migration(&stored.catalog, &catalog).map_err(
             |error| CommandError::new(format!("failed to plan schema migration: {error:?}")),
         )?;
         if plan.operations().is_empty() {
             return Ok(());
         }
 
-        let version_number = stored.version_number().checked_add(1).ok_or_else(|| {
+        let version_number = stored.version_number.checked_add(1).ok_or_else(|| {
             CommandError::new("schema version number exceeds i64 range".to_string())
         })?;
         let (version_id, applied_at) = schema_application_values();

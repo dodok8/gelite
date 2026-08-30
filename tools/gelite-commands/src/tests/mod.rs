@@ -29,7 +29,10 @@ struct RecordingRunner {
 impl RecordingRunner {
     fn with_stored_schema(catalog: SchemaCatalog, version_number: i64) -> Self {
         Self {
-            stored_schema: Some(SQLiteStoredSchema::new(catalog, version_number)),
+            stored_schema: Some(SQLiteStoredSchema {
+                catalog,
+                version_number,
+            }),
             ..Self::default()
         }
     }

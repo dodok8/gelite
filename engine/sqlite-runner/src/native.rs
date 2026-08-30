@@ -161,7 +161,10 @@ impl NativeSQLiteRunner {
                     "stored schema snapshot does not match the canonical logical catalog",
                 ));
             }
-            let stored_schema = SQLiteStoredSchema::new(catalog, last_schema.version_number);
+            let stored_schema = SQLiteStoredSchema {
+                catalog,
+                version_number: last_schema.version_number,
+            };
             self.commit_transaction()?;
             Ok(Some(stored_schema))
         })();

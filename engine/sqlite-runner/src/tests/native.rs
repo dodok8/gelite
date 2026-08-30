@@ -568,8 +568,8 @@ fn native_runner_loads_verified_schema_state_or_identifies_a_new_database() {
         .expect("stored schema should verify")
         .expect("stored schema should exist");
 
-    assert_eq!(stored.catalog(), &post_catalog());
-    assert_eq!(stored.version_number(), 1);
+    assert_eq!(stored.catalog, post_catalog());
+    assert_eq!(stored.version_number, 1);
 }
 
 #[test]

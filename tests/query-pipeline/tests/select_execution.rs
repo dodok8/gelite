@@ -189,9 +189,9 @@ fn schema_apply_migrates_existing_data_and_records_one_successor_version() {
         .load_verified_schema()
         .expect("migrated schema should verify")
         .expect("stored schema should exist");
-    assert_eq!(stored.version_number(), 2);
+    assert_eq!(stored.version_number, 2);
     assert_eq!(
-        sqlite_schema_plan::serialize_schema_snapshot(stored.catalog()).unwrap(),
+        sqlite_schema_plan::serialize_schema_snapshot(&stored.catalog).unwrap(),
         sqlite_schema_plan::serialize_schema_snapshot(
             &schema_parser::parse_schema(desired).unwrap()
         )
@@ -237,8 +237,8 @@ fn schema_apply_rolls_back_migration_ddl_metadata_and_history() {
         .load_verified_schema()
         .expect("original schema should remain verifiable")
         .expect("original schema should remain stored");
-    assert_eq!(stored.version_number(), 1);
-    assert_eq!(stored.catalog(), &initial_catalog);
+    assert_eq!(stored.version_number, 1);
+    assert_eq!(stored.catalog, initial_catalog);
 }
 
 #[test]

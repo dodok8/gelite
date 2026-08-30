@@ -292,7 +292,7 @@ pub fn plan_initial_schema(
     let catalog_object_rows = plan_catalog_object_rows(catalog);
     let catalog_field_rows = plan_catalog_field_rows(catalog);
     let indexes = plan_indexes(catalog);
-    let schema_versions_rows = plan_schema_version_rows(catalog, version_id, applied_at)?;
+    let schema_versions_rows = vec![plan_schema_version_row(catalog, version_id, applied_at, 1)?];
 
     Ok(SQLiteSchemaPlan {
         metadata_tables,
@@ -1034,16 +1034,6 @@ fn snapshot_schema(catalog: &SchemaCatalog) -> SchemaVersionSnapshot<'_> {
         format_version: 1,
         objects: object_snapshots,
     }
-}
-
-fn plan_schema_version_rows(
-    catalog: &SchemaCatalog,
-    version_id: &str,
-    applied_at: &str,
-) -> Result<Vec<SQLiteSchemaVersionRow>, serde_json::Error> {
-    Ok(vec![plan_schema_version_row(
-        catalog, version_id, applied_at, 1,
-    )?])
 }
 
 fn plan_schema_version_row(

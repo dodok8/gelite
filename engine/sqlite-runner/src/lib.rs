@@ -73,25 +73,8 @@ pub trait SQLiteRunner {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SQLiteStoredSchema {
-    catalog: SchemaCatalog,
-    version_number: i64,
-}
-
-impl SQLiteStoredSchema {
-    pub fn new(catalog: SchemaCatalog, version_number: i64) -> Self {
-        Self {
-            catalog,
-            version_number,
-        }
-    }
-
-    pub fn catalog(&self) -> &SchemaCatalog {
-        &self.catalog
-    }
-
-    pub fn version_number(&self) -> i64 {
-        self.version_number
-    }
+    pub catalog: SchemaCatalog,
+    pub version_number: i64,
 }
 
 pub trait SQLiteSchemaReader {

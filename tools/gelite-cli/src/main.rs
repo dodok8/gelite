@@ -390,8 +390,8 @@ mod tests {
             .load_verified_schema()
             .expect("stored schema should verify")
             .expect("stored schema should exist");
-        assert_eq!(stored.version_number(), 2);
-        assert!(stored.catalog().find_field("User", "nickname").is_some());
+        assert_eq!(stored.version_number, 2);
+        assert!(stored.catalog.find_field("User", "nickname").is_some());
 
         drop(runner);
         fs::remove_dir_all(directory).unwrap();
