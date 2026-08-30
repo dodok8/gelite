@@ -15,7 +15,8 @@ use crate::{
     SQLiteRunner, SQLiteRunnerError, apply_schema_statements,
     native::NativeSQLiteRunner,
     tests::fixtures::{
-        APPLIED_AT, VERSION_ID, native_runner_with_post_schema, rendered_post_schema_statements,
+        APPLIED_AT, VERSION_ID, native_runner_with_post_schema, post_catalog,
+        rendered_post_schema_statements,
     },
 };
 
@@ -554,6 +555,38 @@ fn native_runner_can_load_schema_catalog_from_metadata() {
     assert!(catalog.find_type("Post").is_some());
     assert!(catalog.find_field("Post", "title").is_some());
     assert!(catalog.find_field("Post", "id").is_some());
+}
+
+#[test]
+fn native_runner_loads_verified_schema_state_or_identifies_a_new_database() {
+    let mut empty = NativeSQLiteRunner::open_in_memory().expect("database should open");
+    assert_eq!(empty.load_verified_schema(), Ok(None));
+
+    let mut existing = native_runner_with_post_schema();
+    let stored = existing
+        .load_verified_schema()
+        .expect("stored schema should verify")
+        .expect("stored schema should exist");
+
+    assert_eq!(stored.catalog(), &post_catalog());
+    assert_eq!(stored.version_number(), 1);
+}
+
+#[test]
+fn native_runner_rejects_partial_engine_schema_metadata() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+    runner
+        .execute("CREATE TABLE _engine_schema_versions (version_number INTEGER)")
+        .expect("partial metadata fixture should be created");
+
+    let error = runner
+        .load_verified_schema()
+        .expect_err("partial engine metadata must not be treated as a new database");
+
+    assert_eq!(
+        error.message(),
+        "database contains partial engine schema metadata"
+    );
 }
 
 #[test]

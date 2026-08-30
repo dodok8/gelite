@@ -17,7 +17,7 @@ use sqlite_schema_plan::{SQLiteValuePlan, schema_snapshot_checksum, serialize_sc
 
 use crate::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
-    SQLiteTransactionRunner,
+    SQLiteSchemaReader, SQLiteStoredSchema, SQLiteTransactionRunner,
 };
 
 /// Native SQLite runner backed by an owned SQLite connection.
@@ -116,10 +116,27 @@ impl NativeSQLiteRunner {
         }
     }
 
-    /// Verifies the latest snapshot checksum and logical catalog in one read transaction.
-    ///
-    /// No source file is needed. An existing caller transaction is rejected and left untouched.
-    pub fn verify_schema_version(&mut self) -> Result<(), SQLiteRunnerError> {
+    pub fn load_verified_schema(
+        &mut self,
+    ) -> Result<Option<SQLiteStoredSchema>, SQLiteRunnerError> {
+        let metadata_tables = [
+            "_engine_schema_versions",
+            "_engine_catalog_objects",
+            "_engine_catalog_fields",
+        ];
+        let existing = metadata_tables
+            .iter()
+            .map(|table| self.table_exists(table))
+            .collect::<Result<Vec<_>, _>>()?;
+        if existing.iter().all(|exists| !exists) {
+            return Ok(None);
+        }
+        if existing.iter().any(|exists| !exists) {
+            return Err(SQLiteRunnerError::schema_verification_failed(
+                "database contains partial engine schema metadata",
+            ));
+        }
+
         self.begin_transaction()?;
         let result = (|| {
             let last_schema = self.read_latest_schema_version()?.ok_or_else(|| {
@@ -144,7 +161,9 @@ impl NativeSQLiteRunner {
                     "stored schema snapshot does not match the canonical logical catalog",
                 ));
             }
-            self.commit_transaction()
+            let stored_schema = SQLiteStoredSchema::new(catalog, last_schema.version_number);
+            self.commit_transaction()?;
+            Ok(Some(stored_schema))
         })();
 
         result.map_err(|mut error: SQLiteRunnerError| {
@@ -157,6 +176,19 @@ impl NativeSQLiteRunner {
             }
             error
         })
+    }
+
+    /// Verifies the latest snapshot checksum and logical catalog in one read transaction.
+    ///
+    /// No source file is needed. An existing caller transaction is rejected and left untouched.
+    pub fn verify_schema_version(&mut self) -> Result<(), SQLiteRunnerError> {
+        self.load_verified_schema()?
+            .ok_or_else(|| {
+                SQLiteRunnerError::schema_verification_failed(
+                    "database does not contain a stored schema version",
+                )
+            })
+            .map(|_| ())
     }
 
     pub fn load_schema_catalog(&self) -> Result<SchemaCatalog, SQLiteRunnerError> {
@@ -857,6 +889,12 @@ impl SQLiteTransactionRunner for NativeSQLiteRunner {
 
     fn rollback_transaction(&mut self) -> Result<(), SQLiteRunnerError> {
         NativeSQLiteRunner::rollback_transaction(self)
+    }
+}
+
+impl SQLiteSchemaReader for NativeSQLiteRunner {
+    fn load_verified_schema(&mut self) -> Result<Option<SQLiteStoredSchema>, SQLiteRunnerError> {
+        NativeSQLiteRunner::load_verified_schema(self)
     }
 }
 
