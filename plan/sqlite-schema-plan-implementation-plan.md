@@ -1265,6 +1265,11 @@ assigns ids for additions in logical-name order. Required or unique additions
 to existing objects and changes requiring removal or rebuild are rejected.
 Migration rendering and execution stay outside this pure planner.
 
+`sqlite-schema-sqlgen` renders migration operations in planner order. Added
+single-link columns use an inline `REFERENCES` clause because SQLite cannot add
+a table-level foreign key constraint after table creation. Metadata values and
+the version row remain bound INSERT values.
+
 ### Migration identity
 
 `_engine_schema_versions` requires:
@@ -1277,22 +1282,25 @@ Migration rendering and execution stay outside this pure planner.
 
 Initial schema plans insert the canonical snapshot and checksum with version
 number `1`. The native runner selects the highest version number when reading
-the latest record. UUIDs and timestamps are not ordering keys. Non-initial
-migration application and upgrades of older metadata tables remain deferred.
+the latest record. UUIDs and timestamps are not ordering keys. A non-empty
+migration records the complete desired catalog at the verified latest version
+number plus one. Number overflow is an error.
+
+The runner exposes one verified stored-schema read containing the logical
+catalog and latest version number. No engine metadata tables means a new
+database; a partial set is invalid. Existing metadata is checksum- and
+catalog-verified before the command plans a migration.
 
 ### Transaction boundary
 
-Applying schema changes should happen in one transaction where SQLite allows
-it. This belongs to the engine runtime execution layer, not the pure planning
-layer.
+The command renders every migration operation and appends its version INSERT,
+then passes the complete statement list to the existing transactional schema
+runner. DDL, catalog metadata, and the version row therefore commit or roll
+back together. An empty plan returns before opening a write transaction.
 
 ## Deferred Work
 
-- non-initial migrations
 - table rebuild migrations
 - schema parser for `.geli`
-- catalog loading through the engine SQLite runtime
-- migration checksum generation
-- schema snapshot serialization
-- rollback strategy for failed schema apply
+- concurrent or online migration coordination
 - user-declared indexes and constraints
