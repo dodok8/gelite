@@ -1572,14 +1572,26 @@ mod migration {
                     Field::Link(LinkField::new("others", "Other", Cardinality::Many)),
                 ],
             ),
-            ObjectType::new("Post", vec![]),
+            ObjectType::new(
+                "Post",
+                vec![Field::Link(LinkField::new(
+                    "author",
+                    "Root",
+                    Cardinality::Optional,
+                ))],
+            ),
         ])
         .unwrap();
         let plan = plan_schema_migration(&current, &desired).unwrap();
 
         assert!(plan.operations().iter().any(|operation| matches!(
             operation,
-            SQLiteSchemaMigrationOperation::CreateTable(table) if table.name() == "post"
+            SQLiteSchemaMigrationOperation::CreateTable(table)
+                if table.name() == "post"
+                    && table.columns().iter().any(|column| column.name() == "author_id")
+                    && table.foreign_keys().iter().any(|foreign_key|
+                        foreign_key.column_name() == "author_id"
+                            && foreign_key.target_table() == "root")
         )));
         assert!(plan.operations().iter().any(|operation| matches!(
             operation,
@@ -1611,6 +1623,7 @@ mod migration {
             "root__parent_id_idx",
             "root__others__source_id_idx",
             "root__others__target_id_idx",
+            "post__author_id_idx",
         ] {
             assert!(plan.operations().iter().any(|operation| matches!(
                 operation,
@@ -1626,7 +1639,7 @@ mod migration {
                     SQLiteSchemaMigrationOperation::InsertMetadata(_)
                 ))
                 .count(),
-            5
+            6
         );
     }
 

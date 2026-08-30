@@ -1245,9 +1245,25 @@ to `sqlite-query-sqlgen`; engine metadata inserts belong to `sqlite-schema-sqlge
 
 ### Shared SQLite naming
 
-`sqlite-query-plan` and `sqlite-schema-plan` will both need physical naming rules. Keep the
-first implementation local, but extract the naming rules once a test or bug
-shows drift.
+Initial and migration schema planning share local helpers for physical object
+tables, stored columns, relation tables, indexes, and metadata inserts. This
+keeps both schema-planning paths aligned without adding a separate naming
+crate. Cross-crate extraction with `sqlite-query-plan` remains deferred until a
+test or bug shows drift.
+
+### Catalog diff planning
+
+`plan_schema_migration` compares current and desired catalogs by logical object
+and field names. It performs a current-to-desired pass for removals and semantic
+changes, then a desired-to-current pass for additions. Both passes sort names
+before using `try_for_each`, making the first typed unsupported error and the
+generated operation order independent of declaration order.
+
+The append-only planner supports new objects, nullable scalar fields, optional
+single links, and stored multi links. It preserves current metadata ids and
+assigns ids for additions in logical-name order. Required or unique additions
+to existing objects and changes requiring removal or rebuild are rejected.
+Migration rendering and execution stay outside this pure planner.
 
 ### Migration identity
 
@@ -1272,7 +1288,6 @@ layer.
 
 ## Deferred Work
 
-- diffing current catalog against desired catalog
 - non-initial migrations
 - table rebuild migrations
 - schema parser for `.geli`

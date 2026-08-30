@@ -427,18 +427,33 @@ The migration MVP is append-only:
 4. Record the migration in `_engine_schema_versions`
 5. Update catalog metadata tables
 
-The first milestone can restrict supported schema changes to:
+The pure SQLite schema planner implements steps 1 and 2. It compares object and
+field names rather than catalog ids, so declaration-only reordering produces an
+empty plan. The planner emits operations in this deterministic order:
 
-- create type
-- add nullable scalar field
-- add required scalar field only if a default/backfill strategy exists
-- add unique scalar field only when existing data can satisfy the uniqueness
-  rule
-- add single relation
-- add multi relation join table
+1. object tables
+2. relation tables
+3. added columns
+4. indexes
+5. object metadata
+6. field metadata
 
-Changes that may require table rebuilds can be rejected initially with a clear
-diagnostic.
+Supported changes are new object types, nullable scalar fields, optional single
+links, and stored multi links. A new object may contain required or unique
+fields because it has no existing rows. Existing catalog ids are preserved;
+new object and field ids are assigned by logical-name order after the current
+maximum id.
+
+Removing or renaming objects or fields is unsupported. Changing field kind,
+scalar type, link target, cardinality, uniqueness, or inverse-link meaning is
+also unsupported. Adding a required or unique field to an existing object is
+rejected until an explicit backfill or validation strategy exists. These cases
+return typed unsupported errors rather than a partial migration plan.
+
+The initial and migration planners share the same local physical table, column,
+relation-table, index, and metadata insert helpers. Migration SQL rendering,
+transactional execution, and non-initial schema-version recording remain work
+for the runtime and schema SQL generator.
 
 ## Query Lowering Assumptions
 
