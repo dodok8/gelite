@@ -2,7 +2,7 @@ extern crate alloc;
 
 use crate::{
     RenderedSchemaStatement, render_create_index, render_create_table, render_initial_schema,
-    render_insert,
+    render_insert, render_schema_migration,
 };
 use alloc::string::ToString;
 use alloc::vec;
@@ -14,7 +14,7 @@ use sqlite_schema_plan::{
     SQLiteAffinity, SQLiteColumnPlan, SQLiteForeignKeyAction, SQLiteForeignKeyPlan,
     SQLiteIndexPlan, SQLitePrimaryKeyPlan, SQLiteTablePlan, SQLiteValuePlan,
     plan_catalog_field_inserts, plan_catalog_object_inserts, plan_initial_schema,
-    plan_schema_version_insert,
+    plan_schema_migration, plan_schema_version_insert,
 };
 
 const VERSION_ID: &str = "9b496060-9a5c-4c7e-9f32-210f698fe497";
@@ -332,4 +332,70 @@ fn render_initial_schema_outputs_deterministic_sql() {
         }
         RenderedSchemaStatement::Sql(_) => panic!("catalog field row should render as insert"),
     }
+}
+
+#[test]
+fn render_schema_migration_preserves_operation_order_and_foreign_keys() {
+    let current = SchemaCatalog::try_new(vec![
+        ObjectType::new("Root", vec![]),
+        ObjectType::new("Other", vec![]),
+    ])
+    .unwrap();
+    let desired = SchemaCatalog::try_new(vec![
+        ObjectType::new(
+            "Root",
+            vec![
+                Field::Scalar(ScalarField::new(
+                    "nickname",
+                    ScalarType::Str,
+                    SingleCardinality::Optional,
+                )),
+                Field::Link(LinkField::new("other", "Other", Cardinality::Optional)),
+                Field::Link(LinkField::new("others", "Other", Cardinality::Many)),
+            ],
+        ),
+        ObjectType::new("Other", vec![]),
+        ObjectType::new(
+            "Post",
+            vec![Field::Link(LinkField::new(
+                "author",
+                "Root",
+                Cardinality::Optional,
+            ))],
+        ),
+    ])
+    .unwrap();
+    let plan = plan_schema_migration(&current, &desired).unwrap();
+
+    let statements = render_schema_migration(&plan);
+
+    assert_eq!(statements.len(), 14);
+    assert!(statements[0].sql().starts_with("CREATE TABLE \"post\""));
+    assert!(
+        statements[1]
+            .sql()
+            .starts_with("CREATE TABLE \"root__others\"")
+    );
+    assert_eq!(
+        statements[2].sql(),
+        "ALTER TABLE \"root\" ADD COLUMN \"nickname\" TEXT NULL"
+    );
+    assert_eq!(
+        statements[3].sql(),
+        "ALTER TABLE \"root\" ADD COLUMN \"other_id\" TEXT NULL REFERENCES \"other\"(\"id\") ON DELETE RESTRICT"
+    );
+    assert_eq!(
+        statements[4].sql(),
+        "CREATE INDEX \"post__author_id_idx\" ON \"post\" (\"author_id\")"
+    );
+    assert!(
+        statements[5..8]
+            .iter()
+            .all(|statement| statement.sql().starts_with("CREATE INDEX"))
+    );
+    assert!(
+        statements[8..]
+            .iter()
+            .all(|statement| matches!(statement, RenderedSchemaStatement::Insert(_)))
+    );
 }
