@@ -1477,3 +1477,354 @@ fn initial_schema_version_content_is_independent_of_application_values() {
         );
     }
 }
+
+mod migration {
+    use super::*;
+    use crate::{
+        SQLiteSchemaMigrationOperation, SQLiteSchemaMigrationUnsupportedError,
+        plan_schema_migration,
+    };
+
+    fn catalog(fields: Vec<Field>) -> SchemaCatalog {
+        SchemaCatalog::try_new(vec![
+            ObjectType::new("Root", fields),
+            ObjectType::new("Other", vec![]),
+        ])
+        .unwrap()
+    }
+
+    fn scalar(name: &str, scalar_type: ScalarType, cardinality: SingleCardinality) -> Field {
+        Field::Scalar(ScalarField::new(name, scalar_type, cardinality))
+    }
+
+    fn unique_scalar(name: &str, scalar_type: ScalarType, cardinality: SingleCardinality) -> Field {
+        Field::Scalar(ScalarField::with_uniqueness(
+            name,
+            scalar_type,
+            cardinality,
+            Uniqueness::Unique,
+        ))
+    }
+
+    fn link(name: &str, target: &str, cardinality: Cardinality) -> Field {
+        Field::Link(LinkField::new(name, target, cardinality))
+    }
+
+    #[test]
+    fn schema_migration_plan_is_empty_for_identical_or_reordered_catalogs() {
+        let current = catalog(vec![
+            scalar("name", ScalarType::Str, SingleCardinality::Optional),
+            link("other", "Other", Cardinality::Optional),
+        ]);
+        let reordered = SchemaCatalog::try_new(vec![
+            ObjectType::new("Other", vec![]),
+            ObjectType::new(
+                "Root",
+                vec![
+                    link("other", "Other", Cardinality::Optional),
+                    scalar("name", ScalarType::Str, SingleCardinality::Optional),
+                ],
+            ),
+        ])
+        .unwrap();
+
+        assert!(
+            plan_schema_migration(&current, &current)
+                .unwrap()
+                .operations()
+                .is_empty()
+        );
+        assert!(
+            plan_schema_migration(&current, &reordered)
+                .unwrap()
+                .operations()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn schema_migration_plan_adds_supported_schema_shapes() {
+        let current = catalog(vec![]);
+        let desired = SchemaCatalog::try_new(vec![
+            ObjectType::new("Other", vec![]),
+            ObjectType::new(
+                "Root",
+                vec![
+                    scalar("nickname", ScalarType::Str, SingleCardinality::Optional),
+                    link("parent", "Root", Cardinality::Optional),
+                    link("others", "Other", Cardinality::Many),
+                ],
+            ),
+            ObjectType::new("Post", vec![link("author", "Root", Cardinality::Optional)]),
+        ])
+        .unwrap();
+        let plan = plan_schema_migration(&current, &desired).unwrap();
+
+        assert!(plan.operations().iter().any(|operation| matches!(
+            operation,
+            SQLiteSchemaMigrationOperation::CreateTable(table)
+                if table.name() == "post"
+                    && table.columns().iter().any(|column| column.name() == "author_id")
+                    && table.foreign_keys().iter().any(|foreign_key|
+                        foreign_key.column_name() == "author_id"
+                            && foreign_key.target_table() == "root")
+        )));
+        assert!(plan.operations().iter().any(|operation| matches!(
+            operation,
+            SQLiteSchemaMigrationOperation::AddColumn { table_name, column, foreign_key: None }
+                if table_name == "root"
+                    && column.name() == "nickname"
+                    && column.affinity() == SQLiteAffinity::Text
+                    && column.is_nullable()
+        )));
+        assert!(plan.operations().iter().any(|operation| matches!(
+            operation,
+            SQLiteSchemaMigrationOperation::AddColumn {
+                table_name,
+                column,
+                foreign_key: Some(foreign_key),
+            } if table_name == "root"
+                && column.name() == "parent_id"
+                && column.is_nullable()
+                && foreign_key.target_table() == "root"
+        )));
+        assert!(plan.operations().iter().any(|operation| matches!(
+            operation,
+            SQLiteSchemaMigrationOperation::CreateTable(table)
+                if table.name() == "root__others"
+                    && table.columns().iter().map(|column| column.name()).collect::<Vec<_>>()
+                        == vec!["source_id", "target_id", "position"]
+        )));
+        for index_name in [
+            "root__parent_id_idx",
+            "root__others__source_id_idx",
+            "root__others__target_id_idx",
+            "post__author_id_idx",
+        ] {
+            assert!(plan.operations().iter().any(|operation| matches!(
+                operation,
+                SQLiteSchemaMigrationOperation::CreateIndex(index)
+                    if index.name() == index_name
+            )));
+        }
+        assert_eq!(
+            plan.operations()
+                .iter()
+                .filter(|operation| matches!(
+                    operation,
+                    SQLiteSchemaMigrationOperation::InsertMetadata(_)
+                ))
+                .count(),
+            6
+        );
+    }
+
+    #[test]
+    fn schema_migration_operations_are_deterministic_across_declaration_order() {
+        let current = catalog(vec![]);
+        let first = SchemaCatalog::try_new(vec![
+            ObjectType::new(
+                "Root",
+                vec![
+                    link("other", "Other", Cardinality::Optional),
+                    scalar("name", ScalarType::Str, SingleCardinality::Optional),
+                ],
+            ),
+            ObjectType::new("Other", vec![]),
+            ObjectType::new("Post", vec![]),
+        ])
+        .unwrap();
+        let second = SchemaCatalog::try_new(vec![
+            ObjectType::new("Post", vec![]),
+            ObjectType::new("Other", vec![]),
+            ObjectType::new(
+                "Root",
+                vec![
+                    scalar("name", ScalarType::Str, SingleCardinality::Optional),
+                    link("other", "Other", Cardinality::Optional),
+                ],
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            plan_schema_migration(&current, &first)
+                .unwrap()
+                .operations(),
+            plan_schema_migration(&current, &second)
+                .unwrap()
+                .operations()
+        );
+    }
+
+    fn assert_unsupported(
+        current: SchemaCatalog,
+        desired: SchemaCatalog,
+        expected: SQLiteSchemaMigrationUnsupportedError,
+    ) {
+        let Err(actual) = plan_schema_migration(&current, &desired) else {
+            panic!("schema change should be unsupported");
+        };
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn schema_migration_plan_rejects_colliding_physical_column_names() {
+        let current = catalog(vec![link("other", "Other", Cardinality::Optional)]);
+        let desired = catalog(vec![
+            link("other", "Other", Cardinality::Optional),
+            scalar("other_id", ScalarType::Str, SingleCardinality::Optional),
+        ]);
+
+        assert_unsupported(
+            current,
+            desired,
+            SQLiteSchemaMigrationUnsupportedError::PhysicalColumnNameCollision {
+                object_type: "Root".into(),
+                field: "other_id".into(),
+                column: "other_id".into(),
+            },
+        );
+    }
+
+    #[test]
+    fn schema_migration_plan_rejects_unsupported_changes() {
+        assert_unsupported(
+            catalog(vec![]),
+            SchemaCatalog::try_new(vec![ObjectType::new("Root", vec![])]).unwrap(),
+            SQLiteSchemaMigrationUnsupportedError::ObjectRemoval {
+                object_type: "Other".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![scalar(
+                "old",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )]),
+            catalog(vec![scalar(
+                "new",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )]),
+            SQLiteSchemaMigrationUnsupportedError::FieldRemoval {
+                object_type: "Root".into(),
+                field: "old".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![scalar(
+                "value",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )]),
+            catalog(vec![link("value", "Other", Cardinality::Optional)]),
+            SQLiteSchemaMigrationUnsupportedError::FieldKindChange {
+                object_type: "Root".into(),
+                field: "value".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![scalar(
+                "value",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )]),
+            catalog(vec![scalar(
+                "value",
+                ScalarType::Int64,
+                SingleCardinality::Optional,
+            )]),
+            SQLiteSchemaMigrationUnsupportedError::ScalarTypeChange {
+                object_type: "Root".into(),
+                field: "value".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![link("value", "Other", Cardinality::Optional)]),
+            catalog(vec![link("value", "Root", Cardinality::Optional)]),
+            SQLiteSchemaMigrationUnsupportedError::LinkTargetChange {
+                object_type: "Root".into(),
+                field: "value".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![link("value", "Other", Cardinality::Optional)]),
+            catalog(vec![link("value", "Other", Cardinality::Many)]),
+            SQLiteSchemaMigrationUnsupportedError::CardinalityChange {
+                object_type: "Root".into(),
+                field: "value".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![scalar(
+                "value",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )]),
+            catalog(vec![unique_scalar(
+                "value",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )]),
+            SQLiteSchemaMigrationUnsupportedError::UniquenessChange {
+                object_type: "Root".into(),
+                field: "value".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![]),
+            catalog(vec![scalar(
+                "value",
+                ScalarType::Str,
+                SingleCardinality::Required,
+            )]),
+            SQLiteSchemaMigrationUnsupportedError::RequiredFieldAddition {
+                object_type: "Root".into(),
+                field: "value".into(),
+            },
+        );
+        assert_unsupported(
+            catalog(vec![]),
+            catalog(vec![unique_scalar(
+                "value",
+                ScalarType::Str,
+                SingleCardinality::Optional,
+            )]),
+            SQLiteSchemaMigrationUnsupportedError::UniqueFieldAddition {
+                object_type: "Root".into(),
+                field: "value".into(),
+            },
+        );
+
+        let inverse_catalog = |inverse| {
+            SchemaCatalog::try_new(vec![
+                ObjectType::new(
+                    "Root",
+                    vec![Field::Link(LinkField::with_inverse(
+                        "others",
+                        "Other",
+                        Cardinality::Many,
+                        inverse,
+                    ))],
+                ),
+                ObjectType::new(
+                    "Other",
+                    vec![
+                        link("owner", "Root", Cardinality::Optional),
+                        link("editor", "Root", Cardinality::Optional),
+                    ],
+                ),
+            ])
+            .unwrap()
+        };
+        assert_unsupported(
+            inverse_catalog("owner"),
+            inverse_catalog("editor"),
+            SQLiteSchemaMigrationUnsupportedError::InverseLinkChange {
+                object_type: "Root".into(),
+                field: "others".into(),
+            },
+        );
+    }
+}
