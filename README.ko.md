@@ -62,16 +62,18 @@ Gelite의 현재 범위는 다음과 같습니다.
 - explicit multi-link add/remove mutation과 nested single/multi-link result
   shaping을 포함한 현재 `select`, `insert`, `update`, `delete` subset의 native
   query execution
+- 정방향 저장소를 재사용하는 명시적 readonly inverse link와 nested result,
+  multi 경로의 비교별 존재 조건
 - 사전 compile과 explicit transaction validation을 적용하는 semicolon 기반
   multi-statement query file
 - database-backed interactive REPL의 explicit `start transaction`, `commit`,
   `rollback` command
-- initial schema planning: `.geli` parsing, SQLite schema planning, DDL SQL
-  rendering
+- initial 및 append-only schema planning: `.geli` parsing, catalog diffing,
+  SQLite schema planning, DDL SQL rendering
 
-Initial schema를 SQLite database에 적용할 수 있고, 현재 query subset은 CLI
-REPL을 통해 실행할 수 있습니다. 아직 migration diffing, server, web UI는
-없습니다.
+Initial schema 또는 지원되는 append-only migration을 SQLite database에 적용할
+수 있고, 현재 query subset은 CLI REPL을 통해 실행할 수 있습니다. 아직 table
+rebuild migration, server, web UI는 없습니다.
 
 이건 현재 단계의 의도입니다. runtime feature를 올리기 전에 language pipeline과
 schema pipeline이 정확하고 이해 가능한지 먼저 검증하는 것이 첫 번째 유효한
@@ -160,19 +162,18 @@ snapshot이나 재현 가능한 plan artifact로 사용하면 안 됩니다.
 - `query-ir`: 지원되는 query용 backend-independent Semantic IR.
 - `sqlite-query-plan`: SQLite-specific structured query plan.
 - `sqlite-query-sqlgen`: bind placeholder 기반 SQL renderer.
-- `sqlite-schema-plan`: SQLite-specific initial schema plan.
-- `sqlite-schema-sqlgen`: initial schema DDL과 metadata insert를 렌더링하는 SQL
+- `sqlite-schema-plan`: SQLite-specific initial 및 append-only migration plan.
+- `sqlite-schema-sqlgen`: schema DDL과 metadata insert를 렌더링하는 SQL
   renderer.
-- `sqlite-runner`: nested single-link result shaping을 포함한 native schema,
-  query, transaction execution.
+- `sqlite-runner`: nested single/multi-link result shaping을 포함한 native
+  schema, query, transaction execution.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: 공유 query compilation 및 execution orchestration.
 - `tools/repl`: 현재 pipeline을 query 하나로 확인하는 inspection tool.
 
 ## 아직 구현되지 않은 것
 
-- Migration diffing과 migration history.
-- 선택된 multi-link fetching과 result shaping.
+- Table rebuild migration, rename, backfill, online migration coordination.
 - HTTP API.
 - Web playground.
 
@@ -238,6 +239,7 @@ mdBook 없이도 source Markdown을 직접 읽을 수 있습니다.
 - `plan/sqlite-query-plan-implementation-plan.md`
 - `plan/sqlite-schema-plan-implementation-plan.md`
 - `plan/cli-and-tooling-plan.md`
+- `plan/browser-runtime-and-playground-plan.md`
 
 문서가 충돌하면 의미는 `spec/`, 작업 순서는 `plan/`을 우선합니다.
 

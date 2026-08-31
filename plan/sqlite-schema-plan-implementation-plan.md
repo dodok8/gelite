@@ -1,5 +1,13 @@
 # SQLite Schema Implementation Plan
 
+## Status
+
+This is the historical implementation plan for the first SQLite schema and
+runner slice. Its `powersync_sqlite_nostd` feature layout and binding evaluation
+record the original implementation; the current runner direction is the public
+connection adapter contract and built-in `RusqliteAdapter` in
+`plan/browser-runtime-and-playground-plan.md`.
+
 ## Goal
 
 Add the first schema application layer for Gelite's SQLite backend.
@@ -38,11 +46,9 @@ Do not make `resolver` depend on `sqlite-schema-plan`.
 Do not make `sqlite-query-plan` or `sqlite-query-sqlgen` depend on `sqlite-schema-plan` until a
 shared naming module exists.
 
-The first version of `sqlite-schema-plan` should stay `no_std` while it builds
-structured DDL plans and SQL strings. Schema execution no longer has to move
-to a `std` boundary by default. The project now expects to evaluate
-`vlcn-io/sqlite-rs-embedded` as the SQLite binding for engine-integrated,
-`no_std`-compatible execution.
+`sqlite-schema-plan` stays `no_std` while it builds structured DDL plans and SQL
+strings. Connection ownership and concrete binding selection belong to the
+runner boundary.
 
 ## Responsibility Boundary
 

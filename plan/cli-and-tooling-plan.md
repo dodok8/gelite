@@ -412,62 +412,31 @@ second schema planning or execution path inside the REPL.
 
 ## WASM and Browser Demo
 
-The engine crates are being kept mostly `no_std`, and `sqlite-rs-embedded`
-describes itself as `no_std` and WASM-compatible. That makes a browser demo
-possible, but it should not change the first CLI/runtime sequence.
+The CLI and native runner now provide the executable baseline for the browser
+runtime. The browser work is specified in
+`plan/browser-runtime-and-playground-plan.md`; this document retains only the
+tooling boundary.
 
-The intended browser demo stack is:
-
-- Solid.js for the UI
-- a WASM build of the Gelite engine crates
-- a WASM-compatible SQLite runner backend implementing the same runner-facing
-  contracts as the native backend
-- Optique only where a TypeScript command parser is useful, such as a browser
-  command palette, scripted demo commands, or a web-based CLI-like input
-
-Optique is a type-safe combinatorial CLI parser for TypeScript. It should not
-replace the Rust CLI parser used by `tools/gelite-cli`, and it should not own
-Gelite language parsing. `.geli` and `.geliql` parsing must still come from the
-Rust parser crates compiled to WASM.
-
-The likely browser execution pipeline is:
+The browser execution pipeline is:
 
 ```text
-schema source in editor
--> schema_parser
--> sqlite_schema
--> sqlite_schema_sqlgen
--> sqlite_runner using a WASM backend
--> query_parser / resolver / sqlite_plan / sqlite_sqlgen
--> execute query in browser
--> render result rows
+Rust parser, planner, and runner contracts
+-> public SQLite connection adapter contract
+-> shared RusqliteAdapter using Memory VFS on WASM
+-> WASM bindings
+-> private framework-independent TypeScript library
+-> SolidStart documentation and guided playground site
 ```
 
-The first browser demo should be a developer tool, not a production server
-replacement:
-
-- in-browser schema editor
-- query editor
-- optional CLI-like command input for demos
-- generated SQL view
-- SQLite result preview
-- optional debug panels for AST, IR, and SQLite plan
-
-Do not start the browser demo until:
-
-- `sqlite-runner` can apply an initial schema
-- the native runner backend has proven the runner contract
-- a WASM runner backend can open a database and execute the same smoke tests in
-  the target browser/WASM environment
-- SELECT execution and result shaping have tests outside the browser
-
-The browser demo should reuse engine and command-layer code where possible.
-Avoid putting language parsing or SQL generation logic in TypeScript.
+The TypeScript library must not reimplement Gelite parsing, planning, or result
+shaping. The SolidStart application consumes that library and provides the
+Organization/CFP tutorial alongside the project documentation. It is not a
+general schema, migration, SQL, or administration interface.
 
 ## Implementation Sequence
 
-Steps 1 through 11 are implemented. WASM runner validation and the browser
-demo remain deferred.
+Steps 1 through 11 are implemented. The remaining browser sequence is tracked
+by issues #76 through #81.
 
 1. Add `sqlite-runner` and define binding-neutral runner traits for DDL and
    metadata inserts.
@@ -482,14 +451,17 @@ demo remain deferred.
 9. Add SELECT execution to `sqlite-runner`.
 10. Add `query run --database`.
 11. Route `gelite repl` through the shared command/query implementation.
-12. Validate a WASM runner backend against the same smoke tests.
-13. Revisit WASM/browser demo once runner behavior is tested outside the
-    browser.
+12. Validate `rusqlite` with an in-memory database in browser WASM (#76).
+13. Extract the public adapter contract and migrate native execution to the
+    built-in `RusqliteAdapter` (#77).
+14. Enable the same runner and adapter in browser WASM (#78).
+15. Add WASM bindings and a private TypeScript library (#79).
+16. Build the SolidStart documentation and playground site (#80).
+17. Replace mdBook CI and deployment with the SolidStart site (#81).
 
 ## Current Non-Goals
 
-- full migration diffing
-- applying schema changes to non-empty databases
-- query execution before catalog loading exists
 - TypeScript reimplementation of Gelite parsers or planners
-- browser demo before the SQLite runner contract is stable
+- npm or crates.io publication and release planning
+- OPFS persistence before the Memory VFS site is stable
+- HTTP service, administration UI, or general-purpose browser editors

@@ -1,5 +1,15 @@
 # New DB Engine Plan
 
+## Status
+
+This is the broad product roadmap. The native compiler, runner, CLI, nested
+result shaping, and first append-only schema migrations now exist. The current
+implementation milestone is the browser runtime and unified SolidStart site in
+`plan/browser-runtime-and-playground-plan.md`.
+
+HTTP service and administration UI ideas below are long-term possibilities,
+not part of the current browser milestone.
+
 ## Goal
 
 Build a new database engine inspired by Gel/EdgeDB's language and modeling
@@ -7,7 +17,8 @@ ideas, but implemented as a separate system using:
 
 - Rust for the backend and engine core
 - SQLite as the storage backend
-- Solid for the frontend and developer-facing UI
+- a framework-independent TypeScript library for browser bindings
+- SolidStart for the documentation and interactive tutorial site
 
 This is not a migration of the existing Gel codebase. The current repository is
 being used as a reference for language, schema, and compiler pipeline ideas.
@@ -43,8 +54,9 @@ The realistic first target is:
 - a custom query language
 - a compiler that lowers queries to SQLite SQL
 - a runtime that shapes relational rows into nested results
-- a Rust HTTP server and CLI
-- a Solid-based playground/admin UI
+- a CLI over the native runner
+- a WASM runner and private TypeScript library
+- a SolidStart documentation and interactive tutorial site
 
 The initial target is not:
 
@@ -90,6 +102,8 @@ The initial target is not:
 - Transaction handling
 - Prepared statement management
 - Nested result shaping
+- A public SQLite connection adapter contract
+- A built-in `RusqliteAdapter` for native and WASM execution
 
 ### Storage
 
@@ -100,25 +114,21 @@ The initial target is not:
 
 ### Server and Tooling
 
-- Rust HTTP API
 - CLI for schema/query/migration workflows
 - Command-style schema workflows such as `schema plan` and `schema apply`
 - REPL query workflow with optional schema meta commands that delegate to the
   same schema command implementation
 - CLI and browser tooling details are tracked in
   `plan/cli-and-tooling-plan.md`
-- Auth/session strategy
-- Logging and diagnostics
+- A possible HTTP service remains outside the current browser milestone
 
 ### Frontend
 
-- Solid playground
-- Schema browser
-- Query console
-- Migration/status UI
-- A later browser SQL demo can reuse the `no_std` engine crates and
-  WASM-compatible SQLite runner once runtime execution is tested outside the
-  browser
+- A private, framework-independent TypeScript library over the WASM bindings
+- A SolidStart site containing documentation and a guided playground
+- Memory VFS for the first browser runtime
+- Browser runtime and site details are tracked in
+  `plan/browser-runtime-and-playground-plan.md`
 
 ## Recommended Build Sequence
 
@@ -129,9 +139,13 @@ The initial target is not:
 5. Design typed IR
 6. Implement IR -> SQLite SQL lowering
 7. Implement runtime and nested result shaping
-8. Add Rust server endpoints
-9. Add CLI workflows
-10. Add Solid playground and admin UI
+8. Add CLI workflows
+9. Validate `rusqlite` in browser WASM
+10. Extract the public SQLite adapter contract and migrate native execution to
+    `RusqliteAdapter`
+11. Enable the same adapter and runner behavior in browser WASM
+12. Add the private TypeScript library
+13. Replace mdBook with the SolidStart documentation and playground site
 
 ## 0.x File Extension Decision
 
@@ -153,8 +167,9 @@ The first milestone should support:
 - simple filters, ordering, and limits
 - basic 1:1 and 1:N relations
 - migration apply
-- HTTP query execution
-- web playground query execution
+- native CLI query execution
+- browser query execution through a private TypeScript library
+- a guided SolidStart playground alongside the project documentation
 
 ## Features To Exclude From MVP
 
@@ -164,6 +179,8 @@ The first milestone should support:
 - subscriptions
 - complex polymorphism
 - wide auth/provider integrations
+- HTTP service and administration UI
+- persistent browser storage
 
 ## Early Risk Areas
 
@@ -187,20 +204,26 @@ limits.
 Compiling directly from AST to SQL will become brittle quickly. A typed IR
 should be treated as a core milestone, not an optional refactor.
 
-## Suggested Tech Stack
+## Current Browser Stack
 
-- Backend framework: `axum`
-- Async runtime: `tokio`
-- SQLite access: `sqlx` or `rusqlite`
-- Serialization: `serde`
-- Diagnostics: `miette` or equivalent
-- Logging: `tracing`
-- Frontend: `SolidStart`
+- Portable Rust core using `no_std + alloc`
+- Public `no_std + alloc` SQLite connection adapter contract
+- Built-in `std`-based `RusqliteAdapter` shared by native and WASM execution
+- Target-selected `rusqlite` FFI: `libsqlite3-sys` on native targets and
+  `sqlite-wasm-rs` on `wasm32-unknown-unknown`
+- Private TypeScript package managed in a pnpm workspace
+- SolidStart documentation and interactive tutorial site
+- `tsdown` only if the TypeScript library needs a separate build artifact
 
 ## Immediate Next Steps
 
-1. Write a short language and schema spec
-2. Define the Rust workspace and crate boundaries
-3. Choose parser strategy
-4. Design the metadata/catalog tables for SQLite
-5. Lock the MVP query surface before implementation starts
+1. Validate `rusqlite` with an in-memory database in browser WASM (#76)
+2. Extract the public adapter contract and migrate native execution to
+   `RusqliteAdapter` (#77)
+3. Enable the same runner and adapter in browser WASM (#78)
+4. Add WASM bindings and the private TypeScript library (#79)
+5. Build the SolidStart documentation and playground site (#80)
+6. Switch CI and GitHub Pages from mdBook to SolidStart (#81)
+
+OPFS persistence remains an unscheduled follow-up in #82. npm, crates.io, and
+release planning are outside this sequence.
