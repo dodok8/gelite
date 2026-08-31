@@ -17,6 +17,6 @@ wasm = ["sqlite-nostd-extension"]
 sqlite-nostd-static = ["dep:powersync_sqlite_nostd", "powersync_sqlite_nostd/static"]
 sqlite-nostd-extension = ["dep:powersync_sqlite_nostd"]
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 rusqlite = "0.40.1"
 wasm-bindgen-test = "0.3.54"

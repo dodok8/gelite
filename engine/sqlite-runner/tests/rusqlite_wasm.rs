@@ -1,4 +1,4 @@
-#![cfg(target_arch = "wasm32")]
+#![cfg(all(target_family = "wasm", target_os = "unknown"))]
 
 use rusqlite::{
     Connection, Error, params,
