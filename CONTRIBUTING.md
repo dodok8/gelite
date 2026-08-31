@@ -67,19 +67,22 @@ Current implemented areas include:
 - `engine/query-ir`: backend-independent Semantic IR for supported queries.
 - `engine/sqlite-query-plan`: SQLite-specific structured query plans.
 - `engine/sqlite-query-sqlgen`: SQL renderer for query plans.
-- `engine/sqlite-schema-plan`: SQLite-specific initial schema plan.
-- `engine/sqlite-schema-sqlgen`: SQL renderer for initial schema DDL and
-  metadata inserts.
-- `engine/sqlite-runner`: native SQLite schema and query execution.
+- `engine/sqlite-schema-plan`: SQLite-specific initial and append-only
+  migration plans.
+- `engine/sqlite-schema-sqlgen`: SQL renderer for schema DDL and metadata
+  inserts.
+- `engine/sqlite-runner`: native SQLite schema, query, and transaction
+  execution, including nested single- and multi-link result shaping.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: command orchestration shared by CLI-facing tools.
 - `tools/repl`: query pipeline inspection and execution tool.
 - `tests/query-pipeline`: cross-crate query pipeline tests.
 
-The project can parse schema and query sources, plan and apply an initial
-SQLite schema, and execute the current select, insert, update, and delete
-subsets through CLI/REPL workflows. It does not yet provide migration diffing
-and migration history, nested result shaping, an HTTP server, or a web UI.
+The project can parse schema and query sources, plan and apply an initial schema
+or a supported append-only migration, and execute the current select, insert,
+update, and delete subsets through CLI/REPL workflows. It does not yet provide
+table-rebuilding migrations, renames, backfills, online migration coordination,
+an HTTP server, or a web UI.
 
 ## Issue workflow
 
@@ -247,6 +250,9 @@ the scope is appropriate.
   SQLite query planner implementation sequence.
 - [plan/cli-and-tooling-plan.md](plan/cli-and-tooling-plan.md): CLI, REPL, and
   tooling workflows.
+- [plan/browser-runtime-and-playground-plan.md](plan/browser-runtime-and-playground-plan.md):
+  WASM runner, private TypeScript library, and SolidStart documentation and
+  playground site sequence.
 
 ## Pipeline boundaries
 

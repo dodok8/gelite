@@ -244,6 +244,7 @@ Run the project checks with `cargo test --workspace`.
 - `plan/sqlite-query-plan-implementation-plan.md`
 - `plan/sqlite-schema-plan-implementation-plan.md`
 - `plan/cli-and-tooling-plan.md`
+- `plan/browser-runtime-and-playground-plan.md`
 
 When these documents conflict, `spec/` wins for meaning and `plan/` wins for
 work sequencing.

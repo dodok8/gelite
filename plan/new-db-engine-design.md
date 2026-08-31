@@ -1,5 +1,12 @@
 # New DB Engine Design Outline
 
+## Status
+
+This outline records the broad engine architecture. The current browser
+refinement, including adapter selection, the private TypeScript library, and
+the SolidStart documentation site, is defined in
+`plan/browser-runtime-and-playground-plan.md`.
+
 ## Core Positioning
 
 This system is best thought of as:
@@ -8,7 +15,7 @@ This system is best thought of as:
 - a schema and migration system
 - a compiler that lowers custom queries to SQLite
 - a runtime that reconstructs nested object results
-- an application-facing database service with CLI and web tooling
+- application-facing CLI and browser tooling
 
 SQLite is the storage engine. The new system is responsible for language,
 typing, planning, lowering, execution orchestration, and developer experience.
@@ -24,12 +31,13 @@ Recommended top-level structure:
 - `core/compiler`
 - `core/runtime`
 - `core/storage-sqlite`
-- `server`
 - `cli`
-- `web`
+- `bindings/wasm`
+- `packages/gelite`
+- `apps/site`
 
-If implemented as a Rust workspace, these would map naturally to separate
-crates, with the frontend living as a separate Solid app.
+Rust components map to workspace crates. The WASM bindings feed a separate,
+private TypeScript package, which is consumed by the SolidStart site.
 
 ## Component Responsibilities
 
@@ -90,15 +98,6 @@ crates, with the frontend living as a separate Solid app.
 - Constraint representation
 - Migration persistence
 
-### `server`
-
-- HTTP API
-- Session/auth handling
-- Query endpoint
-- Schema apply endpoint
-- Migration/status endpoints
-- Admin and diagnostics endpoints
-
 ### `cli`
 
 - Project init
@@ -107,12 +106,11 @@ crates, with the frontend living as a separate Solid app.
 - Query execution
 - Explain/debug output
 
-### `web`
+### Browser packages
 
-- Query playground
-- Schema browser
-- Migration viewer
-- Status and diagnostics screens
+- `bindings/wasm`: expose the WASM runner to JavaScript
+- `packages/gelite`: framework-independent initialization and execution API
+- `apps/site`: SolidStart documentation and guided playground site
 
 ## Data Model Design Questions
 
@@ -191,8 +189,9 @@ Maintain explicit migration files and a metadata table that records:
 
 ### Concurrency Model
 
-Assume SQLite WAL mode and moderate write concurrency. Document limits rather
-than hiding them. The server should serialize or retry writes where needed.
+Assume SQLite WAL mode and moderate write concurrency for native execution.
+The first browser runtime uses an ephemeral Memory VFS database on the main
+thread. Worker placement and OPFS concurrency are follow-up concerns.
 
 ## Suggested MVP Language Surface
 
@@ -229,27 +228,30 @@ Anything beyond that should be added only after IR and lowering are stable.
 
 ## Suggested Backend Stack
 
-- HTTP: `axum`
-- Runtime: `tokio`
-- DB access: binding-neutral runner traits with native and WASM SQLite
-  backends; `vlcn-io/sqlite-rs-embedded` remains the first candidate only if it
-  satisfies prepared statements, bind values, stepping, and metadata reads
+- DB access: a public `no_std + alloc` connection adapter contract below the
+  existing command-facing runner contracts
+- Built-in adapter: one `std`-based `RusqliteAdapter` shared by native and WASM
+  execution
+- Composition: generic `SQLiteEngine<A>` with `RusqliteRunner` as the built-in
+  alias; no adapter registry or dynamic dispatch
+- Target integration: `rusqlite` uses `libsqlite3-sys` on native targets and
+  `sqlite-wasm-rs` on `wasm32-unknown-unknown`
+- Browser gate: a real in-memory `rusqlite` browser spike in #76 before the
+  native migration
 - Error reporting: `miette`
 - Logging/tracing: `tracing`
 - Config: environment-based plus local project config file
 
 ## Suggested Frontend Stack
 
-- `solid-js`
-- `vite` or `SolidStart`
-- `optique` for TypeScript-side demo command parsing if the browser tooling
-  needs a CLI-like command palette
-- query editor/playground UI
-- schema exploration UI
-- migration/status UI
-- optional in-browser SQL demo after the SQLite runner works in a WASM target
+- pnpm workspace management
+- private, framework-independent `packages/gelite` TypeScript library
+- `tsdown` only if that library needs a separate build artifact
+- SolidStart `apps/site` for documentation and the guided playground
+- Memory VFS for the first browser execution path
 
-The frontend should start as tooling for developers, not as a consumer app.
+The site is documentation and a focused executable tutorial, not a schema,
+migration, or database administration interface.
 
 ## Development Phases
 
@@ -273,13 +275,15 @@ The frontend should start as tooling for developers, not as a consumer app.
 
 ### Phase 4
 
-- HTTP server
-- Solid playground
-- explain/debug tooling
+- WASM Memory runner
+- private TypeScript library
+- SolidStart documentation and playground site
+- GitHub Pages deployment replacing mdBook
 
 ## Design Constraints
 
 - Keep backend abstraction narrow and explicit
+- Keep the public connection adapter independent of `rusqlite` types
 - Do not promise storage-engine portability before it is needed
 - Separate syntax, semantics, and execution layers
 - Favor debuggability over early optimization
@@ -318,16 +322,10 @@ while the project is still in the 0.x line.
 
 ## Recommended First Deliverable
 
-The first end-to-end deliverable should be:
-
-- a schema file
-- a migration apply command
-- a query command
-- a Rust HTTP endpoint for query execution
-- a simple Solid playground that can run a query and show shaped JSON results
-
-That is small enough to finish, but complete enough to validate the engine's
-core architecture.
+The next end-to-end deliverable is a browser-loaded WASM runner over Memory VFS,
+wrapped by a private TypeScript library and demonstrated in the SolidStart
+Organization/CFP tutorial. The same site replaces mdBook for project
+documentation. HTTP service work is not required for this deliverable.
 
 ## Declared Inverse Link Milestone (#66)
 
