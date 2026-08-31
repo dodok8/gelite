@@ -145,6 +145,25 @@ real browser smoke test. The spike must cover:
 `cargo check` alone is not an acceptance gate. Only if this retained browser
 spike fails should the project reconsider a direct `sqlite-wasm-rs` adapter.
 
+### Validated Connection Surface
+
+Issue #76 validated `rusqlite` 0.40.2 with `sqlite-wasm-rs` 0.5.5 in a linked
+`wasm32-unknown-unknown` test artifact loaded by Chrome. The retained browser
+test proves these operations required by the #77 adapter contract:
+
+- open and close an in-memory connection
+- execute raw DDL and prepare statements
+- bind integer, real, text, and null values
+- step rows and read column names, SQLite types, and owned values
+- read affected-row counts
+- begin, commit, and roll back transactions
+- receive invalid SQL as a typed error
+
+No `rusqlite` API limitation affecting #77 was found, so a direct
+`sqlite-wasm-rs` adapter is not needed. Building `sqlite-wasm-rs` from source
+requires a Clang installation with the WebAssembly target; Apple Clang does not
+provide that target.
+
 ### Native Migration
 
 Issue #77 replaces `powersync_sqlite_nostd`, direct SQLite C API calls, and the
