@@ -23,6 +23,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+
+      - name: Install Chrome and ChromeDriver
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-chromedriver: true
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -35,3 +47,10 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Run browser WASM test
+        run: >-
+          CC_wasm32_unknown_unknown=clang
+          wasm-pack test --headless --chrome
+          --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }}
+          engine/sqlite-runner --locked
