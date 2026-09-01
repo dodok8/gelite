@@ -37,6 +37,9 @@ in the changed document.
 
 ## Working rules
 
+- Write issues around small, independently reviewable features. Each feature
+  issue must include the design, validation, tests, and implementation needed
+  to complete that feature; do not create separate issues for those phases.
 - If an issue gives a branch name, use that exact branch.
 - If an issue does not give a branch name, use
   `issue-<issue-number>-<short-description>`.
