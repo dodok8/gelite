@@ -28,6 +28,16 @@ fn native_runner_can_open_in_memory_database() {
 }
 
 #[test]
+fn native_runner_preserves_immediate_lock_errors() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    let result = runner
+        .execute_select(&SQLiteStatement::new("PRAGMA busy_timeout", vec![]))
+        .expect("busy timeout should be readable");
+
+    assert_eq!(result.rows(), &[vec![crate::SQLiteCellValue::Integer(0)]]);
+}
+
+#[test]
 fn native_runner_commits_explicit_transaction() {
     let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
     runner
@@ -189,6 +199,53 @@ fn native_runner_can_execute_insert_statement_with_bind_values() {
         .expect("row should be readable");
 
     assert_eq!(row, Some((1, "Post".to_string(), None)));
+}
+
+#[test]
+fn native_runner_leaves_missing_bind_values_null() {
+    let mut runner = NativeSQLiteRunner::open_in_memory().expect("in-memory database should open");
+    runner
+        .execute("CREATE TABLE entry (id TEXT PRIMARY KEY, note TEXT NULL)")
+        .expect("table should be created");
+    runner
+        .execute_with_values(
+            "INSERT INTO entry (id, note) VALUES (?, ?)",
+            &[SQLiteValuePlan::Text("schema".to_string())],
+        )
+        .expect("missing schema value should remain null");
+    runner
+        .execute_insert(&SQLiteStatement::new(
+            "INSERT INTO entry (id, note) VALUES (?, ?)",
+            vec![sqlite_query_sqlgen::SQLiteBindValue::String(
+                "query".to_string(),
+            )],
+        ))
+        .expect("missing query value should remain null");
+
+    let missing = runner
+        .execute_select(&SQLiteStatement::new("SELECT ?", vec![]))
+        .expect("missing select value should remain null");
+    let stored = runner
+        .execute_select(&SQLiteStatement::new(
+            "SELECT id, note FROM entry ORDER BY id",
+            vec![],
+        ))
+        .expect("stored rows should be readable");
+
+    assert_eq!(missing.rows(), &[vec![crate::SQLiteCellValue::Null]]);
+    assert_eq!(
+        stored.rows(),
+        &[
+            vec![
+                crate::SQLiteCellValue::Text("query".to_string()),
+                crate::SQLiteCellValue::Null,
+            ],
+            vec![
+                crate::SQLiteCellValue::Text("schema".to_string()),
+                crate::SQLiteCellValue::Null,
+            ],
+        ]
+    );
 }
 
 #[test]

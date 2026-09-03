@@ -30,6 +30,24 @@ Recommended defaults for local development:
 
 The engine should set or validate these at connection startup.
 
+## Runtime Driver Boundary
+
+The parser, semantic, planning, and SQL generation layers remain independent
+of a concrete SQLite driver and retain their `no_std` contracts where
+applicable. SQLite execution is a runtime boundary rather than part of those
+engine contracts.
+
+Runner traits define the behavior required by schema and query consumers.
+Applications may provide their own runner implementation for their execution
+environment. Gelite plans to provide native and WASM runners using stable APIs
+appropriate to each environment; they do not need to share one binding crate.
+
+`NativeSQLiteRunner` is the official native implementation and uses
+`rusqlite`. Its driver remains private so changing the native binding does not
+change runner-facing APIs, compiler stages, query semantics, or schema
+semantics. WASM execution uses a separate backend and is not implied by the
+native driver's capabilities.
+
 ## Object Table Mapping
 
 For a schema type:

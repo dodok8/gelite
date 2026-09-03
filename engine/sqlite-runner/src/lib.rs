@@ -1,16 +1,9 @@
-#![no_std]
-
 //! Runner-facing contracts for executing rendered SQLite statements.
 //!
 //! This crate does not choose a concrete SQLite binding. Its contracts let
 //! command code apply rendered schemas and execute rendered data statements
 //! without knowing whether the backend is native, embedded, or WASM-based.
 
-extern crate alloc;
-
-use alloc::string::String;
-use alloc::vec;
-use alloc::vec::Vec;
 use schema_model::SchemaCatalog;
 #[cfg(feature = "native")]
 use sqlite_query_sqlgen::SQLiteResultShape;
@@ -312,7 +305,7 @@ pub fn apply_schema_statements(
 
     result.map_err(|error| match runner.rollback_transaction() {
         Ok(()) => error,
-        Err(rollback_error) => SQLiteRunnerError::execution_failed(alloc::format!(
+        Err(rollback_error) => SQLiteRunnerError::execution_failed(format!(
             "{}; rollback failed: {}",
             error.message(),
             rollback_error.message(),

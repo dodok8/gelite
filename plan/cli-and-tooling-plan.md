@@ -412,9 +412,10 @@ second schema planning or execution path inside the REPL.
 
 ## WASM and Browser Demo
 
-The engine crates are being kept mostly `no_std`, and `sqlite-rs-embedded`
-describes itself as `no_std` and WASM-compatible. That makes a browser demo
-possible, but it should not change the first CLI/runtime sequence.
+Compiler engine crates retain their `no_std` contracts where applicable.
+SQLite execution is environment-specific: the native runner uses `rusqlite`,
+while a browser demo requires a separate runner built on a stable WASM SQLite
+API. That should not change the first CLI/runtime sequence.
 
 The intended browser demo stack is:
 

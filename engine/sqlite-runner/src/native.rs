@@ -1,19 +1,13 @@
-extern crate alloc;
-
-use alloc::ffi::CString;
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec;
-use alloc::vec::Vec;
-
-use powersync_sqlite_nostd::{
-    ColumnType, Connection, Destructor, ManagedConnection, ManagedStmt, ResultCode, Stmt,
+use rusqlite::{
+    Connection, Row, params_from_iter,
+    types::{Value, ValueRef},
 };
 use schema_model::{
     Cardinality, Field, LinkField, ObjectType, ScalarField, ScalarType, SchemaCatalog,
     SingleCardinality, Uniqueness,
 };
 use sqlite_schema_plan::{SQLiteValuePlan, schema_snapshot_checksum, serialize_schema_snapshot};
+use std::time::Duration;
 
 use crate::{
     SQLiteCellValue, SQLiteQueryResult, SQLiteQueryRunner, SQLiteRunner, SQLiteRunnerError,
@@ -26,7 +20,7 @@ use crate::{
 /// SQL generator, and command APIs should continue to depend on the
 /// `SQLiteRunner` trait instead of this backend type.
 pub struct NativeSQLiteRunner {
-    connection: ManagedConnection,
+    connection: Connection,
 }
 
 impl NativeSQLiteRunner {
@@ -35,13 +29,14 @@ impl NativeSQLiteRunner {
     }
 
     pub fn open(path: &str) -> Result<Self, SQLiteRunnerError> {
-        let filename = CString::new(path)
-            .map_err(|_| SQLiteRunnerError::execution_failed("SQLite path contains a null byte"))?;
-        let connection = powersync_sqlite_nostd::open(filename.as_ptr()).map_err(|error| {
+        let connection = Connection::open(path).map_err(|error| {
             SQLiteRunnerError::execution_failed(format!(
-                "failed to open SQLite database `{path}`: {error:?}"
+                "failed to open SQLite database `{path}`: {error}"
             ))
         })?;
+        connection
+            .busy_timeout(Duration::ZERO)
+            .map_err(|error| sqlite_error("configure SQLite busy timeout", error))?;
         let mut runner = Self { connection };
         runner.execute("PRAGMA foreign_keys = ON")?;
 
@@ -61,21 +56,14 @@ impl NativeSQLiteRunner {
     }
 
     pub fn table_exists(&self, table_name: &str) -> Result<bool, SQLiteRunnerError> {
-        let statement = self
+        let mut statement = self
             .connection
-            .prepare_v2("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-            .map_err(|_| self.connection_error("prepare table existence query"))?;
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .map_err(|error| sqlite_error("prepare table existence query", error))?;
 
         statement
-            .bind_text(1, table_name, Destructor::TRANSIENT)
-            .map_err(|_| self.connection_error("bind table name"))?;
-
-        match statement.step() {
-            Ok(ResultCode::ROW) => Ok(true),
-            Ok(ResultCode::DONE) => Ok(false),
-            Ok(result) => Err(self.result_error("step table existence query", result)),
-            Err(result) => Err(self.result_error("step table existence query", result)),
-        }
+            .exists([table_name])
+            .map_err(|error| sqlite_error("step table existence query", error))
     }
 
     /// Reads the first row as owned values for native backend smoke tests.
@@ -86,33 +74,26 @@ impl NativeSQLiteRunner {
         &self,
         sql: &str,
     ) -> Result<Option<(i64, String, Option<i64>)>, SQLiteRunnerError> {
-        let statement = self
+        let mut statement = self
             .connection
-            .prepare_v2(sql)
-            .map_err(|_| self.connection_error("prepare read-back query"))?;
+            .prepare(sql)
+            .map_err(|error| sqlite_error("prepare read-back query", error))?;
+        let mut rows = statement
+            .query([])
+            .map_err(|error| sqlite_error("step read-back query", error))?;
 
-        match statement.step() {
-            Ok(ResultCode::ROW) => {
-                let first = statement.column_int64(0);
-                let second = read_text_column(&statement, 1, "read text column")?;
-                let third = match statement
-                    .column_type(2)
-                    .map_err(|error| self.result_error("read nullable integer column", error))?
-                {
-                    ColumnType::Null => None,
-                    ColumnType::Integer => Some(statement.column_int64(2)),
-                    column_type => {
-                        return Err(SQLiteRunnerError::execution_failed(format!(
-                            "read nullable integer column: unexpected column type {column_type:?}"
-                        )));
-                    }
-                };
+        match rows
+            .next()
+            .map_err(|error| sqlite_error("step read-back query", error))?
+        {
+            Some(row) => {
+                let first = read_integer_column(row, 0, "read integer column")?;
+                let second = read_text_column(row, 1, "read text column")?;
+                let third = read_nullable_integer_column(row, 2, "read nullable integer column")?;
 
                 Ok(Some((first, second, third)))
             }
-            Ok(ResultCode::DONE) => Ok(None),
-            Ok(result) => Err(self.result_error("step read-back query", result)),
-            Err(result) => Err(self.result_error("step read-back query", result)),
+            None => Ok(None),
         }
     }
 
@@ -261,17 +242,15 @@ impl NativeSQLiteRunner {
         &mut self,
         statement: &sqlite_query_sqlgen::SQLiteStatement,
     ) -> Result<SQLiteQueryResult, SQLiteRunnerError> {
-        let prepared = self
+        let mut prepared = self
             .connection
-            .prepare_v2(statement.sql())
-            .map_err(|_| self.connection_error("prepare SELECT"))?;
-
-        self.bind_query_values(&prepared, statement.bind_values())?;
+            .prepare(statement.sql())
+            .map_err(|error| sqlite_error("prepare SELECT", error))?;
 
         let column_count = prepared.column_count();
         let output_names = statement.output_names();
 
-        if !output_names.is_empty() && output_names.len() != column_count as usize {
+        if !output_names.is_empty() && output_names.len() != column_count {
             return Err(SQLiteRunnerError::execution_failed(
                 "result output metadata does not match SQLite column count",
             ));
@@ -281,13 +260,13 @@ impl NativeSQLiteRunner {
         let (column_indexes, columns): (Vec<_>, Vec<_>) = if result_shape.is_some() {
             ((0..column_count).collect(), Vec::new())
         } else {
-            let selected_columns: Vec<(i32, String)> = if output_names.is_empty() {
+            let selected_columns: Vec<(usize, String)> = if output_names.is_empty() {
                 (0..column_count)
                     .map(|index| {
                         prepared
                             .column_name(index)
                             .map(|name| (index, name.to_string()))
-                            .map_err(|error| self.result_error("read result column name", error))
+                            .map_err(|error| sqlite_error("read result column name", error))
                     })
                     .collect::<Result<_, _>>()?
             } else {
@@ -301,20 +280,23 @@ impl NativeSQLiteRunner {
         };
 
         let mut rows = Vec::new();
-        loop {
-            match prepared.step() {
-                Ok(ResultCode::ROW) => {
-                    let row = column_indexes
-                        .iter()
-                        .map(|index| read_cell_value(&prepared, *index))
-                        .collect::<Result<Vec<_>, _>>()?;
-
-                    rows.push(row);
-                }
-                Ok(ResultCode::DONE) => break,
-                Ok(result) => return Err(self.result_error("step SELECT", result)),
-                Err(result) => return Err(self.result_error("step SELECT", result)),
-            }
+        let values = complete_bind_values(
+            query_bind_values(statement.bind_values()),
+            prepared.parameter_count(),
+        );
+        let mut result_rows = prepared
+            .query(params_from_iter(values))
+            .map_err(|error| sqlite_error("step SELECT", error))?;
+        while let Some(result_row) = result_rows
+            .next()
+            .map_err(|error| sqlite_error("step SELECT", error))?
+        {
+            rows.push(
+                column_indexes
+                    .iter()
+                    .map(|index| read_cell_value(result_row, *index))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
         }
 
         match result_shape {
@@ -363,18 +345,8 @@ impl NativeSQLiteRunner {
         &mut self,
         statement: &sqlite_query_sqlgen::SQLiteStatement,
     ) -> Result<(), SQLiteRunnerError> {
-        let prepared = self
-            .connection
-            .prepare_v2(statement.sql())
-            .map_err(|_| self.connection_error("prepare INSERT"))?;
-
-        self.bind_query_values(&prepared, statement.bind_values())?;
-
-        match prepared.step() {
-            Ok(ResultCode::DONE) => Ok(()),
-            Ok(result) => Err(self.result_error("step INSERT", result)),
-            Err(result) => Err(self.result_error("step INSERT", result)),
-        }
+        self.execute_query_statement(statement, "INSERT")
+            .map(|_| ())
     }
 
     pub fn execute_update(
@@ -396,190 +368,136 @@ impl NativeSQLiteRunner {
         statement: &sqlite_query_sqlgen::SQLiteStatement,
         operation: &str,
     ) -> Result<i64, SQLiteRunnerError> {
-        let prepared = self
-            .connection
-            .prepare_v2(statement.sql())
-            .map_err(|_| self.connection_error(&format!("prepare {operation}")))?;
-
-        self.bind_query_values(&prepared, statement.bind_values())?;
-
-        match prepared.step() {
-            Ok(ResultCode::DONE) => Ok(self.connection.changes64()),
-            Ok(result) => Err(self.result_error(&format!("step {operation}"), result)),
-            Err(result) => Err(self.result_error(&format!("step {operation}"), result)),
-        }
+        let count = self.execute_query_statement(statement, operation)?;
+        i64::try_from(count).map_err(|_| {
+            SQLiteRunnerError::execution_failed(format!(
+                "step {operation}: affected row count exceeds i64 range"
+            ))
+        })
     }
 
-    fn bind_query_values(
-        &self,
-        prepared: &ManagedStmt,
-        bind_values: &[sqlite_query_sqlgen::SQLiteBindValue],
-    ) -> Result<(), SQLiteRunnerError> {
-        for (index, value) in bind_values.iter().enumerate() {
-            let parameter_index = i32::try_from(index + 1).map_err(|_| {
-                SQLiteRunnerError::execution_failed("bind parameter index exceeds i32 range")
-            })?;
-
-            match value {
-                sqlite_query_sqlgen::SQLiteBindValue::String(value) => {
-                    prepared
-                        .bind_text(parameter_index, value, Destructor::TRANSIENT)
-                        .map_err(|error| self.result_error("bind string value", error))?;
-                }
-                sqlite_query_sqlgen::SQLiteBindValue::Int64(value) => {
-                    prepared
-                        .bind_int64(parameter_index, *value)
-                        .map_err(|error| self.result_error("bind int64 value", error))?;
-                }
-                sqlite_query_sqlgen::SQLiteBindValue::Float64(value) => {
-                    prepared
-                        .bind_double(parameter_index, *value)
-                        .map_err(|error| self.result_error("bind float64 value", error))?;
-                }
-                sqlite_query_sqlgen::SQLiteBindValue::Bool(value) => {
-                    prepared
-                        .bind_int64(parameter_index, i64::from(*value))
-                        .map_err(|error| self.result_error("bind bool value", error))?;
-                }
-                sqlite_query_sqlgen::SQLiteBindValue::Null => {
-                    prepared
-                        .bind_null(parameter_index)
-                        .map_err(|error| self.result_error("bind null value", error))?;
-                }
-            }
-        }
-
-        Ok(())
+    fn execute_query_statement(
+        &mut self,
+        statement: &sqlite_query_sqlgen::SQLiteStatement,
+        operation: &str,
+    ) -> Result<usize, SQLiteRunnerError> {
+        let mut prepared = self
+            .connection
+            .prepare(statement.sql())
+            .map_err(|error| sqlite_error(&format!("prepare {operation}"), error))?;
+        let values = complete_bind_values(
+            query_bind_values(statement.bind_values()),
+            prepared.parameter_count(),
+        );
+        let count = prepared
+            .execute(params_from_iter(values))
+            .map_err(|error| sqlite_error(&format!("step {operation}"), error))?;
+        Ok(count)
     }
 
     /// Reads the highest numbered stored version without verifying its contents.
     fn read_latest_schema_version(&self) -> Result<Option<SchemaVersionRow>, SQLiteRunnerError> {
-        let statement = self
+        let mut statement = self
             .connection
-            .prepare_v2(
+            .prepare(
                 "SELECT version_id, checksum, applied_at, schema_snapshot, version_number
                  FROM _engine_schema_versions ORDER BY version_number DESC LIMIT 1",
             )
-            .map_err(|_| self.connection_error("prepare schema version query"))?;
-        match statement.step() {
-            Ok(ResultCode::ROW) => {
-                let version_number =
-                    read_nullable_integer_column(&statement, 4, "read version number")?
-                        .filter(|number| *number > 0)
-                        .ok_or_else(|| {
-                            SQLiteRunnerError::schema_verification_failed(
-                                "stored schema version number must be positive",
-                            )
-                        })?;
+            .map_err(|error| sqlite_error("prepare schema version query", error))?;
+        let mut rows = statement
+            .query([])
+            .map_err(|error| sqlite_error("step schema version query", error))?;
+        match rows
+            .next()
+            .map_err(|error| sqlite_error("step schema version query", error))?
+        {
+            Some(row) => {
+                let version_number = read_nullable_integer_column(row, 4, "read version number")?
+                    .filter(|number| *number > 0)
+                    .ok_or_else(|| {
+                        SQLiteRunnerError::schema_verification_failed(
+                            "stored schema version number must be positive",
+                        )
+                    })?;
                 Ok(Some(SchemaVersionRow {
-                    version_id: read_text_column(&statement, 0, "read schema version id")?,
-                    checksum: read_text_column(&statement, 1, "read schema version checksum")?,
-                    applied_at: read_text_column(&statement, 2, "read schema version applied_at")?,
-                    schema_snapshot: read_text_column(
-                        &statement,
-                        3,
-                        "read schema version snapshot",
-                    )?,
+                    version_id: read_text_column(row, 0, "read schema version id")?,
+                    checksum: read_text_column(row, 1, "read schema version checksum")?,
+                    applied_at: read_text_column(row, 2, "read schema version applied_at")?,
+                    schema_snapshot: read_text_column(row, 3, "read schema version snapshot")?,
                     version_number,
                 }))
             }
-            Ok(ResultCode::DONE) => Ok(None),
-            Ok(result) | Err(result) => Err(self.result_error("step schema version query", result)),
+            None => Ok(None),
         }
     }
 
     fn read_catalog_objects(&self) -> Result<Vec<CatalogObjectRow>, SQLiteRunnerError> {
-        let statement = self
+        let mut statement = self
             .connection
-            .prepare_v2(
-                "SELECT object_id, name FROM _engine_catalog_objects ORDER BY object_id ASC",
-            )
-            .map_err(|_| self.connection_error("prepare catalog object query"))?;
+            .prepare("SELECT object_id, name FROM _engine_catalog_objects ORDER BY object_id ASC")
+            .map_err(|error| sqlite_error("prepare catalog object query", error))?;
         let mut rows = Vec::new();
+        let mut result_rows = statement
+            .query([])
+            .map_err(|error| sqlite_error("step catalog object query", error))?;
 
-        loop {
-            match statement.step() {
-                Ok(ResultCode::ROW) => rows.push(CatalogObjectRow {
-                    object_id: statement.column_int64(0),
-                    name: read_text_column(&statement, 1, "read catalog object name")?,
-                }),
-                Ok(ResultCode::DONE) => break,
-                Ok(result) => return Err(self.result_error("step catalog object query", result)),
-                Err(result) => return Err(self.result_error("step catalog object query", result)),
-            }
+        while let Some(row) = result_rows
+            .next()
+            .map_err(|error| sqlite_error("step catalog object query", error))?
+        {
+            rows.push(CatalogObjectRow {
+                object_id: read_integer_column(row, 0, "read catalog object id")?,
+                name: read_text_column(row, 1, "read catalog object name")?,
+            });
         }
 
         Ok(rows)
     }
 
     fn read_catalog_fields(&self) -> Result<Vec<CatalogFieldRow>, SQLiteRunnerError> {
-        let columns = self.connection.prepare_v2(
+        let mut columns = self.connection.prepare(
             "SELECT name FROM pragma_table_info('_engine_catalog_fields') WHERE name = 'inverse_field_name'",
-        ).map_err(|_| self.connection_error("prepare catalog compatibility query"))?;
-        let inverse_column = match columns.step() {
-            Ok(ResultCode::ROW) => "inverse_field_name",
-            Ok(ResultCode::DONE) => "NULL",
-            Ok(result) | Err(result) => {
-                return Err(self.result_error("read catalog columns", result));
-            }
+        ).map_err(|error| sqlite_error("prepare catalog compatibility query", error))?;
+        let inverse_column = if columns
+            .exists([])
+            .map_err(|error| sqlite_error("read catalog columns", error))?
+        {
+            "inverse_field_name"
+        } else {
+            "NULL"
         };
-        let statement = self
+        let mut statement = self
             .connection
-            .prepare_v2(
+            .prepare(
                 &format!("SELECT object_id, field_id, name, field_kind, cardinality, scalar_type, target_object_id, is_implicit, is_unique, {inverse_column}
                  FROM _engine_catalog_fields
                  ORDER BY object_id ASC, field_id ASC"),
             )
-            .map_err(|_| self.connection_error("prepare catalog field query"))?;
+            .map_err(|error| sqlite_error("prepare catalog field query", error))?;
         let mut rows = Vec::new();
+        let mut result_rows = statement
+            .query([])
+            .map_err(|error| sqlite_error("step catalog field query", error))?;
 
-        loop {
-            match statement.step() {
-                Ok(ResultCode::ROW) => rows.push(CatalogFieldRow {
-                    object_id: statement.column_int64(0),
-                    field_id: statement.column_int64(1),
-                    name: read_text_column(&statement, 2, "read catalog field name")?,
-                    field_kind: read_text_column(&statement, 3, "read catalog field kind")?,
-                    cardinality: read_text_column(&statement, 4, "read catalog field cardinality")?,
-                    scalar_type: read_nullable_text_column(&statement, 5, "read scalar_type")?,
-                    target_object_id: read_nullable_integer_column(
-                        &statement,
-                        6,
-                        "read target_object_id",
-                    )?,
-                    is_implicit: read_bool_column(&statement, 7, "read is_implicit")?,
-                    is_unique: read_bool_column(&statement, 8, "read is_unique")?,
-                    inverse_field_name: read_nullable_text_column(
-                        &statement,
-                        9,
-                        "read inverse_field_name",
-                    )?,
-                }),
-                Ok(ResultCode::DONE) => break,
-                Ok(result) => return Err(self.result_error("step catalog field query", result)),
-                Err(result) => return Err(self.result_error("step catalog field query", result)),
-            }
+        while let Some(row) = result_rows
+            .next()
+            .map_err(|error| sqlite_error("step catalog field query", error))?
+        {
+            rows.push(CatalogFieldRow {
+                object_id: read_integer_column(row, 0, "read catalog object id")?,
+                field_id: read_integer_column(row, 1, "read catalog field id")?,
+                name: read_text_column(row, 2, "read catalog field name")?,
+                field_kind: read_text_column(row, 3, "read catalog field kind")?,
+                cardinality: read_text_column(row, 4, "read catalog field cardinality")?,
+                scalar_type: read_nullable_text_column(row, 5, "read scalar_type")?,
+                target_object_id: read_nullable_integer_column(row, 6, "read target_object_id")?,
+                is_implicit: read_bool_column(row, 7, "read is_implicit")?,
+                is_unique: read_bool_column(row, 8, "read is_unique")?,
+                inverse_field_name: read_nullable_text_column(row, 9, "read inverse_field_name")?,
+            });
         }
 
         Ok(rows)
-    }
-
-    fn connection_error(&self, context: &str) -> SQLiteRunnerError {
-        let message = self
-            .connection
-            .errmsg()
-            .unwrap_or_else(|_| "unknown SQLite error".to_string());
-
-        SQLiteRunnerError::execution_failed(format!("{context}: {message}"))
-    }
-
-    fn result_error(&self, context: &str, result: ResultCode) -> SQLiteRunnerError {
-        let message = self
-            .connection
-            .errmsg()
-            .unwrap_or_else(|_| "unknown SQLite error".to_string());
-
-        SQLiteRunnerError::execution_failed(format!("{context}: {result:?}: {message}"))
     }
 }
 
@@ -677,67 +595,65 @@ fn field_from_catalog_row(
 }
 
 fn read_text_column(
-    statement: &ManagedStmt,
-    index: i32,
+    row: &Row<'_>,
+    index: usize,
     context: &str,
 ) -> Result<String, SQLiteRunnerError> {
-    // SQLite may return a null blob pointer for empty TEXT, which is not SQL NULL.
-    if statement.column_type(index) == Ok(ColumnType::Text)
-        && statement.stmt.column_bytes(index) == 0
+    match row
+        .get_ref(index)
+        .map_err(|error| sqlite_error(context, error))?
     {
-        return Ok(String::new());
+        ValueRef::Text(bytes) => core::str::from_utf8(bytes)
+            .map(ToString::to_string)
+            .map_err(|error| {
+                SQLiteRunnerError::execution_failed(format!("{context}: invalid UTF-8: {error}"))
+            }),
+        value => Err(unexpected_column_type(context, value)),
     }
-    // The binding's column_text uses unchecked UTF-8 conversion, even for corrupt SQLite TEXT.
-    let bytes = statement
-        .column_blob(index)
-        .map_err(|error| SQLiteRunnerError::execution_failed(format!("{context}: {error:?}")))?;
-    core::str::from_utf8(bytes)
-        .map(ToString::to_string)
-        .map_err(|error| {
-            SQLiteRunnerError::execution_failed(format!("{context}: invalid UTF-8: {error}"))
-        })
 }
 
 fn read_nullable_text_column(
-    statement: &ManagedStmt,
-    index: i32,
+    row: &Row<'_>,
+    index: usize,
     context: &str,
 ) -> Result<Option<String>, SQLiteRunnerError> {
-    match statement
-        .column_type(index)
-        .map_err(|error| SQLiteRunnerError::execution_failed(format!("{context}: {error:?}")))?
+    match row
+        .get_ref(index)
+        .map_err(|error| sqlite_error(context, error))?
     {
-        ColumnType::Null => Ok(None),
-        ColumnType::Text => read_text_column(statement, index, context).map(Some),
-        column_type => Err(SQLiteRunnerError::execution_failed(format!(
-            "{context}: unexpected column type {column_type:?}"
-        ))),
+        ValueRef::Null => Ok(None),
+        ValueRef::Text(_) => read_text_column(row, index, context).map(Some),
+        value => Err(unexpected_column_type(context, value)),
     }
 }
 
 fn read_nullable_integer_column(
-    statement: &ManagedStmt,
-    index: i32,
+    row: &Row<'_>,
+    index: usize,
     context: &str,
 ) -> Result<Option<i64>, SQLiteRunnerError> {
-    match statement
-        .column_type(index)
-        .map_err(|error| SQLiteRunnerError::execution_failed(format!("{context}: {error:?}")))?
+    match row
+        .get_ref(index)
+        .map_err(|error| sqlite_error(context, error))?
     {
-        ColumnType::Null => Ok(None),
-        ColumnType::Integer => Ok(Some(statement.column_int64(index))),
-        column_type => Err(SQLiteRunnerError::execution_failed(format!(
-            "{context}: unexpected column type {column_type:?}"
-        ))),
+        ValueRef::Null => Ok(None),
+        ValueRef::Integer(value) => Ok(Some(value)),
+        value => Err(unexpected_column_type(context, value)),
     }
 }
 
-fn read_bool_column(
-    statement: &ManagedStmt,
-    index: i32,
+fn read_integer_column(
+    row: &Row<'_>,
+    index: usize,
     context: &str,
-) -> Result<bool, SQLiteRunnerError> {
-    match read_nullable_integer_column(statement, index, context)? {
+) -> Result<i64, SQLiteRunnerError> {
+    read_nullable_integer_column(row, index, context)?.ok_or_else(|| {
+        SQLiteRunnerError::execution_failed(format!("{context}: unexpected column type Null"))
+    })
+}
+
+fn read_bool_column(row: &Row<'_>, index: usize, context: &str) -> Result<bool, SQLiteRunnerError> {
+    match read_nullable_integer_column(row, index, context)? {
         Some(0) => Ok(false),
         Some(1) => Ok(true),
         value => Err(SQLiteRunnerError::execution_failed(format!(
@@ -746,23 +662,32 @@ fn read_bool_column(
     }
 }
 
-fn read_cell_value(
-    statement: &ManagedStmt,
-    index: i32,
-) -> Result<SQLiteCellValue, SQLiteRunnerError> {
-    match statement.column_type(index).map_err(|error| {
-        SQLiteRunnerError::execution_failed(format!("read result column type: {error:?}"))
-    })? {
-        ColumnType::Integer => Ok(SQLiteCellValue::Integer(statement.column_int64(index))),
-        ColumnType::Float => Ok(SQLiteCellValue::Real(statement.column_double(index))),
-        ColumnType::Text => {
-            read_text_column(statement, index, "read text result").map(SQLiteCellValue::Text)
+fn read_cell_value(row: &Row<'_>, index: usize) -> Result<SQLiteCellValue, SQLiteRunnerError> {
+    match row
+        .get_ref(index)
+        .map_err(|error| sqlite_error("read result column type", error))?
+    {
+        ValueRef::Integer(value) => Ok(SQLiteCellValue::Integer(value)),
+        ValueRef::Real(value) => Ok(SQLiteCellValue::Real(value)),
+        ValueRef::Text(_) => {
+            read_text_column(row, index, "read text result").map(SQLiteCellValue::Text)
         }
-        ColumnType::Null => Ok(SQLiteCellValue::Null),
-        ColumnType::Blob => Err(SQLiteRunnerError::execution_failed(
+        ValueRef::Null => Ok(SQLiteCellValue::Null),
+        ValueRef::Blob(_) => Err(SQLiteRunnerError::execution_failed(
             "blob result values are not supported yet",
         )),
     }
+}
+
+fn unexpected_column_type(context: &str, value: ValueRef<'_>) -> SQLiteRunnerError {
+    SQLiteRunnerError::execution_failed(format!(
+        "{context}: unexpected column type {:?}",
+        value.data_type()
+    ))
+}
+
+fn sqlite_error(context: &str, error: rusqlite::Error) -> SQLiteRunnerError {
+    SQLiteRunnerError::execution_failed(format!("{context}: {error}"))
 }
 
 fn parse_scalar_type(value: &str) -> Result<ScalarType, SQLiteRunnerError> {
@@ -808,12 +733,42 @@ fn parse_uniqueness(value: bool) -> Result<Uniqueness, SQLiteRunnerError> {
     }
 }
 
+fn query_bind_values(values: &[sqlite_query_sqlgen::SQLiteBindValue]) -> Vec<Value> {
+    values
+        .iter()
+        .map(|value| match value {
+            sqlite_query_sqlgen::SQLiteBindValue::String(value) => Value::Text(value.clone()),
+            sqlite_query_sqlgen::SQLiteBindValue::Int64(value) => Value::Integer(*value),
+            sqlite_query_sqlgen::SQLiteBindValue::Float64(value) => Value::Real(*value),
+            sqlite_query_sqlgen::SQLiteBindValue::Bool(value) => Value::Integer(i64::from(*value)),
+            sqlite_query_sqlgen::SQLiteBindValue::Null => Value::Null,
+        })
+        .collect()
+}
+
+fn schema_bind_values(values: &[SQLiteValuePlan]) -> Vec<Value> {
+    values
+        .iter()
+        .map(|value| match value {
+            SQLiteValuePlan::Integer(value) => Value::Integer(*value),
+            SQLiteValuePlan::Text(value) => Value::Text(value.clone()),
+            SQLiteValuePlan::Null => Value::Null,
+        })
+        .collect()
+}
+
+fn complete_bind_values(mut values: Vec<Value>, parameter_count: usize) -> Vec<Value> {
+    if values.len() < parameter_count {
+        values.resize(parameter_count, Value::Null);
+    }
+    values
+}
+
 impl SQLiteRunner for NativeSQLiteRunner {
     fn execute(&mut self, sql: &str) -> Result<(), SQLiteRunnerError> {
         self.connection
-            .exec_safe(sql)
-            .map(|_| ())
-            .map_err(|_| self.connection_error("execute SQL"))
+            .execute_batch(sql)
+            .map_err(|error| sqlite_error("execute SQL", error))
     }
 
     fn execute_with_values(
@@ -821,33 +776,15 @@ impl SQLiteRunner for NativeSQLiteRunner {
         sql: &str,
         values: &[SQLiteValuePlan],
     ) -> Result<(), SQLiteRunnerError> {
-        let statement = self
+        let mut statement = self
             .connection
-            .prepare_v2(sql)
-            .map_err(|_| self.connection_error("prepare SQL"))?;
-
-        for (index, value) in values.iter().enumerate() {
-            let parameter_index = i32::try_from(index + 1).map_err(|_| {
-                SQLiteRunnerError::execution_failed("bind parameter index exceeds i32 range")
-            })?;
-            match value {
-                SQLiteValuePlan::Integer(value) => statement
-                    .bind_int64(parameter_index, *value)
-                    .map_err(|error| self.result_error("bind integer value", error))?,
-                SQLiteValuePlan::Text(value) => statement
-                    .bind_text(parameter_index, value, Destructor::TRANSIENT)
-                    .map_err(|error| self.result_error("bind text value", error))?,
-                SQLiteValuePlan::Null => statement
-                    .bind_null(parameter_index)
-                    .map_err(|error| self.result_error("bind null value", error))?,
-            };
-        }
-
-        match statement.step() {
-            Ok(ResultCode::DONE) => Ok(()),
-            Ok(result) => Err(self.result_error("step prepared SQL", result)),
-            Err(result) => Err(self.result_error("step prepared SQL", result)),
-        }
+            .prepare(sql)
+            .map_err(|error| sqlite_error("prepare SQL", error))?;
+        let values = complete_bind_values(schema_bind_values(values), statement.parameter_count());
+        statement
+            .execute(params_from_iter(values))
+            .map(|_| ())
+            .map_err(|error| sqlite_error("step prepared SQL", error))
     }
 }
 
