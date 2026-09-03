@@ -38,11 +38,9 @@ Do not make `resolver` depend on `sqlite-schema-plan`.
 Do not make `sqlite-query-plan` or `sqlite-query-sqlgen` depend on `sqlite-schema-plan` until a
 shared naming module exists.
 
-The first version of `sqlite-schema-plan` should stay `no_std` while it builds
-structured DDL plans and SQL strings. Schema execution no longer has to move
-to a `std` boundary by default. The project now expects to evaluate
-`vlcn-io/sqlite-rs-embedded` as the SQLite binding for engine-integrated,
-`no_std`-compatible execution.
+`sqlite-schema-plan` stays `no_std` because it builds structured plans without
+executing them. Schema execution belongs to an environment-specific runner and
+does not share this requirement.
 
 ## Responsibility Boundary
 
@@ -346,8 +344,7 @@ The first renderer tests may compare SQL strings directly. When execution is
 added, metadata inserts should render placeholders and carry values separately
 instead of embedding text values into SQL.
 
-Execution can be added later through the engine runtime, using a
-`no_std`-compatible SQLite binding if the binding proves suitable:
+Execution can be added later through a runtime-specific runner:
 
 ```rust
 pub fn apply_initial_schema(
@@ -356,9 +353,9 @@ pub fn apply_initial_schema(
 ) -> Result<(), SQLiteSchemaApplyError>
 ```
 
-Do not add this executor abstraction until the project has tested the
-`sqlite-rs-embedded` API surface against schema apply, prepared statements, bind
-values, stepping, and result access.
+Do not add this executor abstraction until an existing runner trait is proven
+insufficient by schema apply, prepared statements, bind values, stepping, or
+result access.
 
 ## Initial Schema Plan Details
 
@@ -935,8 +932,8 @@ This test is the bridge to query execution without fixture catalogs.
 17. Add metadata insert rendering with placeholders and separate values.
 18. Add deterministic full initial schema rendering.
 19. Add command-style `schema plan` output once `.geli` parsing exists.
-20. Add `sqlite-runner` with the smallest `sqlite-rs-embedded` wrapper needed
-    for schema apply.
+20. Add `sqlite-runner` with the smallest native driver wrapper needed for
+    schema apply.
 21. Add command-style `schema apply` once runtime execution exists.
 22. Add REPL schema meta commands that delegate to the command implementation.
 23. Implement metadata-to-`schema_model::SchemaCatalog` loading only after metadata
@@ -946,19 +943,19 @@ This test is the bridge to query execution without fixture catalogs.
 
 ### SQLite driver boundary
 
-The runtime goal is not only native SQLite access. Gelite should be able to run
-the same parser, resolver, planner, SQL generator, and runner-facing contracts
-in native, embedded, and WASM/browser environments.
+Only compiler engine layers require `no_std`. SQLite runners are
+environment-specific runtime implementations behind the existing runner
+traits. Applications may implement those traits with another driver without a
+registry or public adapter framework.
 
-Do not make the public runner API depend on a single SQLite binding crate.
-`sqlite-rs-embedded` remains the first candidate because it is designed for
-`no_std` and WASM-compatible SQLite use, but it should be treated as a backend
-implementation detail until its native and WASM behavior is tested.
+Gelite plans to provide native and WASM runners. Each official runner should
+use a stable API appropriate to its environment; the two runners do not need
+to share one binding crate. `NativeSQLiteRunner` uses `rusqlite`, while the WASM
+backend remains a separate implementation boundary.
 
-Other candidates may be used if they better satisfy the same constraints:
+Driver choices should satisfy the behavior owned by the runner contracts:
 
 - native in-memory database support for tests and CLI
-- browser/WASM execution path
 - prepared statements
 - integer, text, and null bind values
 - deterministic stepping and finalization behavior
@@ -1007,9 +1004,8 @@ sqlite-runner/src/backend/native.rs
 sqlite-runner/src/backend/wasm.rs
 ```
 
-The first concrete backend may use `sqlite-rs-embedded`,
-`powersync_sqlite_nostd`, or another binding if it satisfies the runner tests.
-The backend type should not leak into planning or command crates.
+The native backend uses `rusqlite`. Its types stay private to
+`NativeSQLiteRunner` and must not leak into planning or command crates.
 
 The first runner target is schema application, not query execution:
 
@@ -1049,9 +1045,8 @@ Do not add SELECT query execution, row decoding, result shaping, migrations, or
 catalog loading in the first runner step. Those require additional contracts
 around statement lifetimes and returned values.
 
-If a backend stays close to the SQLite C API, the wrapper must make unsafe and
-lifetime-sensitive behavior explicit. Gelite code should not return borrowed
-SQLite values across a step or finalize boundary.
+Gelite code should not return borrowed SQLite values across a step or statement
+finalization boundary.
 
 Backend evaluation order:
 
@@ -1061,10 +1056,11 @@ Backend evaluation order:
 3. Execute DDL.
 4. Execute prepared metadata inserts with integer, text, and null values.
 5. Query SQLite metadata or rows back using owned Rust values.
-6. Check whether the same dependency can build for the intended WASM target.
+6. Keep the native dependency private so it does not constrain a WASM runner.
 
 Do not implement CLI `schema apply` until at least the native backend satisfies
-steps 1-5. Do not start the browser demo until step 6 is proven.
+steps 1-5. Do not start the browser demo until a separate WASM runner satisfies
+the same execution contracts.
 
 ### Runner backend verification plan
 
@@ -1072,25 +1068,20 @@ The next runner step is a backend spike, not a query execution feature. The
 goal is to prove that one concrete SQLite binding can satisfy the existing
 `SQLiteRunner` trait without changing planner or SQL generator crates.
 
-The crate should keep the binding-neutral contract as the default build:
+The crate keeps the binding-neutral contract available without an official
+backend. Official backends are selected independently:
 
 ```toml
 [features]
 default = []
-native = ["sqlite-nostd-static"]
-wasm = ["sqlite-nostd-extension"]
-
-sqlite-nostd-static = [
-    "dep:powersync_sqlite_nostd",
-    "powersync_sqlite_nostd/static",
-]
-sqlite-nostd-extension = ["dep:powersync_sqlite_nostd"]
+native = ["dep:rusqlite"]
+wasm = []
 ```
 
-The native feature uses the direct `sqlite3_*` symbols and links the host
-SQLite library. The WASM feature intentionally does not enable
-`powersync_sqlite_nostd/static`; it checks the extension-mode build where calls
-are dispatched through SQLite's API table.
+The native feature uses `rusqlite` with its bundled SQLite build. This removes
+direct SQLite C calls and repository-owned linker configuration. The empty
+WASM feature continues to expose only the existing placeholder until a stable
+WASM driver is selected in separate work.
 
 The first backend module should be feature-gated:
 
@@ -1138,9 +1129,7 @@ Candidate acceptance gates:
    SQLite values must not escape a step/finalize boundary.
 7. A rendered initial schema can be applied to an in-memory database, and the
    metadata tables, object tables, and at least one catalog row can be verified.
-8. The dependency has a plausible WASM path. This can be either the same crate
-   building for the intended WASM target or a compatible backend that can
-   implement the same `SQLiteRunner` contract.
+8. The native dependency does not constrain the separate WASM backend choice.
 
 If a candidate fails gates 2-7, do not adapt the planner or renderer to fit
 the candidate. Replace the backend candidate or add a narrower adapter inside
@@ -1183,11 +1172,9 @@ Transaction support should not be part of the first native spike. Add it after
 the schema apply smoke test passes, because rollback behavior needs its own
 contract and tests.
 
-WASM verification should not block the first native smoke test, but it must
-happen before browser demo work starts. The WASM check should compile a minimal
-target that imports `sqlite-runner` with the WASM backend feature and runs the
-same contract through a browser-compatible SQLite database. If that requires a
-different backend crate, the `SQLiteRunner` trait remains the shared boundary.
+WASM verification should not block native runner work. Before browser demo
+work starts, select a stable WASM SQLite API and implement the same runner
+contracts without changing native consumers.
 
 Current WASM compile gate:
 
