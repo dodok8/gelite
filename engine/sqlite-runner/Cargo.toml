@@ -4,16 +4,21 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 schema-model = { path = "../schema-model" }
 sqlite-query-sqlgen = { path = "../sqlite-query-sqlgen" }
 sqlite-schema-plan = { path = "../sqlite-schema-plan" }
 sqlite-schema-sqlgen = { path = "../sqlite-schema-sqlgen" }
 
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+rusqlite = { version = "0.40.2", default-features = false, features = ["ffi-sqlite-wasm-rs"], optional = true }
+
 [features]
 default = []
 native = ["dep:rusqlite"]
-wasm = []
+wasm = ["dep:rusqlite"]
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen-test = "0.3.54"

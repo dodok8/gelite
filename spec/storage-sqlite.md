@@ -45,8 +45,15 @@ appropriate to each environment; they do not need to share one binding crate.
 `NativeSQLiteRunner` is the official native implementation and uses
 `rusqlite`. Its driver remains private so changing the native binding does not
 change runner-facing APIs, compiler stages, query semantics, or schema
-semantics. WASM execution uses a separate backend and is not implied by the
-native driver's capabilities.
+semantics.
+
+`WasmSQLiteRunner` is a separate concrete runner that owns an in-memory
+`rusqlite` connection backed by `sqlite-wasm-rs` on
+`wasm32-unknown-unknown`. The native and WASM runners share private value,
+row, and error helpers without adding a public adapter or generic runner
+framework. The WASM runner supports only connection lifecycle and low-level
+raw and prepared SQL in this stage; schema workflows, query workflows,
+persistence, and workers remain separate work.
 
 ## Object Table Mapping
 

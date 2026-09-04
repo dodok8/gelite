@@ -1,7 +1,10 @@
 extern crate alloc;
 
 pub(crate) mod fixtures;
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 mod native;
 #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
 mod wasm;

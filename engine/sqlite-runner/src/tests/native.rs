@@ -13,7 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     SQLiteRunner, SQLiteRunnerError, apply_schema_statements,
-    native::{NativeSQLiteRunner, SchemaVersionRow},
+    native::NativeSQLiteRunner,
+    rusqlite_support::SchemaVersionRow,
     tests::fixtures::{
         APPLIED_AT, VERSION_ID, native_runner_with_post_schema, post_catalog,
         rendered_post_schema_statements,
