@@ -14,3 +14,6 @@ sqlite-schema-sqlgen = { path = "../sqlite-schema-sqlgen" }
 default = []
 native = ["dep:rusqlite"]
 wasm = []
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3.54"
