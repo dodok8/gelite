@@ -1064,9 +1064,8 @@ the same execution contracts.
 
 ### Runner backend verification plan
 
-The next runner step is a backend spike, not a query execution feature. The
-goal is to prove that one concrete SQLite binding can satisfy the existing
-`SQLiteRunner` trait without changing planner or SQL generator crates.
+Runner backend work proves that concrete SQLite bindings can satisfy the
+existing `SQLiteRunner` trait without changing planner or SQL generator crates.
 
 The crate keeps the binding-neutral contract available without an official
 backend. Official backends are selected independently:
@@ -1075,13 +1074,13 @@ backend. Official backends are selected independently:
 [features]
 default = []
 native = ["dep:rusqlite"]
-wasm = []
+wasm = ["dep:rusqlite"]
 ```
 
 The native feature uses `rusqlite` with its bundled SQLite build. This removes
-direct SQLite C calls and repository-owned linker configuration. The empty
-WASM feature continues to expose only the existing placeholder until a stable
-WASM driver is selected in separate work.
+direct SQLite C calls and repository-owned linker configuration. The WASM
+feature uses `rusqlite` backed by `sqlite-wasm-rs` on
+`wasm32-unknown-unknown`.
 
 The first backend module should be feature-gated:
 
@@ -1172,24 +1171,20 @@ Transaction support should not be part of the first native spike. Add it after
 the schema apply smoke test passes, because rollback behavior needs its own
 contract and tests.
 
-WASM verification should not block native runner work. Before browser demo
-work starts, select a stable WASM SQLite API and implement the same runner
-contracts without changing native consumers.
+The WASM runner implements the low-level connection lifecycle and raw and
+prepared SQL contracts without changing native consumers. Schema and query
+workflows remain separate work.
 
-Current WASM compile gate:
+Current browser WASM verification gate:
 
 ```text
-rustup target add wasm32-unknown-unknown
-cargo check -p sqlite-runner \
-  --target wasm32-unknown-unknown \
-  --no-default-features \
-  --features wasm
+CC_wasm32_unknown_unknown=clang wasm-pack test --headless --chrome \
+  engine/sqlite-runner --no-default-features --features wasm --locked
 ```
 
-This gate currently passes with the placeholder `WasmSQLiteRunner`. It proves
-only that `sqlite-runner` can compile for `wasm32-unknown-unknown` without the
-native SQLite link step. It does not prove that a browser SQLite database can
-open or execute SQL yet.
+This gate opens and closes an in-memory database and verifies raw SQL,
+prepared bindings, returned rows, affected-row counts, and error propagation
+in a real browser.
 
 Initial runner tests:
 

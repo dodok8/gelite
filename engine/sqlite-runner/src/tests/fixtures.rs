@@ -107,7 +107,10 @@ pub fn rendered_post_schema_statements() -> Vec<RenderedSchemaStatement> {
     render_initial_schema(&plan)
 }
 
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 pub fn native_runner_with_post_schema() -> crate::native::NativeSQLiteRunner {
     let mut runner = crate::native::NativeSQLiteRunner::open_in_memory()
         .expect("in-memory database should open");

@@ -5,16 +5,31 @@
 //! without knowing whether the backend is native, embedded, or WASM-based.
 
 use schema_model::SchemaCatalog;
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 use sqlite_query_sqlgen::SQLiteResultShape;
 use sqlite_query_sqlgen::SQLiteStatement;
 use sqlite_schema_plan::SQLiteValuePlan;
 use sqlite_schema_sqlgen::RenderedSchemaStatement;
 
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 pub mod native;
 
-#[cfg(feature = "wasm")]
+#[cfg(any(
+    all(
+        feature = "native",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    ),
+    all(feature = "wasm", target_arch = "wasm32", target_os = "unknown")
+))]
+mod rusqlite_support;
+
+#[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
 pub mod wasm;
 
 /// Error type returned by runner operations.
@@ -150,7 +165,10 @@ pub enum SQLiteCellValue {
     Null,
 }
 
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 fn shape_fields_with_identities(
     shape: &SQLiteResultShape,
     row: &mut [SQLiteCellValue],
@@ -196,7 +214,10 @@ fn shape_fields_with_identities(
         .collect()
 }
 
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 fn shape_object(
     shape: &SQLiteResultShape,
     row: &mut [SQLiteCellValue],
@@ -228,7 +249,10 @@ fn shape_object(
     ))
 }
 
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 fn follow_up_fetch_count(shape: &SQLiteResultShape) -> usize {
     shape.fields().iter().fold(0, |count, field| {
         let own_count = field.follow_up_fetch_index().map_or(0, |index| index + 1);
@@ -238,7 +262,10 @@ fn follow_up_fetch_count(shape: &SQLiteResultShape) -> usize {
     })
 }
 
-#[cfg(feature = "native")]
+#[cfg(all(
+    feature = "native",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 fn identity_at(
     index: Option<usize>,
     row: &[SQLiteCellValue],

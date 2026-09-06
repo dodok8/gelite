@@ -14,11 +14,145 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{
     SQLiteRunner, SQLiteRunnerError, apply_schema_statements,
     native::NativeSQLiteRunner,
+    rusqlite_support::SchemaVersionRow,
     tests::fixtures::{
         APPLIED_AT, VERSION_ID, native_runner_with_post_schema, post_catalog,
         rendered_post_schema_statements,
     },
 };
+
+#[test]
+fn read_latest_schema_version_uses_number_instead_of_time_uuid_or_insert_order() {
+    let mut runner = native_runner_with_post_schema();
+    let statements = rendered_post_schema_statements();
+    let Some(RenderedSchemaStatement::Insert(insert)) = statements.last() else {
+        panic!("initial schema should end with the version insert");
+    };
+
+    // Raw history fixtures stand in for non-initial migration application.
+    // Version 10 shares the baseline timestamp; version 2 has a later time and UUID.
+    for (number, id, applied_at) in [
+        (10, "11111111-1111-4111-8111-111111111111", APPLIED_AT),
+        (
+            2,
+            "ffffffff-ffff-4fff-bfff-ffffffffffff",
+            "2099-01-01T00:00:00.000Z",
+        ),
+    ] {
+        runner
+            .execute_with_values(
+                insert.sql(),
+                &[
+                    SQLiteValuePlan::Text(id.to_string()),
+                    SQLiteValuePlan::Text("unchecked checksum".to_string()),
+                    SQLiteValuePlan::Text(applied_at.to_string()),
+                    SQLiteValuePlan::Text(" {\"name\":\"雪\"}\n".to_string()),
+                    SQLiteValuePlan::Integer(number),
+                ],
+            )
+            .expect("history fixture should be stored");
+    }
+
+    let row = runner
+        .read_latest_schema_version()
+        .expect("latest version should load");
+    // Values stay owned after the prepared statement and connection are dropped.
+    drop(runner);
+    assert_eq!(
+        row,
+        Some(SchemaVersionRow {
+            version_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            checksum: "unchecked checksum".to_string(),
+            applied_at: APPLIED_AT.to_string(),
+            schema_snapshot: " {\"name\":\"雪\"}\n".to_string(),
+            version_number: 10,
+        })
+    );
+}
+
+#[test]
+fn read_latest_schema_version_returns_none_for_empty_table() {
+    let mut runner = native_runner_with_post_schema();
+    // Normal initial application always inserts a baseline; remove it for the read test.
+    runner
+        .execute("DELETE FROM _engine_schema_versions")
+        .expect("version should be removed");
+
+    assert_eq!(runner.read_latest_schema_version(), Ok(None));
+}
+
+#[test]
+fn read_latest_schema_version_reports_missing_table() {
+    let runner = NativeSQLiteRunner::open_in_memory().expect("database should open");
+
+    let error = runner
+        .read_latest_schema_version()
+        .expect_err("missing version table should be a query error");
+
+    assert!(error.message().contains("prepare schema version query"));
+    assert!(error.message().contains("no such table"));
+    assert_eq!(runner.table_exists("_engine_schema_versions"), Ok(false));
+}
+
+#[test]
+fn read_latest_schema_version_rejects_invalid_version_numbers() {
+    // Bypass normal version planning to model corrupt metadata types and ranges.
+    for value in ["0", "-1", "1.5", "'invalid'"] {
+        let mut runner = native_runner_with_post_schema();
+        runner
+            .execute(&format!(
+                "UPDATE _engine_schema_versions SET version_number = {value}"
+            ))
+            .expect("version number should be corrupted");
+
+        runner
+            .read_latest_schema_version()
+            .expect_err("version number must be a positive integer");
+    }
+}
+
+#[test]
+fn schema_version_number_is_unique() {
+    let mut runner = native_runner_with_post_schema();
+    // Normal initial application cannot produce two version IDs with the same number.
+    let error = runner.execute(
+        "INSERT INTO _engine_schema_versions (version_id, checksum, applied_at, schema_snapshot, version_number)
+         SELECT '11111111-1111-4111-8111-111111111111', checksum, applied_at, schema_snapshot, version_number
+         FROM _engine_schema_versions",
+    ).expect_err("duplicate version number should be rejected");
+
+    assert!(error.message().contains("UNIQUE constraint failed"));
+}
+
+#[test]
+fn read_latest_schema_version_excludes_rolled_back_version() {
+    let mut runner = native_runner_with_post_schema();
+    let baseline = runner
+        .read_latest_schema_version()
+        .expect("baseline should load");
+    assert_eq!(baseline.as_ref().map(|row| row.version_number), Some(1));
+    runner
+        .begin_transaction()
+        .expect("transaction should begin");
+    // Raw history writes stand in for a future migration that fails before commit.
+    runner.execute(
+        "INSERT INTO _engine_schema_versions (version_id, checksum, applied_at, schema_snapshot, version_number)
+         SELECT '11111111-1111-4111-8111-111111111111', checksum, applied_at, schema_snapshot, 2
+         FROM _engine_schema_versions",
+    ).expect("pending version should be stored");
+    assert_eq!(
+        runner
+            .read_latest_schema_version()
+            .expect("pending version should load")
+            .map(|row| row.version_number),
+        Some(2)
+    );
+    runner
+        .rollback_transaction()
+        .expect("failed migration should roll back");
+
+    assert_eq!(runner.read_latest_schema_version(), Ok(baseline));
+}
 
 #[test]
 fn native_runner_can_open_in_memory_database() {
