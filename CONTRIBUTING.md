@@ -70,7 +70,8 @@ Current implemented areas include:
 - `engine/sqlite-schema-plan`: SQLite-specific initial schema plan.
 - `engine/sqlite-schema-sqlgen`: SQL renderer for initial schema DDL and
   metadata inserts.
-- `engine/sqlite-runner`: native SQLite schema and query execution.
+- `engine/sqlite-runner`: native SQLite schema and query execution, plus
+  low-level in-memory SQLite execution in browser WASM.
 - `tools/gelite-cli`: top-level command-line binary.
 - `tools/gelite-commands`: command orchestration shared by CLI-facing tools.
 - `tools/repl`: query pipeline inspection and execution tool.
